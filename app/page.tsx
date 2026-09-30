@@ -7,7 +7,6 @@ import { parseAbiItem } from "viem";
 
 // Your live $SIGNAL Token-gating contract
 const SIGNAL_TOKEN = "0xD4D41412033a72a0D1cCd0Cb02b666Cf771880B1";
-// The upgraded vibe/vibe Factory Contract
 const FACTORY_ADDRESS = "0xe794217880011f9cA6961340eD5c16EC9559Fea0";
 
 const ERC20_ABI = [
@@ -27,6 +26,20 @@ interface VibeToken {
   diamondHandsHoldersPct: number;
   totalSupply: number;
   score: number;
+}
+
+// Generates consistent, non-changing metrics based on the token's address
+function getDeterministicMetrics(address: string) {
+  let seed = 0;
+  for (let i = 0; i < address.length; i++) {
+    seed += address.charCodeAt(i);
+  }
+  return {
+    curve: (seed % 80) + 20, 
+    time: (seed % 300) + 5,  
+    block0: (seed % 25),     
+    diamond: (seed % 60) + 10 
+  };
 }
 
 function calculateVibeScore(
@@ -68,24 +81,30 @@ export default function Home() {
     async function fetchTokens() {
       if (!publicClient) return;
       
+      // We inject your $SIGNAL token directly so it always loads
       const fallbackList = [
-        "0xA48964DA07300E6Ae6754Ce265873F8F59F4a9F6",
-        "0x336D221D697Fee3B8AB08Bf101dFC0dBe332d701",
-        "0x1234567890123456789012345678901234567892"
+        "0xD4D41412033a72a0D1cCd0Cb02b666Cf771880B1", // $SIGNAL
+        "0xA48964DA07300E6Ae6754Ce265873F8F59F4a9F6", // Hoodify
+        "0x336D221D697Fee3B8AB08Bf101dFC0dBe332d701"  // ilmeaalim clan
       ];
 
       try {
+        // 1. Fetch the exact current block number from the blockchain
+        const currentBlock = await publicClient.getBlockNumber();
+        
+        // 2. Scan ONLY the last 10,000 blocks to prevent the RPC node from crashing
         const logs = await publicClient.getLogs({
           address: FACTORY_ADDRESS,
           event: parseAbiItem('event TokenCreated(address indexed token, address indexed creator)'),
-          fromBlock: BigInt("126000000"), 
-          toBlock: 'latest'
+          fromBlock: currentBlock - BigInt("10000"), 
+          toBlock: currentBlock
         });
         
         const addresses = logs.map(log => log.args.token as string).reverse().slice(0, 20);
         
         if (addresses.length > 0) {
-          setTrackedAddresses(addresses);
+          // Ensure your token is always at the top of the feed, followed by live launches
+          setTrackedAddresses([...new Set(["0xD4D41412033a72a0D1cCd0Cb02b666Cf771880B1", ...addresses])]);
         } else {
           setTrackedAddresses(fallbackList);
         }
@@ -118,25 +137,21 @@ export default function Home() {
     const tokens: VibeToken[] = [];
     
     for (let i = 0; i < trackedAddresses.length; i++) {
+      const tokenAddress = trackedAddresses[i];
       const name = onChainData[i * 3]?.result as string || `Unknown Token ${i + 1}`;
       const ticker = onChainData[i * 3 + 1]?.result as string || "$UNKN";
       const rawSupply = onChainData[i * 3 + 2]?.result as bigint;
       const totalSupply = rawSupply ? Number(rawSupply / (BigInt("10") ** BigInt("18"))) : 1000000000;
       
-      const metrics = {
-        curve: Math.floor(Math.random() * 80) + 20, 
-        time: Math.floor(Math.random() * 300) + 5,  
-        block0: Math.floor(Math.random() * 25),     
-        diamond: Math.floor(Math.random() * 60) + 10 
-      };
-      
+      // Deterministic metrics ensuring stable scores per token
+      const metrics = getDeterministicMetrics(tokenAddress);
       const score = calculateVibeScore(metrics.block0, metrics.time, metrics.curve, metrics.diamond);
 
       tokens.push({
         id: i.toString(),
         name,
         ticker,
-        contractAddress: trackedAddresses[i],
+        contractAddress: tokenAddress,
         bondingCurveProgress: metrics.curve,
         timeSinceLaunchMins: metrics.time,
         blockZeroBuyers: metrics.block0,
