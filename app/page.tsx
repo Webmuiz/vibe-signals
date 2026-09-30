@@ -1,18 +1,14 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
-import { useAccount, useReadContract, useReadContracts } from "wagmi";
+import { useAccount, useReadContract, useReadContracts, usePublicClient } from "wagmi";
+import { parseAbiItem } from "viem";
 
-// Token-gating contract
-const SIGNAL_TOKEN = "0x000000000000000000000000000000000000dEaD";
-
-// The real testnet contracts we are tracking
-const TRACKED_ADDRESSES = [
-  "0xA48964DA07300E6Ae6754Ce265873F8F59F4a9F6",
-  "0x336D221D697Fee3B8AB08Bf101dFC0dBe332d701",
-  "0x1234567890123456789012345678901234567892",
-] as const;
+// Token-gating contract (Replace with your real $SIGNAL address later)
+const SIGNAL_TOKEN = "0xD4D41412033a72a0D1cCd0Cb02b666Cf771880B1";
+// The vibe/vibe Factory Contract
+const FACTORY_ADDRESS = "0x40f1be6faf8DAB9C143cce1a0A04c2075Fb2DF59";
 
 // Minimal ABI to fetch the required on-chain data
 const ERC20_ABI = [
@@ -54,8 +50,11 @@ function shortenAddress(address: string) {
 
 export default function Home() {
   const { address, isConnected } = useAccount();
-  const [demoBypass, setDemoBypass] = useState(false);
+  const publicClient = usePublicClient();
+  
   const [activeFilter, setActiveFilter] = useState<"all" | "alpha" | "graduating" | "risk">("all");
+  const [trackedAddresses, setTrackedAddresses] = useState<string[]>([]);
+  const [isFetchingLogs, setIsFetchingLogs] = useState(true);
 
   // Read gating token balance
   const { data: balanceData } = useReadContract({
@@ -65,43 +64,84 @@ export default function Home() {
     args: address ? [address] : undefined,
   });
 
-  const hasAccess = demoBypass || (balanceData && BigInt(balanceData as any) >= BigInt("10000") * (BigInt("10") ** BigInt("18")));
+  const hasAccess = balanceData && BigInt(balanceData as any) >= BigInt("10000") * (BigInt("10") ** BigInt("18"));
+
+  // Fetch live token launches from the factory contract logs
+  useEffect(() => {
+    async function fetchTokens() {
+      if (!publicClient) return;
+      try {
+        // Query the factory for all TokenCreated events
+        const logs = await publicClient.getLogs({
+          address: FACTORY_ADDRESS,
+          event: parseAbiItem('event TokenCreated(address indexed token, address indexed creator)'),
+          fromBlock: 'earliest',
+          toBlock: 'latest'
+        });
+        
+        // Extract addresses, reverse to get newest first, and limit to the 20 most recent launches
+        const addresses = logs.map(log => log.args.token as string).reverse().slice(0, 20);
+        
+        if (addresses.length > 0) {
+          setTrackedAddresses(addresses);
+        } else {
+          // Fallback array if no logs are found (e.g., if the ABI signature varies slightly on this specific factory)
+          setTrackedAddresses([
+            "0xA48964DA07300E6Ae6754Ce265873F8F59F4a9F6",
+            "0x336D221D697Fee3B8AB08Bf101dFC0dBe332d701",
+            "0x1234567890123456789012345678901234567892"
+          ]);
+        }
+      } catch (error) {
+        console.error("Error fetching factory logs:", error);
+      } finally {
+        setIsFetchingLogs(false);
+      }
+    }
+    fetchTokens();
+  }, [publicClient]);
+
   // Setup multiple contract reads for the live tracked addresses
-  const contractCalls = TRACKED_ADDRESSES.flatMap((addr) => [
-    { address: addr, abi: ERC20_ABI, functionName: "name" },
-    { address: addr, abi: ERC20_ABI, functionName: "symbol" },
-    { address: addr, abi: ERC20_ABI, functionName: "totalSupply" }
+  const contractCalls = trackedAddresses.flatMap((addr) => [
+    { address: addr as `0x${string}`, abi: ERC20_ABI, functionName: "name" },
+    { address: addr as `0x${string}`, abi: ERC20_ABI, functionName: "symbol" },
+    { address: addr as `0x${string}`, abi: ERC20_ABI, functionName: "totalSupply" }
   ]);
 
   const { data: onChainData, isLoading } = useReadContracts({
     contracts: contractCalls as any,
+    query: {
+      enabled: trackedAddresses.length > 0,
+    }
   });
 
   // Combine live on-chain data with simulated machine-learning metrics
   const processedTokens: VibeToken[] = useMemo(() => {
-    if (!onChainData) return [];
+    if (!onChainData || trackedAddresses.length === 0) return [];
     
     const tokens: VibeToken[] = [];
-    // Hardcoded simulation metrics representing the future machine-learning indexer output
-    const simMetrics = [
-      { curve: 92, time: 140, block0: 2, diamond: 45 },
-      { curve: 40, time: 10, block0: 35, diamond: 10 },
-      { curve: 60, time: 300, block0: 5, diamond: 55 }
-    ];
-
-    for (let i = 0; i < TRACKED_ADDRESSES.length; i++) {
+    
+    for (let i = 0; i < trackedAddresses.length; i++) {
       const name = onChainData[i * 3]?.result as string || `Unknown Token ${i + 1}`;
       const ticker = onChainData[i * 3 + 1]?.result as string || "$UNKN";
       const rawSupply = onChainData[i * 3 + 2]?.result as bigint;
-      const totalSupply = rawSupply ? Number(rawSupply / (BigInt("10") ** BigInt("18"))) : 1000000000;      
-      const metrics = simMetrics[i];
+      const totalSupply = rawSupply ? Number(rawSupply / (BigInt("10") ** BigInt("18"))) : 1000000000;
+      
+      // Simulate real-time indexer data for metrics we can't get purely from a single ERC20 read
+      const metrics = {
+        curve: Math.floor(Math.random() * 80) + 20, // Random 20-100%
+        time: Math.floor(Math.random() * 300) + 5,  // Random 5-305 mins
+        block0: Math.floor(Math.random() * 25),     // Random 0-25 buyers
+        diamond: Math.floor(Math.random() * 60) + 10 // Random 10-70%
+      };
+      
       const score = calculateVibeScore(metrics.block0, metrics.time, metrics.curve, metrics.diamond);
 
       tokens.push({
         id: i.toString(),
         name,
         ticker,
-        contractAddress: TRACKED_ADDRESSES[i],
+        contractAddress: trackedAddresses[i],
         bondingCurveProgress: metrics.curve,
         timeSinceLaunchMins: metrics.time,
         blockZeroBuyers: metrics.block0,
@@ -111,7 +151,7 @@ export default function Home() {
       });
     }
     return tokens;
-  }, [onChainData]);
+  }, [onChainData, trackedAddresses]);
 
   // Apply the selected filter
   const filteredTokens = useMemo(() => {
@@ -155,8 +195,8 @@ export default function Home() {
           </button>
         </div>
 
-        {isLoading ? (
-          <div className="text-center py-12 text-zinc-500 animate-pulse">Querying testnet nodes...</div>
+        {isFetchingLogs || isLoading ? (
+          <div className="text-center py-12 text-zinc-500 animate-pulse">Querying factory contract logs for recent launches...</div>
         ) : filteredTokens.length === 0 ? (
           <div className="text-center py-12 text-zinc-500 border border-dashed border-zinc-800 rounded-xl">No tokens match this filter.</div>
         ) : (
@@ -229,14 +269,6 @@ export default function Home() {
           </div>
         )}
       </main>
-
-      {/* Developer Toggle */}
-      <button 
-        onClick={() => setDemoBypass(!demoBypass)}
-        className="fixed bottom-4 right-4 bg-zinc-800 text-zinc-400 text-xs px-3 py-1 rounded-full border border-zinc-700 hover:text-white"
-      >
-        Preview: {demoBypass ? "Gating Disabled" : "Gating Active"}
-      </button>
     </div>
   );
 }
