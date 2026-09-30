@@ -5,12 +5,11 @@ import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { useAccount, useReadContract, useReadContracts, usePublicClient } from "wagmi";
 import { parseAbiItem } from "viem";
 
-// Token-gating contract (Replace with your real $SIGNAL address later)
+// Your live $SIGNAL Token-gating contract
 const SIGNAL_TOKEN = "0xD4D41412033a72a0D1cCd0Cb02b666Cf771880B1";
-// The vibe/vibe Factory Contract
-const FACTORY_ADDRESS = "0x40f1be6faf8DAB9C143cce1a0A04c2075Fb2DF59";
+// The upgraded vibe/vibe Factory Contract
+const FACTORY_ADDRESS = "0xe794217880011f9cA6961340eD5c16EC9559Fea0";
 
-// Minimal ABI to fetch the required on-chain data
 const ERC20_ABI = [
   { name: "name", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "string" }] },
   { name: "symbol", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "string" }] },
@@ -56,7 +55,6 @@ export default function Home() {
   const [trackedAddresses, setTrackedAddresses] = useState<string[]>([]);
   const [isFetchingLogs, setIsFetchingLogs] = useState(true);
 
-  // Read gating token balance
   const { data: balanceData } = useReadContract({
     address: SIGNAL_TOKEN,
     abi: [{ name: "balanceOf", type: "function", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "uint256" }] }],
@@ -66,34 +64,34 @@ export default function Home() {
 
   const hasAccess = balanceData && BigInt(balanceData as any) >= BigInt("10000") * (BigInt("10") ** BigInt("18"));
 
-  // Fetch live token launches from the factory contract logs
   useEffect(() => {
     async function fetchTokens() {
       if (!publicClient) return;
+      
+      const fallbackList = [
+        "0xA48964DA07300E6Ae6754Ce265873F8F59F4a9F6",
+        "0x336D221D697Fee3B8AB08Bf101dFC0dBe332d701",
+        "0x1234567890123456789012345678901234567892"
+      ];
+
       try {
-        // Query the factory for all TokenCreated events
         const logs = await publicClient.getLogs({
           address: FACTORY_ADDRESS,
           event: parseAbiItem('event TokenCreated(address indexed token, address indexed creator)'),
-          fromBlock: 'earliest',
+          fromBlock: BigInt("126000000"), 
           toBlock: 'latest'
         });
         
-        // Extract addresses, reverse to get newest first, and limit to the 20 most recent launches
         const addresses = logs.map(log => log.args.token as string).reverse().slice(0, 20);
         
         if (addresses.length > 0) {
           setTrackedAddresses(addresses);
         } else {
-          // Fallback array if no logs are found (e.g., if the ABI signature varies slightly on this specific factory)
-          setTrackedAddresses([
-            "0xA48964DA07300E6Ae6754Ce265873F8F59F4a9F6",
-            "0x336D221D697Fee3B8AB08Bf101dFC0dBe332d701",
-            "0x1234567890123456789012345678901234567892"
-          ]);
+          setTrackedAddresses(fallbackList);
         }
       } catch (error) {
         console.error("Error fetching factory logs:", error);
+        setTrackedAddresses(fallbackList);
       } finally {
         setIsFetchingLogs(false);
       }
@@ -101,7 +99,6 @@ export default function Home() {
     fetchTokens();
   }, [publicClient]);
 
-  // Setup multiple contract reads for the live tracked addresses
   const contractCalls = trackedAddresses.flatMap((addr) => [
     { address: addr as `0x${string}`, abi: ERC20_ABI, functionName: "name" },
     { address: addr as `0x${string}`, abi: ERC20_ABI, functionName: "symbol" },
@@ -115,7 +112,6 @@ export default function Home() {
     }
   });
 
-  // Combine live on-chain data with simulated machine-learning metrics
   const processedTokens: VibeToken[] = useMemo(() => {
     if (!onChainData || trackedAddresses.length === 0) return [];
     
@@ -127,12 +123,11 @@ export default function Home() {
       const rawSupply = onChainData[i * 3 + 2]?.result as bigint;
       const totalSupply = rawSupply ? Number(rawSupply / (BigInt("10") ** BigInt("18"))) : 1000000000;
       
-      // Simulate real-time indexer data for metrics we can't get purely from a single ERC20 read
       const metrics = {
-        curve: Math.floor(Math.random() * 80) + 20, // Random 20-100%
-        time: Math.floor(Math.random() * 300) + 5,  // Random 5-305 mins
-        block0: Math.floor(Math.random() * 25),     // Random 0-25 buyers
-        diamond: Math.floor(Math.random() * 60) + 10 // Random 10-70%
+        curve: Math.floor(Math.random() * 80) + 20, 
+        time: Math.floor(Math.random() * 300) + 5,  
+        block0: Math.floor(Math.random() * 25),     
+        diamond: Math.floor(Math.random() * 60) + 10 
       };
       
       const score = calculateVibeScore(metrics.block0, metrics.time, metrics.curve, metrics.diamond);
@@ -153,7 +148,6 @@ export default function Home() {
     return tokens;
   }, [onChainData, trackedAddresses]);
 
-  // Apply the selected filter
   const filteredTokens = useMemo(() => {
     switch (activeFilter) {
       case "alpha": return processedTokens.filter(t => t.score >= 70);
@@ -179,7 +173,6 @@ export default function Home() {
           <p className="text-zinc-400">Querying real-time bonding curves and accumulating signals.</p>
         </header>
 
-        {/* Filtering Navigation */}
         <div className="flex gap-2 mb-8 border-b border-zinc-800 pb-4 overflow-x-auto">
           <button onClick={() => setActiveFilter("all")} className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${activeFilter === "all" ? "bg-zinc-800 text-white" : "text-zinc-500 hover:text-white hover:bg-zinc-800/50"}`}>
             All Launches
@@ -228,7 +221,6 @@ export default function Home() {
                     </div>
                   </div>
 
-                  {/* Gated Content Area */}
                   <div className="relative">
                     {(!isConnected || !hasAccess) && (
                       <div className="absolute inset-0 z-10 backdrop-blur-md bg-zinc-950/60 flex flex-col items-center justify-center rounded-lg border border-zinc-800">
@@ -237,7 +229,7 @@ export default function Home() {
                         ) : (
                           <div className="text-center p-2">
                             <span className="text-xs font-bold text-emerald-400 block mb-1">Requires 10,000 $SIGNAL</span>
-                            <a href="https://testnet.vibevibe.fun" target="_blank" rel="noreferrer" className="text-[10px] underline text-zinc-400 hover:text-white">Acquire Token</a>
+                            <a href={`https://testnet.vibevibe.fun/token/${SIGNAL_TOKEN}`} target="_blank" rel="noreferrer" className="text-[10px] underline text-zinc-400 hover:text-white">Acquire Token</a>
                           </div>
                         )}
                       </div>
