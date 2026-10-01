@@ -3,7 +3,7 @@
 import { useState, useMemo, useEffect } from "react";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { useAccount, useReadContract, useReadContracts, usePublicClient, useSendTransaction } from "wagmi";
-import { isAddress, parseEther } from "viem";
+import { isAddress, parseEther, pad } from "viem";
 
 const SIGNAL_TOKEN = "0xD4D41412033a72a0D1cCd0Cb02b666Cf771880B1";
 const FACTORY_ADDRESS = "0xe794217880011f9cA6961340eD5c16EC9559Fea0";
@@ -11,105 +11,41 @@ const FACTORY_ADDRESS = "0xe794217880011f9cA6961340eD5c16EC9559Fea0";
 const ERC20_ABI = [
   { name: "name", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "string" }] },
   { name: "symbol", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "string" }] },
-  { name: "totalSupply", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] }
+  { name: "totalSupply", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
+  { name: "balanceOf", type: "function", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "uint256" }] }
 ] as const;
 
-interface VibeToken {
-  id: string;
-  name: string;
-  ticker: string;
-  contractAddress: string;
+interface TokenLaunchData {
+  tokenAddress: string;
+  curveAddress: string;
   devAddress: string;
-  bondingCurveProgress: number;
-  timeSinceLaunchMins: number;
-  blockZeroBuyers: number;
-  diamondHandsHoldersPct: number;
-  totalSupply: number;
-  score: number;
-  devProfile: {
-    label: string;
-    color: string;
-    launches: number;
-    gradRate: number;
-  };
-  safetyChecks: {
-    socials: { label: string; safe: boolean };
-    mev: { label: string; safe: boolean };
-    honeypot: { label: string; safe: boolean };
-  };
-  momentum: {
-    buyPct: number;
-    sellPct: number;
-    volumeEth: string;
-  };
-}
-
-function getDeterministicMetrics(address: string) {
-  let seed = 0;
-  for (let i = 0; i < address.length; i++) {
-    seed += address.charCodeAt(i);
-  }
-  return {
-    curve: (seed % 80) + 20, 
-    time: (seed % 300) + 5,  
-    block0: (seed % 25),     
-    diamond: (seed % 60) + 10 
-  };
+  launchBlock: bigint;
 }
 
 function getDevProfile(devAddress: string) {
-  let seed = 0;
-  for (let i = 0; i < devAddress.length; i++) {
-    seed += devAddress.charCodeAt(i);
-  }
+  let seed = 0; for (let i = 0; i < devAddress.length; i++) seed += devAddress.charCodeAt(i);
   const tier = seed % 100;
-  
-  if (tier > 70) {
-    return { label: "Chad Dev / Proven Builder", color: "text-emerald-400 bg-emerald-400/10 border-emerald-400/30", launches: (seed % 10) + 3, gradRate: 80 + (seed % 20) };
-  } else if (tier > 30) {
-    return { label: "Neutral / Unproven Dev", color: "text-yellow-400 bg-yellow-400/10 border-yellow-400/30", launches: (seed % 3) + 1, gradRate: 10 + (seed % 40) };
-  } else {
-    return { label: "Serial Rugger / High Dump Risk", color: "text-red-400 bg-red-400/10 border-red-400/30", launches: (seed % 15) + 4, gradRate: 0 };
-  }
+  if (tier > 70) return { label: "Chad Dev / Proven Builder", color: "text-emerald-400 bg-emerald-400/10 border-emerald-400/30", launches: (seed % 10) + 3, gradRate: 80 + (seed % 20) };
+  else if (tier > 30) return { label: "Neutral / Unproven Dev", color: "text-yellow-400 bg-yellow-400/10 border-yellow-400/30", launches: (seed % 3) + 1, gradRate: 10 + (seed % 40) };
+  else return { label: "Serial Rugger / High Dump Risk", color: "text-red-400 bg-red-400/10 border-red-400/30", launches: (seed % 15) + 4, gradRate: 0 };
 }
 
 function getSafetyChecks(tokenAddress: string) {
-  let seed = 0;
-  for (let i = 0; i < tokenAddress.length; i++) {
-    seed += tokenAddress.charCodeAt(i);
-  }
-  return {
-    socials: seed % 2 === 0 
-      ? { label: "Linked (X & TG)", safe: true } 
-      : { label: "Ghost Launch (No Socials)", safe: false },
-    mev: seed % 100 > 60 
-      ? { label: "High Bot Infiltration", safe: false } 
-      : { label: "Low Risk (< 5%)", safe: true },
-    honeypot: seed % 100 > 90 
-      ? { label: "Flagged (Mint/Blacklist)", safe: false } 
-      : { label: "Clean (Renounced, 0/0 Tax)", safe: true }
+  let seed = 0; for (let i = 0; i < tokenAddress.length; i++) seed += tokenAddress.charCodeAt(i);
+  return { 
+    socials: seed % 2 === 0 ? { label: "Linked (X & TG)", safe: true } : { label: "Ghost Launch (No Socials)", safe: false }, 
+    mev: seed % 100 > 60 ? { label: "High Bot Infiltration", safe: false } : { label: "Low Risk (< 5%)", safe: true }, 
+    honeypot: seed % 100 > 90 ? { label: "Flagged (Mint/Blacklist)", safe: false } : { label: "Clean (Renounced, 0/0 Tax)", safe: true } 
   };
 }
 
 function getMomentumMetrics(tokenAddress: string) {
-  let seed = 0;
-  for (let i = 0; i < tokenAddress.length; i++) {
-    seed += tokenAddress.charCodeAt(i);
-  }
+  let seed = 0; for (let i = 0; i < tokenAddress.length; i++) seed += tokenAddress.charCodeAt(i);
   const buyPct = (seed % 45) + 45; 
-  return {
-    buyPct,
-    sellPct: 100 - buyPct,
-    volumeEth: ((seed % 80) / 10 + 0.5).toFixed(2)
-  };
+  return { buyPct, sellPct: 100 - buyPct, volumeEth: ((seed % 80) / 10 + 0.5).toFixed(2) };
 }
 
-function calculateVibeScore(
-  blockZeroBuyers: number, 
-  timeSinceLaunchMins: number, 
-  bondingCurveProgress: number, 
-  diamondHandsHoldersPct: number
-) {
+function calculateVibeScore(blockZeroBuyers: number, timeSinceLaunchMins: number, bondingCurveProgress: number, diamondHandsHoldersPct: number) {
   let score = 50;
   if (blockZeroBuyers > 15) score -= 25; 
   if (timeSinceLaunchMins > 90 && bondingCurveProgress > 40) score += 20; 
@@ -118,8 +54,8 @@ function calculateVibeScore(
   return Math.max(1, Math.min(99, score));
 }
 
-function shortenAddress(address: string) {
-  return `${address.slice(0, 6)}...${address.slice(-4)}`;
+function shortenAddress(address: string) { 
+  return `${address.slice(0, 6)}...${address.slice(-4)}`; 
 }
 
 export default function Home() {
@@ -128,12 +64,12 @@ export default function Home() {
   const { sendTransaction, isPending: isTxPending } = useSendTransaction();
   
   const [activeFilter, setActiveFilter] = useState<"all" | "alpha" | "graduating" | "risk">("all");
-  const [trackedAddresses, setTrackedAddresses] = useState<string[]>([]);
-  const [devMap, setDevMap] = useState<Record<string, string>>({});
+  const [launchData, setLaunchData] = useState<TokenLaunchData[]>([]);
+  const [currentBlock, setCurrentBlock] = useState<bigint>(BigInt(0));
   const [isFetchingLogs, setIsFetchingLogs] = useState(true);
-  const [searchQuery, setSearchQuery] = useState("");
   
-  const [selectedToken, setSelectedToken] = useState<VibeToken | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedToken, setSelectedToken] = useState<any | null>(null);
 
   const [apeAmount, setApeAmount] = useState<string>("0.005");
   const [slippage, setSlippage] = useState<number>(15);
@@ -151,54 +87,51 @@ export default function Home() {
   useEffect(() => {
     async function fetchTokens() {
       if (!publicClient) return;
-      
-      const fallbackList = [
-        "0xD4D41412033a72a0D1cCd0Cb02b666Cf771880B1", 
-        "0x65be372b64a2750e1ef38a0a036bc00155b443f2",
-        "0xA48964DA07300E6Ae6754Ce265873F8F59F4a9F6" 
-      ];
-
       try {
-        const currentBlock = await publicClient.getBlockNumber();
+        const latestBlock = await publicClient.getBlockNumber();
+        setCurrentBlock(latestBlock);
+
         const logs = await publicClient.getLogs({
           address: FACTORY_ADDRESS,
-          fromBlock: currentBlock - BigInt("10000"), 
-          toBlock: currentBlock
+          fromBlock: latestBlock - BigInt("10000"), 
+          toBlock: latestBlock
         });
         
         const creationTopic = "0xa7e8032bfd07a9fbcde50eabe91eb2901faee6dbddd9cced579491d9b07ef5c8";
         
-        const parsedDevs: Record<string, string> = {
-          "0xD4D41412033a72a0D1cCd0Cb02b666Cf771880B1": "0x89944bc9d3b20764bea771cfaf9711a8fb839e72"
-        };
-
-        const addresses = logs
+        const extractedData: TokenLaunchData[] = logs
           .filter(log => log.topics[0] === creationTopic)
           .map(log => {
-            const devTopic = log.topics[2];
+            const devTopic = log.topics[1];
+            const curveTopic = log.topics[2];
             const tokenTopic = log.topics[3];
             
-            if (tokenTopic && devTopic) {
-              const tokenAddr = `0x${tokenTopic.slice(26)}`;
-              const devAddr = `0x${devTopic.slice(26)}`;
-              parsedDevs[tokenAddr] = devAddr;
-              return tokenAddr;
+            if (tokenTopic && curveTopic && devTopic) {
+              return {
+                tokenAddress: `0x${tokenTopic.slice(26)}`,
+                curveAddress: `0x${curveTopic.slice(26)}`,
+                devAddress: `0x${devTopic.slice(26)}`,
+                launchBlock: log.blockNumber
+              };
             }
             return null;
           })
-          .filter(addr => addr !== null)
+          .filter(data => data !== null)
           .reverse()
-          .slice(0, 20);
+          .slice(0, 20) as TokenLaunchData[];
         
-        setDevMap(parsedDevs);
-
-        if (addresses.length > 0) {
-          setTrackedAddresses([...new Set(["0xD4D41412033a72a0D1cCd0Cb02b666Cf771880B1", ...(addresses as string[])])]);
-        } else {
-          setTrackedAddresses(fallbackList);
+        if (!extractedData.find(d => d.tokenAddress.toLowerCase() === SIGNAL_TOKEN.toLowerCase())) {
+          extractedData.unshift({
+            tokenAddress: SIGNAL_TOKEN,
+            curveAddress: "0x89944BC9D3b20764BeA771CFAf9711a8Fb839e72",
+            devAddress: "0xc8F14080c15801bab3747E9875e6894b86801bC7",
+            launchBlock: latestBlock - BigInt(1500)
+          });
         }
+        
+        setLaunchData(extractedData);
       } catch (error) {
-        setTrackedAddresses(fallbackList);
+        console.error("Error fetching launch events:", error);
       } finally {
         setIsFetchingLogs(false);
       }
@@ -206,14 +139,47 @@ export default function Home() {
     fetchTokens();
   }, [publicClient]);
 
-  const handleSearch = (e: React.FormEvent) => {
+  const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!isAddress(searchQuery)) {
-      alert("Please enter a valid Robinhood Chain contract address.");
-      return;
-    }
-    if (!trackedAddresses.includes(searchQuery)) {
-      setTrackedAddresses(prev => [searchQuery, ...prev]);
+    if (!isAddress(searchQuery) || !publicClient) return;
+    
+    const formattedSearch = searchQuery.toLowerCase();
+    const existing = launchData.find(t => t.tokenAddress.toLowerCase() === formattedSearch);
+
+    if (existing) {
+      setLaunchData(prev => [existing, ...prev.filter(t => t.tokenAddress.toLowerCase() !== formattedSearch)]);
+    } else {
+      try {
+        const creationTopic = "0xa7e8032bfd07a9fbcde50eabe91eb2901faee6dbddd9cced579491d9b07ef5c8";
+        const paddedTokenTopic = pad(searchQuery as `0x${string}`, { size: 32 });
+
+        const searchLogs = await publicClient.getLogs({
+          address: FACTORY_ADDRESS,
+          topics: [creationTopic, null, null, paddedTokenTopic],
+          fromBlock: BigInt(0),
+          toBlock: "latest"
+        });
+
+        if (searchLogs.length > 0) {
+          const log = searchLogs[0];
+          const newEntry: TokenLaunchData = {
+            tokenAddress: searchQuery,
+            curveAddress: `0x${log.topics[2]!.slice(26)}`,
+            devAddress: `0x${log.topics[1]!.slice(26)}`,
+            launchBlock: log.blockNumber
+          };
+          setLaunchData(prev => [newEntry, ...prev]);
+        } else {
+          setLaunchData(prev => [{
+            tokenAddress: searchQuery,
+            curveAddress: searchQuery,
+            devAddress: searchQuery,
+            launchBlock: currentBlock
+          }, ...prev]);
+        }
+      } catch (err) {
+        console.error("Search lookup failed:", err);
+      }
     }
     setActiveFilter("all");
     setSearchQuery("");
@@ -238,55 +204,64 @@ export default function Home() {
     }
   };
 
-  const contractCalls = trackedAddresses.flatMap((addr) => [
-    { address: addr as `0x${string}`, abi: ERC20_ABI, functionName: "name" },
-    { address: addr as `0x${string}`, abi: ERC20_ABI, functionName: "symbol" },
-    { address: addr as `0x${string}`, abi: ERC20_ABI, functionName: "totalSupply" }
+  const contractCalls = launchData.flatMap((data) => [
+    { address: data.tokenAddress as `0x${string}`, abi: ERC20_ABI, functionName: "name" },
+    { address: data.tokenAddress as `0x${string}`, abi: ERC20_ABI, functionName: "symbol" },
+    { address: data.tokenAddress as `0x${string}`, abi: ERC20_ABI, functionName: "totalSupply" },
+    { address: data.tokenAddress as `0x${string}`, abi: ERC20_ABI, functionName: "balanceOf", args: [data.curveAddress as `0x${string}`] }
   ]);
 
   const { data: onChainData, isLoading } = useReadContracts({
     contracts: contractCalls as any,
-    query: { enabled: trackedAddresses.length > 0 }
+    query: { enabled: launchData.length > 0 }
   });
 
-  const processedTokens: VibeToken[] = useMemo(() => {
-    if (!onChainData || trackedAddresses.length === 0) return [];
+  const processedTokens = useMemo(() => {
+    if (!onChainData || launchData.length === 0) return [];
     
-    const tokens: VibeToken[] = [];
-    for (let i = 0; i < trackedAddresses.length; i++) {
-      const tokenAddress = trackedAddresses[i];
-      const devAddress = devMap[tokenAddress] || tokenAddress;
+    const tokens = [];
+    for (let i = 0; i < launchData.length; i++) {
+      const data = launchData[i];
       
-      const name = onChainData[i * 3]?.result as string || `Unknown Token ${i + 1}`;
-      const ticker = onChainData[i * 3 + 1]?.result as string || "$UNKN";
-      const rawSupply = onChainData[i * 3 + 2]?.result as bigint;
+      const name = onChainData[i * 4]?.result as string || `Unknown Token`;
+      const ticker = onChainData[i * 4 + 1]?.result as string || "$UNKN";
+      const rawSupply = onChainData[i * 4 + 2]?.result as bigint;
+      const rawVaultBalance = onChainData[i * 4 + 3]?.result as bigint;
+      
       const totalSupply = rawSupply ? Number(rawSupply / (BigInt("10") ** BigInt("18"))) : 1000000000;
-      
-      const metrics = getDeterministicMetrics(tokenAddress);
-      const devProfile = getDevProfile(devAddress);
-      const safetyChecks = getSafetyChecks(tokenAddress);
-      const momentum = getMomentumMetrics(tokenAddress);
-      const score = calculateVibeScore(metrics.block0, metrics.time, metrics.curve, metrics.diamond);
+      const vaultBalance = rawVaultBalance ? Number(rawVaultBalance / (BigInt("10") ** BigInt("18"))) : totalSupply;
+
+      const blocksPassed = Number(currentBlock - data.launchBlock);
+      const realTimeSinceLaunchMins = Math.max(0, Math.floor((blocksPassed * 2) / 60));
+
+      const tokensSold = Math.max(0, totalSupply - vaultBalance);
+      const graduationTarget = totalSupply * 0.8;
+      const realBondingCurveProgress = Math.min(100, Math.max(0, Math.floor((tokensSold / graduationTarget) * 100)));
+
+      let seed = 0; for (let j = 0; j < data.tokenAddress.length; j++) seed += data.tokenAddress.charCodeAt(j);
+      const block0 = (seed % 25);
+      const diamond = (seed % 60) + 10;
+      const score = calculateVibeScore(block0, realTimeSinceLaunchMins, realBondingCurveProgress, diamond);
 
       tokens.push({
         id: i.toString(),
         name,
         ticker,
-        contractAddress: tokenAddress,
-        devAddress,
-        bondingCurveProgress: metrics.curve,
-        timeSinceLaunchMins: metrics.time,
-        blockZeroBuyers: metrics.block0,
-        diamondHandsHoldersPct: metrics.diamond,
+        contractAddress: data.tokenAddress,
+        devAddress: data.devAddress,
+        bondingCurveProgress: realBondingCurveProgress,
+        timeSinceLaunchMins: realTimeSinceLaunchMins,
+        blockZeroBuyers: block0,
+        diamondHandsHoldersPct: diamond,
         totalSupply,
         score,
-        devProfile,
-        safetyChecks,
-        momentum
+        devProfile: getDevProfile(data.devAddress),
+        safetyChecks: getSafetyChecks(data.tokenAddress),
+        momentum: getMomentumMetrics(data.tokenAddress)
       });
     }
     return tokens;
-  }, [onChainData, trackedAddresses, devMap]);
+  }, [onChainData, launchData, currentBlock]);
 
   const filteredTokens = useMemo(() => {
     switch (activeFilter) {
@@ -337,10 +312,8 @@ export default function Home() {
             </header>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              {/* Column 1: Forensics & Live Momentum */}
               <div className="lg:col-span-2 space-y-6">
                 
-                {/* 5M Taker Buy/Sell Momentum Bar */}
                 <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
                   <div className="flex justify-between items-center mb-3">
                     <h3 className="text-lg font-bold text-white flex items-center gap-2">
@@ -359,19 +332,16 @@ export default function Home() {
                   </div>
                 </div>
 
-                {/* VISUAL CABAL BUBBLE MAP */}
                 <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
                   <h3 className="text-lg font-bold mb-4 text-white">Holder Clustering (Cabal Detector)</h3>
                   
                   <div className="w-full bg-zinc-950 border border-zinc-800 rounded-lg mb-6 relative overflow-hidden h-56 group">
-                    {/* SVG Connection Lines */}
                     <svg className="absolute inset-0 w-full h-full z-0 pointer-events-none">
                       {selectedToken.score < 50 ? (
                         <>
                           <line x1="25%" y1="30%" x2="25%" y2="70%" stroke="#ef4444" strokeWidth="2" strokeDasharray="4" className="animate-pulse opacity-60" />
                           <line x1="25%" y1="70%" x2="50%" y2="85%" stroke="#ef4444" strokeWidth="2" strokeDasharray="4" className="animate-pulse opacity-60" />
                           <line x1="50%" y1="85%" x2="75%" y2="70%" stroke="#ef4444" strokeWidth="2" strokeDasharray="4" className="animate-pulse opacity-60" />
-                          {/* Connect to AMM to show dumping */}
                           <line x1="50%" y1="85%" x2="50%" y2="50%" stroke="#ef4444" strokeWidth="1" className="opacity-30" />
                         </>
                       ) : (
@@ -385,14 +355,11 @@ export default function Home() {
                       )}
                     </svg>
 
-                    {/* Nodes Overlay */}
                     <div className="absolute inset-0 z-10 pointer-events-none">
-                      {/* AMM Center */}
                       <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-12 h-12 bg-zinc-900 border-2 border-emerald-500/50 rounded-full flex items-center justify-center shadow-[0_0_15px_rgba(16,185,129,0.2)]">
                         <span className="text-[10px] font-bold text-emerald-400">AMM</span>
                       </div>
                       
-                      {/* Holders */}
                       <div className={`absolute top-[30%] left-[25%] -translate-x-1/2 -translate-y-1/2 w-8 h-8 rounded-full border-2 flex items-center justify-center bg-zinc-900 ${selectedToken.score < 50 ? 'border-red-500 shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-zinc-600'}`}>
                         <span className="text-[8px] text-zinc-400">#1</span>
                       </div>
@@ -405,13 +372,11 @@ export default function Home() {
                       <div className={`absolute top-[70%] left-[75%] -translate-x-1/2 -translate-y-1/2 w-9 h-9 rounded-full border-2 flex items-center justify-center bg-zinc-900 ${selectedToken.score < 50 ? 'border-red-500 shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-zinc-600'}`}>
                         <span className="text-[8px] text-zinc-400">#4</span>
                       </div>
-                      {/* Node 5 is always independent to show contrast */}
                       <div className="absolute top-[30%] left-[75%] -translate-x-1/2 -translate-y-1/2 w-8 h-8 rounded-full border-2 border-zinc-600 flex items-center justify-center bg-zinc-900">
                         <span className="text-[8px] text-zinc-400">#5</span>
                       </div>
                     </div>
 
-                    {/* Status Legend */}
                     <div className="absolute top-3 left-4 bg-zinc-950/80 backdrop-blur px-2 py-1 rounded border border-zinc-800 text-[10px]">
                       {selectedToken.score < 50 ? (
                         <span className="text-red-400 font-bold flex items-center gap-1">⚠️ Cabal Detected (Shared Exchange Funding)</span>
@@ -437,7 +402,6 @@ export default function Home() {
                   </div>
                 </div>
                 
-                {/* Developer Profiler Matrix */}
                 <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
                   <div className="flex justify-between items-start mb-4">
                     <h3 className="text-lg font-bold text-white">Developer Profiler</h3>
@@ -466,13 +430,9 @@ export default function Home() {
                     </div>
                   </div>
                 </div>
-
               </div>
 
-              {/* Column 2: 1-Click Ape Terminal & Intelligence */}
               <div className="space-y-6">
-                
-                {/* 1-Click Ape Console */}
                 <div className="bg-zinc-900 border border-emerald-500/40 rounded-xl p-6 shadow-[0_0_25px_rgba(16,185,129,0.08)]">
                   <div className="flex justify-between items-center mb-4">
                     <h3 className="text-md font-bold text-white flex items-center gap-2">
@@ -528,7 +488,6 @@ export default function Home() {
                   )}
                 </div>
 
-                {/* Contract Safety Checks */}
                 <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
                   <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-wider mb-4">Contract Safety & Audits</h3>
                   <ul className="space-y-3 text-sm">
@@ -547,10 +506,9 @@ export default function Home() {
                   </ul>
                 </div>
 
-                {/* Smart Money Wallets */}
                 <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
                   <h3 className="text-lg font-bold mb-4 text-white flex items-center gap-2">
-                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
                     Smart Money Wallets
                   </h3>
                   
@@ -655,6 +613,10 @@ export default function Home() {
                         </div>
 
                         <div className="mb-6">
+                          <div className="flex justify-between text-xs mb-2">
+                            <span className="text-zinc-500">Time Live (est)</span>
+                            <span className="text-zinc-300">{token.timeSinceLaunchMins} mins</span>
+                          </div>
                           <div className="flex justify-between text-xs mb-2">
                             <span className="text-zinc-500">Bonding Curve</span>
                             <span className={token.bondingCurveProgress > 85 ? "text-emerald-400" : "text-zinc-300"}>{token.bondingCurveProgress}%</span>
