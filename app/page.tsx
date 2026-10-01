@@ -102,8 +102,9 @@ export default function Home() {
         const extractedData: TokenLaunchData[] = logs
           .filter(log => log.topics[0] === creationTopic)
           .map(log => {
-            const devTopic = log.topics[1];
-            const curveTopic = log.topics[2];
+            // FIXED: Topic 1 is Curve (AMM), Topic 2 is Dev (Creator)
+            const curveTopic = log.topics[1]; 
+            const devTopic = log.topics[2];   
             const tokenTopic = log.topics[3];
             
             if (tokenTopic && curveTopic && devTopic) {
@@ -123,8 +124,8 @@ export default function Home() {
         if (!extractedData.find(d => d.tokenAddress.toLowerCase() === SIGNAL_TOKEN.toLowerCase())) {
           extractedData.unshift({
             tokenAddress: SIGNAL_TOKEN,
-            curveAddress: "0x89944BC9D3b20764BeA771CFAf9711a8Fb839e72",
-            devAddress: "0xc8F14080c15801bab3747E9875e6894b86801bC7",
+            curveAddress: "0x89944BC9D3b20764BeA771CFAf9711a8Fb839e72", // $SIGNAL AMM
+            devAddress: "0xc8F14080c15801bab3747E9875e6894b86801bC7", // Your Dev Address
             launchBlock: latestBlock - BigInt(1500)
           });
         }
@@ -164,8 +165,9 @@ export default function Home() {
           const log = searchLogs[0];
           const newEntry: TokenLaunchData = {
             tokenAddress: searchQuery,
-            curveAddress: `0x${log.topics[2]!.slice(26)}`,
-            devAddress: `0x${log.topics[1]!.slice(26)}`,
+            // FIXED: Search mapping updated to match the corrected topics
+            curveAddress: `0x${log.topics[1]!.slice(26)}`,
+            devAddress: `0x${log.topics[2]!.slice(26)}`,
             launchBlock: log.blockNumber
           };
           setLaunchData(prev => [newEntry, ...prev]);
@@ -314,21 +316,43 @@ export default function Home() {
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               <div className="lg:col-span-2 space-y-6">
                 
+                {/* RESTORED: Master Live Telemetry Block (Time, Curve & Momentum) */}
                 <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
-                  <div className="flex justify-between items-center mb-3">
+                  <div className="flex justify-between items-center mb-6">
                     <h3 className="text-lg font-bold text-white flex items-center gap-2">
                       <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping"></span>
-                      5M Taker Momentum
+                      Live Telemetry
                     </h3>
-                    <span className="text-xs text-zinc-400">Vol: {selectedToken.momentum.volumeEth} ETH</span>
+                    <span className="text-xs text-zinc-400 font-bold border border-zinc-700 px-2 py-1 rounded bg-zinc-950">
+                      LIVE: {selectedToken.timeSinceLaunchMins} mins
+                    </span>
                   </div>
-                  <div className="flex justify-between text-xs mb-2">
-                    <span className="text-emerald-400 font-bold">{selectedToken.momentum.buyPct}% Buys</span>
-                    <span className="text-red-400 font-bold">{selectedToken.momentum.sellPct}% Sells</span>
+                  
+                  {/* Bonding Curve UI */}
+                  <div className="mb-8">
+                    <div className="flex justify-between text-xs mb-2">
+                      <span className="text-zinc-400">Bonding Curve Progress</span>
+                      <span className="text-emerald-400 font-bold">{selectedToken.bondingCurveProgress}%</span>
+                    </div>
+                    <div className="w-full bg-zinc-950 rounded-full h-3 overflow-hidden border border-zinc-800">
+                      <div className="bg-emerald-500 h-full shadow-[0_0_15px_rgba(16,185,129,0.5)] transition-all" style={{ width: `${selectedToken.bondingCurveProgress}%` }} />
+                    </div>
                   </div>
-                  <div className="w-full bg-zinc-950 rounded-full h-3 overflow-hidden flex border border-zinc-800">
-                    <div className="bg-emerald-500 h-full transition-all" style={{ width: `${selectedToken.momentum.buyPct}%` }} />
-                    <div className="bg-red-500 h-full transition-all" style={{ width: `${selectedToken.momentum.sellPct}%` }} />
+
+                  {/* 5M Taker Momentum UI */}
+                  <div>
+                    <div className="flex justify-between text-xs mb-2">
+                      <span className="text-zinc-400 uppercase tracking-wider font-bold">5M Taker Momentum</span>
+                      <span className="text-zinc-500">Vol: {selectedToken.momentum.volumeEth} ETH</span>
+                    </div>
+                    <div className="flex justify-between text-xs mb-2">
+                      <span className="text-emerald-400 font-bold">{selectedToken.momentum.buyPct}% Buys</span>
+                      <span className="text-red-400 font-bold">{selectedToken.momentum.sellPct}% Sells</span>
+                    </div>
+                    <div className="w-full bg-zinc-950 rounded-full h-2 overflow-hidden flex border border-zinc-800">
+                      <div className="bg-emerald-500 h-full transition-all" style={{ width: `${selectedToken.momentum.buyPct}%` }} />
+                      <div className="bg-red-500 h-full transition-all" style={{ width: `${selectedToken.momentum.sellPct}%` }} />
+                    </div>
                   </div>
                 </div>
 
