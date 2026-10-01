@@ -48,10 +48,10 @@ function calculateVibeScore(
 ) {
   let score = 50;
   // Meme coin specific risk weighting
-  if (blockZeroBuyers > 15) score -= 25; // Cabal/Bot snipe risk
-  if (timeSinceLaunchMins > 90 && bondingCurveProgress > 40) score += 20; // Sustained momentum
-  if (timeSinceLaunchMins < 15 && bondingCurveProgress > 70) score -= 20; // PnD risk (too fast)
-  if (diamondHandsHoldersPct >= 40) score += 15; // Good distribution
+  if (blockZeroBuyers > 15) score -= 25; 
+  if (timeSinceLaunchMins > 90 && bondingCurveProgress > 40) score += 20; 
+  if (timeSinceLaunchMins < 15 && bondingCurveProgress > 70) score -= 20; 
+  if (diamondHandsHoldersPct >= 40) score += 15; 
   return Math.max(1, Math.min(99, score));
 }
 
@@ -93,7 +93,7 @@ export default function Home() {
         const currentBlock = await publicClient.getBlockNumber();
         const logs = await publicClient.getLogs({
           address: FACTORY_ADDRESS,
-          fromBlock: currentBlock - BigInt("10000"), 
+          fromBlock: currentBlock - BigInt("30000"), // Scans back 30,000 blocks now
           toBlock: currentBlock
         });
         
@@ -285,17 +285,23 @@ export default function Home() {
                   
                   <div className="space-y-3">
                     {[
-                      { type: "Block 0 Sniper", addy: "0x82...3fA1", pnl: "+450%", bg: "bg-purple-500/10 text-purple-400 border-purple-500/20" },
-                      { type: "KOL / Cabal", addy: "0x11...bC22", pnl: "+120%", bg: "bg-blue-500/10 text-blue-400 border-blue-500/20" },
-                      { type: "High Win-Rate", addy: "0x99...4dEE", pnl: "+85%", bg: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" }
+                      { type: "Block 0 Sniper", addy: "0x82...3fA1", fullAddy: "0x8200000000000000000000000000000000003fA1", pnl: "+450%", bg: "bg-purple-500/10 text-purple-400 border-purple-500/20" },
+                      { type: "KOL / Cabal", addy: "0x11...bC22", fullAddy: "0x110000000000000000000000000000000000bC22", pnl: "+120%", bg: "bg-blue-500/10 text-blue-400 border-blue-500/20" },
+                      { type: "High Win-Rate", addy: "0x99...4dEE", fullAddy: "0x9900000000000000000000000000000000004dEE", pnl: "+85%", bg: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" }
                     ].map((wallet, idx) => (
-                      <div key={idx} className="p-3 bg-zinc-950 rounded-lg border border-zinc-800 flex justify-between items-center hover:border-zinc-700 cursor-pointer transition-colors">
+                      <a 
+                        key={idx}
+                        href={`https://testnet.vibevibe.fun/profile/${wallet.fullAddy}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="p-3 bg-zinc-950 rounded-lg border border-zinc-800 flex justify-between items-center hover:border-emerald-500/50 cursor-pointer transition-all group"
+                      >
                         <div>
                           <span className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded border mb-1 block w-max ${wallet.bg}`}>{wallet.type}</span>
-                          <span className="text-sm font-mono text-zinc-300">{wallet.addy}</span>
+                          <span className="text-sm font-mono text-zinc-300 group-hover:text-white transition-colors">{wallet.addy}</span>
                         </div>
                         <span className="text-emerald-400 font-bold text-sm">{wallet.pnl}</span>
-                      </div>
+                      </a>
                     ))}
                   </div>
                 </div>
