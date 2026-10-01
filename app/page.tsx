@@ -123,8 +123,9 @@ export default function Home() {
         const extractedData: TokenLaunchData[] = logs
           .filter(log => log.topics[0] === creationTopic)
           .map(log => {
-            const devTopic = log.topics[1]; 
-            const curveTopic = log.topics[2];   
+            // FIXED: Topic 1 is Curve (AMM), Topic 2 is Dev (Creator)
+            const curveTopic = log.topics[1]; 
+            const devTopic = log.topics[2];   
             const tokenTopic = log.topics[3];
             
             if (tokenTopic && curveTopic && devTopic) {
@@ -175,7 +176,6 @@ export default function Home() {
         const creationTopic = "0xa7e8032bfd07a9fbcde50eabe91eb2901faee6dbddd9cced579491d9b07ef5c8";
         const paddedTokenTopic = pad(searchQuery as `0x${string}`, { size: 32 });
 
-        // Bypassing TypeScript's strict ABI checking for the topics array here
         const searchLogs: any[] = await publicClient.getLogs({
           address: FACTORY_ADDRESS,
           topics: [creationTopic, null, null, paddedTokenTopic],
@@ -188,8 +188,9 @@ export default function Home() {
           if (log.topics[1] && log.topics[2]) {
             const newEntry: TokenLaunchData = {
               tokenAddress: searchQuery,
-              devAddress: `0x${log.topics[1].slice(26)}`,
-              curveAddress: `0x${log.topics[2].slice(26)}`,
+              // FIXED: Swap logic applied here for searches as well
+              curveAddress: `0x${log.topics[1].slice(26)}`,
+              devAddress: `0x${log.topics[2].slice(26)}`,
               launchBlock: log.blockNumber ? BigInt(log.blockNumber) : currentBlock
             };
             setLaunchData(prev => [newEntry, ...prev]);
