@@ -3,7 +3,7 @@
 import { useState, useMemo, useEffect } from "react";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { useAccount, useReadContract, useReadContracts, usePublicClient } from "wagmi";
-import { parseAbiItem } from "viem";
+import { isAddress } from "viem";
 
 // Your live $SIGNAL Token-gating contract
 const SIGNAL_TOKEN = "0xD4D41412033a72a0D1cCd0Cb02b666Cf771880B1";
@@ -28,7 +28,6 @@ interface VibeToken {
   score: number;
 }
 
-// Generates consistent, non-changing metrics based on the token's address
 function getDeterministicMetrics(address: string) {
   let seed = 0;
   for (let i = 0; i < address.length; i++) {
@@ -67,6 +66,9 @@ export default function Home() {
   const [activeFilter, setActiveFilter] = useState<"all" | "alpha" | "graduating" | "risk">("all");
   const [trackedAddresses, setTrackedAddresses] = useState<string[]>([]);
   const [isFetchingLogs, setIsFetchingLogs] = useState(true);
+  
+  // Search bar state
+  const [searchQuery, setSearchQuery] = useState("");
 
   const { data: balanceData } = useReadContract({
     address: SIGNAL_TOKEN,
@@ -89,31 +91,25 @@ export default function Home() {
 
       try {
         const currentBlock = await publicClient.getBlockNumber();
-        
-        // Fetch ALL logs from the factory without requiring a human-readable ABI
         const logs = await publicClient.getLogs({
           address: FACTORY_ADDRESS,
-          fromBlock: currentBlock - BigInt("10000"), 
+          fromBlock: currentBlock - BigInt("30000"), 
           toBlock: currentBlock
         });
         
-        // The raw machine hash for the creation event from Log 17
         const creationTopic = "0xa7e8032bfd07a9fbcde50eabe91eb2901faee6dbddd9cced579491d9b07ef5c8";
         
         const addresses = logs
           .filter(log => log.topics[0] === creationTopic)
           .map(log => {
-            // The token address is stored in Topic 3 (the 4th item in the array)
             const tokenTopic = log.topics[3];
-            // Slice off the extra padding zeros to get the clean 0x address
             return tokenTopic ? `0x${tokenTopic.slice(26)}` : null;
           })
           .filter(addr => addr !== null)
           .reverse()
-          .slice(0, 20);
+          .slice(0, 50);
         
         if (addresses.length > 0) {
-          // Keep $SIGNAL permanently pinned to the top, followed by the live feed
           setTrackedAddresses([...new Set(["0xD4D41412033a72a0D1cCd0Cb02b666Cf771880B1", ...(addresses as string[])])]);
         } else {
           setTrackedAddresses(fallbackList);
@@ -127,6 +123,24 @@ export default function Home() {
     }
     fetchTokens();
   }, [publicClient]);
+
+  // Handle Token Search
+  const handleSearch = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!isAddress(searchQuery)) {
+      alert("Please enter a valid Robinhood Chain contract address (must start with 0x).");
+      return;
+    }
+    
+    // Avoid duplicates and add to the top of the list
+    if (!trackedAddresses.includes(searchQuery)) {
+      setTrackedAddresses(prev => [searchQuery, ...prev]);
+    }
+    
+    // Switch to "all" filter so the searched token is definitely visible, then clear input
+    setActiveFilter("all");
+    setSearchQuery("");
+  };
 
   const contractCalls = trackedAddresses.flatMap((addr) => [
     { address: addr as `0x${string}`, abi: ERC20_ABI, functionName: "name" },
@@ -153,7 +167,6 @@ export default function Home() {
       const rawSupply = onChainData[i * 3 + 2]?.result as bigint;
       const totalSupply = rawSupply ? Number(rawSupply / (BigInt("10") ** BigInt("18"))) : 1000000000;
       
-      // Deterministic metrics ensuring stable scores per token
       const metrics = getDeterministicMetrics(tokenAddress);
       const score = calculateVibeScore(metrics.block0, metrics.time, metrics.curve, metrics.diamond);
 
@@ -198,6 +211,23 @@ export default function Home() {
           <p className="text-zinc-400">Querying real-time bonding curves and accumulating signals.</p>
         </header>
 
+        {/* Search Bar Component */}
+        <form onSubmit={handleSearch} className="mb-8 flex gap-3 max-w-2xl">
+          <input
+            type="text"
+            placeholder="Search by token contract (0x...)"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="flex-1 bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-3 text-sm focus:outline-none focus:border-emerald-500 transition-colors shadow-inner"
+          />
+          <button
+            type="submit"
+            className="px-8 py-3 bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold rounded-lg text-sm transition-colors shadow-lg shadow-emerald-500/20"
+          >
+            Analyze
+          </button>
+        </form>
+
         <div className="flex gap-2 mb-8 border-b border-zinc-800 pb-4 overflow-x-auto">
           <button onClick={() => setActiveFilter("all")} className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${activeFilter === "all" ? "bg-zinc-800 text-white" : "text-zinc-500 hover:text-white hover:bg-zinc-800/50"}`}>
             All Launches
@@ -223,7 +253,7 @@ export default function Home() {
               const scoreColor = token.score >= 70 ? "text-emerald-400 border-emerald-400/30 bg-emerald-400/10" : token.score >= 45 ? "text-yellow-400 border-yellow-400/30 bg-yellow-400/10" : "text-red-400 border-red-400/30 bg-red-400/10";
               
               return (
-                <div key={token.id} className="relative border border-zinc-800 bg-zinc-900 rounded-xl p-6 overflow-hidden flex flex-col justify-between">
+                <div key={token.id} className="relative border border-zinc-800 bg-zinc-900 rounded-xl p-6 overflow-hidden flex flex-col justify-between hover:border-zinc-700 transition-colors">
                   <div>
                     <div className="flex justify-between items-start mb-4">
                       <div>
