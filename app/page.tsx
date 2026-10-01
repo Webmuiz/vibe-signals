@@ -123,9 +123,8 @@ export default function Home() {
         const extractedData: TokenLaunchData[] = logs
           .filter(log => log.topics[0] === creationTopic)
           .map(log => {
-            // FIXED: Topic 1 is Curve (AMM), Topic 2 is Dev (Creator)
-            const curveTopic = log.topics[1]; 
-            const devTopic = log.topics[2];   
+            const devTopic = log.topics[1]; 
+            const curveTopic = log.topics[2];   
             const tokenTopic = log.topics[3];
             
             if (tokenTopic && curveTopic && devTopic) {
@@ -133,7 +132,7 @@ export default function Home() {
                 tokenAddress: `0x${tokenTopic.slice(26)}`,
                 curveAddress: `0x${curveTopic.slice(26)}`,
                 devAddress: `0x${devTopic.slice(26)}`,
-                launchBlock: log.blockNumber
+                launchBlock: log.blockNumber as bigint
               };
             }
             return null;
@@ -141,15 +140,6 @@ export default function Home() {
           .filter(data => data !== null)
           .reverse()
           .slice(0, 20) as TokenLaunchData[];
-        
-        if (!extractedData.find(d => d.tokenAddress.toLowerCase() === SIGNAL_TOKEN.toLowerCase())) {
-          extractedData.unshift({
-            tokenAddress: SIGNAL_TOKEN,
-            curveAddress: "0x89944BC9D3b20764BeA771CFAf9711a8Fb839e72",
-            devAddress: "0xc8F14080c15801bab3747E9875e6894b86801bC7", 
-            launchBlock: latestBlock - BigInt(1500)
-          });
-        }
         
         setLaunchData(extractedData);
       } catch (error) {
@@ -188,20 +178,12 @@ export default function Home() {
           if (log.topics[1] && log.topics[2]) {
             const newEntry: TokenLaunchData = {
               tokenAddress: searchQuery,
-              // FIXED: Swap logic applied here for searches as well
-              curveAddress: `0x${log.topics[1].slice(26)}`,
-              devAddress: `0x${log.topics[2].slice(26)}`,
+              devAddress: `0x${log.topics[1].slice(26)}`,
+              curveAddress: `0x${log.topics[2].slice(26)}`,
               launchBlock: log.blockNumber ? BigInt(log.blockNumber) : currentBlock
             };
             setLaunchData(prev => [newEntry, ...prev]);
           }
-        } else {
-          setLaunchData(prev => [{
-            tokenAddress: searchQuery,
-            curveAddress: searchQuery,
-            devAddress: searchQuery,
-            launchBlock: currentBlock
-          }, ...prev]);
         }
       } catch (err) {
         console.error("Search lookup failed:", err);
@@ -232,11 +214,13 @@ export default function Home() {
     }
   };
 
+  // 5 Calls per token to guarantee we find the un-bought supply vault
   const contractCalls = launchData.flatMap((data) => [
     { address: data.tokenAddress as `0x${string}`, abi: ERC20_ABI, functionName: "name" },
     { address: data.tokenAddress as `0x${string}`, abi: ERC20_ABI, functionName: "symbol" },
     { address: data.tokenAddress as `0x${string}`, abi: ERC20_ABI, functionName: "totalSupply" },
-    { address: data.tokenAddress as `0x${string}`, abi: ERC20_ABI, functionName: "balanceOf", args: [data.curveAddress as `0x${string}`] }
+    { address: data.tokenAddress as `0x${string}`, abi: ERC20_ABI, functionName: "balanceOf", args: [data.curveAddress as `0x${string}`] },
+    { address: data.tokenAddress as `0x${string}`, abi: ERC20_ABI, functionName: "balanceOf", args: [data.tokenAddress as `0x${string}`] }
   ]);
 
   const { data: onChainData, isLoading } = useReadContracts({
@@ -251,13 +235,22 @@ export default function Home() {
     for (let i = 0; i < launchData.length; i++) {
       const data = launchData[i];
       
-      const name = onChainData[i * 4]?.result as string || `Unknown Token`;
-      const ticker = onChainData[i * 4 + 1]?.result as string || "$UNKN";
-      const rawSupply = onChainData[i * 4 + 2]?.result as bigint;
-      const rawVaultBalance = onChainData[i * 4 + 3]?.result as bigint;
+      const name = onChainData[i * 5]?.result as string || `Unknown Token`;
+      const ticker = onChainData[i * 5 + 1]?.result as string || "$UNKN";
+      const rawSupply = onChainData[i * 5 + 2]?.result as bigint;
+      
+      // Dual-Vault Tracker
+      const rawCurveBal = onChainData[i * 5 + 3]?.result as bigint;
+      const rawTokenBal = onChainData[i * 5 + 4]?.result as bigint;
       
       const totalSupply = rawSupply ? Number(rawSupply / (BigInt("10") ** BigInt("18"))) : 1000000000;
-      const vaultBalance = rawVaultBalance !== undefined ? Number(rawVaultBalance / (BigInt("10") ** BigInt("18"))) : totalSupply;
+      
+      const curveBal = rawCurveBal !== undefined ? Number(rawCurveBal / (BigInt("10") ** BigInt("18"))) : 0;
+      const tokenBal = rawTokenBal !== undefined ? Number(rawTokenBal / (BigInt("10") ** BigInt("18"))) : 0;
+
+      // The un-bought supply is held in whichever contract has the most tokens
+      let vaultBalance = Math.max(curveBal, tokenBal);
+      if (vaultBalance === 0) vaultBalance = totalSupply; // Fallback if data hasn't propagated
 
       const blocksPassed = Number(currentBlock - data.launchBlock);
       const realTimeSinceLaunchMins = Math.max(0, Math.floor((blocksPassed * 2) / 60));
