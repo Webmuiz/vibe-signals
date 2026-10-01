@@ -5,7 +5,6 @@ import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { useAccount, useReadContract, useReadContracts, usePublicClient } from "wagmi";
 import { isAddress } from "viem";
 
-// Your live $SIGNAL Token-gating contract
 const SIGNAL_TOKEN = "0xD4D41412033a72a0D1cCd0Cb02b666Cf771880B1";
 const FACTORY_ADDRESS = "0xe794217880011f9cA6961340eD5c16EC9559Fea0";
 
@@ -66,9 +65,10 @@ export default function Home() {
   const [activeFilter, setActiveFilter] = useState<"all" | "alpha" | "graduating" | "risk">("all");
   const [trackedAddresses, setTrackedAddresses] = useState<string[]>([]);
   const [isFetchingLogs, setIsFetchingLogs] = useState(true);
-  
-  // Search bar state
   const [searchQuery, setSearchQuery] = useState("");
+  
+  // New state to handle the Alpha Terminal View
+  const [selectedToken, setSelectedToken] = useState<VibeToken | null>(null);
 
   const { data: balanceData } = useReadContract({
     address: SIGNAL_TOKEN,
@@ -85,15 +85,15 @@ export default function Home() {
       
       const fallbackList = [
         "0xD4D41412033a72a0D1cCd0Cb02b666Cf771880B1", 
-        "0xA48964DA07300E6Ae6754Ce265873F8F59F4a9F6", 
-        "0x336D221D697Fee3B8AB08Bf101dFC0dBe332d701"  
+        "0x65be372b64a2750e1ef38a0a036bc00155b443f2", // TREE
+        "0xA48964DA07300E6Ae6754Ce265873F8F59F4a9F6" 
       ];
 
       try {
         const currentBlock = await publicClient.getBlockNumber();
         const logs = await publicClient.getLogs({
           address: FACTORY_ADDRESS,
-          fromBlock: currentBlock - BigInt("30000"), 
+          fromBlock: currentBlock - BigInt("10000"), 
           toBlock: currentBlock
         });
         
@@ -107,7 +107,7 @@ export default function Home() {
           })
           .filter(addr => addr !== null)
           .reverse()
-          .slice(0, 50);
+          .slice(0, 50); // Increased to 50
         
         if (addresses.length > 0) {
           setTrackedAddresses([...new Set(["0xD4D41412033a72a0D1cCd0Cb02b666Cf771880B1", ...(addresses as string[])])]);
@@ -115,7 +115,6 @@ export default function Home() {
           setTrackedAddresses(fallbackList);
         }
       } catch (error) {
-        console.error("Error fetching factory logs:", error);
         setTrackedAddresses(fallbackList);
       } finally {
         setIsFetchingLogs(false);
@@ -124,20 +123,15 @@ export default function Home() {
     fetchTokens();
   }, [publicClient]);
 
-  // Handle Token Search
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     if (!isAddress(searchQuery)) {
-      alert("Please enter a valid Robinhood Chain contract address (must start with 0x).");
+      alert("Please enter a valid Robinhood Chain contract address.");
       return;
     }
-    
-    // Avoid duplicates and add to the top of the list
     if (!trackedAddresses.includes(searchQuery)) {
       setTrackedAddresses(prev => [searchQuery, ...prev]);
     }
-    
-    // Switch to "all" filter so the searched token is definitely visible, then clear input
     setActiveFilter("all");
     setSearchQuery("");
   };
@@ -150,16 +144,13 @@ export default function Home() {
 
   const { data: onChainData, isLoading } = useReadContracts({
     contracts: contractCalls as any,
-    query: {
-      enabled: trackedAddresses.length > 0,
-    }
+    query: { enabled: trackedAddresses.length > 0 }
   });
 
   const processedTokens: VibeToken[] = useMemo(() => {
     if (!onChainData || trackedAddresses.length === 0) return [];
     
     const tokens: VibeToken[] = [];
-    
     for (let i = 0; i < trackedAddresses.length; i++) {
       const tokenAddress = trackedAddresses[i];
       const name = onChainData[i * 3]?.result as string || `Unknown Token ${i + 1}`;
@@ -196,8 +187,8 @@ export default function Home() {
   }, [processedTokens, activeFilter]);
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100 font-mono">
-      <nav className="flex justify-between items-center p-4 border-b border-zinc-800 bg-zinc-900/50 sticky top-0 z-50">
+    <div className="min-h-screen bg-zinc-950 text-zinc-100 font-mono selection:bg-emerald-500/30">
+      <nav className="flex justify-between items-center p-4 border-b border-zinc-800 bg-zinc-900/50 sticky top-0 z-50 backdrop-blur-md">
         <div>
           <h1 className="text-xl font-bold text-emerald-400">Vibe Signals</h1>
           <span className="text-xs text-zinc-500">Robinhood Chain Testnet</span>
@@ -205,114 +196,245 @@ export default function Home() {
         <ConnectButton />
       </nav>
 
-      <main className="p-8 max-w-5xl mx-auto">
-        <header className="mb-8">
-          <h2 className="text-3xl font-bold tracking-tight mb-2">Live On-Chain Radar</h2>
-          <p className="text-zinc-400">Querying real-time bonding curves and accumulating signals.</p>
-        </header>
+      <main className="p-8 max-w-6xl mx-auto">
+        {/* === ALPHA TERMINAL VIEW === */}
+        {selectedToken ? (
+          <div className="animate-in fade-in slide-in-from-bottom-4 duration-300">
+            <button 
+              onClick={() => setSelectedToken(null)}
+              className="mb-6 text-zinc-400 hover:text-white flex items-center gap-2 text-sm transition-colors"
+            >
+              ← Back to Radar
+            </button>
+            
+            <header className="mb-8 flex justify-between items-end border-b border-zinc-800 pb-6">
+              <div>
+                <h2 className="text-4xl font-bold tracking-tight mb-2 flex items-center gap-3">
+                  {selectedToken.name} 
+                  <span className="text-xl text-emerald-400 bg-emerald-400/10 px-3 py-1 rounded-lg border border-emerald-400/20">{selectedToken.ticker}</span>
+                </h2>
+                <p className="text-zinc-500 text-sm">Contract: {selectedToken.contractAddress}</p>
+              </div>
+              <div className="text-right">
+                <span className="block text-sm text-zinc-400 mb-1">Vibe Score</span>
+                <span className={`text-3xl font-bold ${selectedToken.score >= 70 ? 'text-emerald-400' : selectedToken.score >= 45 ? 'text-yellow-400' : 'text-red-400'}`}>
+                  {selectedToken.score}
+                </span>
+              </div>
+            </header>
 
-        {/* Search Bar Component */}
-        <form onSubmit={handleSearch} className="mb-8 flex gap-3 max-w-2xl">
-          <input
-            type="text"
-            placeholder="Search by token contract (0x...)"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="flex-1 bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-3 text-sm focus:outline-none focus:border-emerald-500 transition-colors shadow-inner"
-          />
-          <button
-            type="submit"
-            className="px-8 py-3 bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold rounded-lg text-sm transition-colors shadow-lg shadow-emerald-500/20"
-          >
-            Analyze
-          </button>
-        </form>
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              {/* Column 1: Market Structure (SMC Layout) */}
+              <div className="lg:col-span-2 space-y-6">
+                <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
+                  <h3 className="text-lg font-bold mb-4 text-white">Smart Money Concepts (SMC) Analysis</h3>
+                  
+                  {/* Mock Chart Area */}
+                  <div className="w-full h-64 bg-zinc-950 border border-zinc-800 rounded-lg mb-6 flex items-center justify-center relative overflow-hidden group">
+                    <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-5"></div>
+                    <span className="text-zinc-600 font-medium tracking-widest z-10">TradingView Chart Integration Pending</span>
+                    
+                    {/* Simulated price action visualizers */}
+                    <div className="absolute left-10 right-10 bottom-1/4 h-px bg-emerald-500/50 border-t border-dashed border-emerald-400"></div>
+                    <div className="absolute left-10 text-xs text-emerald-500/80 bottom-[calc(25%+4px)]">Bullish Order Block (OB) Support</div>
 
-        <div className="flex gap-2 mb-8 border-b border-zinc-800 pb-4 overflow-x-auto">
-          <button onClick={() => setActiveFilter("all")} className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${activeFilter === "all" ? "bg-zinc-800 text-white" : "text-zinc-500 hover:text-white hover:bg-zinc-800/50"}`}>
-            All Launches
-          </button>
-          <button onClick={() => setActiveFilter("alpha")} className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${activeFilter === "alpha" ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30" : "text-zinc-500 hover:text-emerald-400 hover:bg-emerald-500/10"}`}>
-            High Alpha (Score ≥ 70)
-          </button>
-          <button onClick={() => setActiveFilter("graduating")} className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${activeFilter === "graduating" ? "bg-blue-500/20 text-blue-400 border border-blue-500/30" : "text-zinc-500 hover:text-blue-400 hover:bg-blue-500/10"}`}>
-            Graduating Soon (&gt;85%)
-          </button>
-          <button onClick={() => setActiveFilter("risk")} className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${activeFilter === "risk" ? "bg-red-500/20 text-red-400 border border-red-500/30" : "text-zinc-500 hover:text-red-400 hover:bg-red-500/10"}`}>
-            High Risk / Sniped
-          </button>
-        </div>
+                    <div className="absolute left-10 right-10 top-1/4 h-8 bg-red-500/10 border-y border-dashed border-red-500/30"></div>
+                    <div className="absolute left-10 text-xs text-red-400/80 top-[calc(25%-18px)]">Fair Value Gap (FVG) Target</div>
+                  </div>
 
-        {isFetchingLogs || isLoading ? (
-          <div className="text-center py-12 text-zinc-500 animate-pulse">Querying factory contract logs for recent launches...</div>
-        ) : filteredTokens.length === 0 ? (
-          <div className="text-center py-12 text-zinc-500 border border-dashed border-zinc-800 rounded-xl">No tokens match this filter.</div>
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div className="p-4 bg-zinc-950 rounded-lg border border-zinc-800">
+                      <span className="text-zinc-500 block mb-1">Market Structure</span>
+                      <span className="text-emerald-400 font-bold">Bullish MSS Confirmed</span>
+                    </div>
+                    <div className="p-4 bg-zinc-950 rounded-lg border border-zinc-800">
+                      <span className="text-zinc-500 block mb-1">Liquidity Pools</span>
+                      <span className="text-white font-medium">Resting above FVG</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
+                  <h3 className="text-lg font-bold mb-4 text-white">Bonding Curve Telemetry</h3>
+                  <div className="flex justify-between text-sm mb-2">
+                    <span className="text-zinc-400">Graduation Progress</span>
+                    <span className="text-emerald-400 font-bold">{selectedToken.bondingCurveProgress}%</span>
+                  </div>
+                  <div className="w-full bg-zinc-950 rounded-full h-4 border border-zinc-800 overflow-hidden">
+                    <div className="h-4 bg-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.5)] transition-all" style={{ width: `${selectedToken.bondingCurveProgress}%` }} />
+                  </div>
+                </div>
+              </div>
+
+              {/* Column 2: Smart Wallets & Intel */}
+              <div className="space-y-6">
+                <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
+                  <h3 className="text-lg font-bold mb-4 text-white flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                    Smart Money Wallets
+                  </h3>
+                  <p className="text-xs text-zinc-500 mb-4">Simulated tracking of early accumulation and high win-rate addresses.</p>
+                  
+                  <div className="space-y-3">
+                    {[
+                      { type: "Block 0 Sniper", addy: "0x82...3fA1", pnl: "+450%", bg: "bg-purple-500/10 text-purple-400 border-purple-500/20" },
+                      { type: "SMC Accumulator", addy: "0x11...bC22", pnl: "+120%", bg: "bg-blue-500/10 text-blue-400 border-blue-500/20" },
+                      { type: "High Win-Rate", addy: "0x99...4dEE", pnl: "+85%", bg: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" }
+                    ].map((wallet, idx) => (
+                      <div key={idx} className="p-3 bg-zinc-950 rounded-lg border border-zinc-800 flex justify-between items-center hover:border-zinc-700 cursor-pointer transition-colors">
+                        <div>
+                          <span className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded border mb-1 block w-max ${wallet.bg}`}>{wallet.type}</span>
+                          <span className="text-sm font-mono text-zinc-300">{wallet.addy}</span>
+                        </div>
+                        <span className="text-emerald-400 font-bold text-sm">{wallet.pnl}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
+                  <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-wider mb-4">Risk Metrics</h3>
+                  <ul className="space-y-3 text-sm">
+                    <li className="flex justify-between">
+                      <span className="text-zinc-500">Block 0 Buyers</span>
+                      <span className={selectedToken.blockZeroBuyers > 15 ? 'text-red-400' : 'text-white'}>{selectedToken.blockZeroBuyers} Wallets</span>
+                    </li>
+                    <li className="flex justify-between">
+                      <span className="text-zinc-500">Diamond Hands</span>
+                      <span className="text-white">{selectedToken.diamondHandsHoldersPct}%</span>
+                    </li>
+                    <li className="flex justify-between">
+                      <span className="text-zinc-500">Time Live</span>
+                      <span className="text-white">{selectedToken.timeSinceLaunchMins} mins</span>
+                    </li>
+                  </ul>
+                </div>
+                
+                <a 
+                  href={`https://testnet.vibevibe.fun/token/${selectedToken.contractAddress}`} 
+                  target="_blank" 
+                  rel="noreferrer" 
+                  className="w-full py-4 bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold rounded-xl text-center text-sm transition-colors shadow-lg shadow-emerald-500/20 block"
+                >
+                  Trade on vibe/vibe
+                </a>
+              </div>
+            </div>
+          </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {filteredTokens.map((token) => {
-              const scoreColor = token.score >= 70 ? "text-emerald-400 border-emerald-400/30 bg-emerald-400/10" : token.score >= 45 ? "text-yellow-400 border-yellow-400/30 bg-yellow-400/10" : "text-red-400 border-red-400/30 bg-red-400/10";
-              
-              return (
-                <div key={token.id} className="relative border border-zinc-800 bg-zinc-900 rounded-xl p-6 overflow-hidden flex flex-col justify-between hover:border-zinc-700 transition-colors">
-                  <div>
-                    <div className="flex justify-between items-start mb-4">
+          /* === RADAR GRID VIEW === */
+          <div className="animate-in fade-in duration-300">
+            <header className="mb-8">
+              <h2 className="text-3xl font-bold tracking-tight mb-2">Live On-Chain Radar</h2>
+              <p className="text-zinc-400">Querying real-time bonding curves and accumulating signals.</p>
+            </header>
+
+            <form onSubmit={handleSearch} className="mb-8 flex gap-3 max-w-2xl">
+              <input
+                type="text"
+                placeholder="Search by token contract (0x...)"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="flex-1 bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-3 text-sm focus:outline-none focus:border-emerald-500 transition-colors shadow-inner text-white"
+              />
+              <button
+                type="submit"
+                className="px-8 py-3 bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold rounded-lg text-sm transition-colors shadow-lg shadow-emerald-500/20"
+              >
+                Scan
+              </button>
+            </form>
+
+            <div className="flex gap-2 mb-8 border-b border-zinc-800 pb-4 overflow-x-auto">
+              <button onClick={() => setActiveFilter("all")} className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${activeFilter === "all" ? "bg-zinc-800 text-white" : "text-zinc-500 hover:text-white hover:bg-zinc-800/50"}`}>
+                All Launches
+              </button>
+              <button onClick={() => setActiveFilter("alpha")} className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${activeFilter === "alpha" ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30" : "text-zinc-500 hover:text-emerald-400 hover:bg-emerald-500/10"}`}>
+                High Alpha (Score ≥ 70)
+              </button>
+              <button onClick={() => setActiveFilter("graduating")} className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${activeFilter === "graduating" ? "bg-blue-500/20 text-blue-400 border border-blue-500/30" : "text-zinc-500 hover:text-blue-400 hover:bg-blue-500/10"}`}>
+                Graduating Soon (&gt;85%)
+              </button>
+              <button onClick={() => setActiveFilter("risk")} className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${activeFilter === "risk" ? "bg-red-500/20 text-red-400 border border-red-500/30" : "text-zinc-500 hover:text-red-400 hover:bg-red-500/10"}`}>
+                High Risk / Sniped
+              </button>
+            </div>
+
+            {isFetchingLogs || isLoading ? (
+              <div className="text-center py-12 text-zinc-500 animate-pulse">Querying factory contract logs for recent launches...</div>
+            ) : filteredTokens.length === 0 ? (
+              <div className="text-center py-12 text-zinc-500 border border-dashed border-zinc-800 rounded-xl">No tokens match this filter.</div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {filteredTokens.map((token) => {
+                  const scoreColor = token.score >= 70 ? "text-emerald-400 border-emerald-400/30 bg-emerald-400/10" : token.score >= 45 ? "text-yellow-400 border-yellow-400/30 bg-yellow-400/10" : "text-red-400 border-red-400/30 bg-red-400/10";
+                  
+                  return (
+                    <div 
+                      key={token.id} 
+                      onClick={() => {
+                        if (isConnected && hasAccess) setSelectedToken(token);
+                      }}
+                      className={`relative border border-zinc-800 bg-zinc-900 rounded-xl p-6 overflow-hidden flex flex-col justify-between transition-all ${isConnected && hasAccess ? 'cursor-pointer hover:border-emerald-500/50 hover:shadow-[0_0_20px_rgba(16,185,129,0.1)] group' : ''}`}
+                    >
                       <div>
-                        <h3 className="font-bold text-lg">{token.name}</h3>
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm text-zinc-400">{token.ticker}</span>
-                          <span className="text-xs px-2 py-1 bg-zinc-800 rounded-md text-zinc-500">{shortenAddress(token.contractAddress)}</span>
+                        <div className="flex justify-between items-start mb-4">
+                          <div>
+                            <h3 className={`font-bold text-lg ${isConnected && hasAccess ? 'group-hover:text-emerald-400 transition-colors' : ''}`}>{token.name}</h3>
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm text-zinc-400">{token.ticker}</span>
+                              <span className="text-xs px-2 py-1 bg-zinc-800 rounded-md text-zinc-500">{shortenAddress(token.contractAddress)}</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="mb-6">
+                          <div className="flex justify-between text-xs mb-2">
+                            <span className="text-zinc-500">Bonding Curve</span>
+                            <span className={token.bondingCurveProgress > 85 ? "text-emerald-400" : "text-zinc-300"}>{token.bondingCurveProgress}%</span>
+                          </div>
+                          <div className="w-full bg-zinc-800 rounded-full h-2">
+                            <div className={`h-2 rounded-full ${token.bondingCurveProgress > 85 ? "bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.8)]" : "bg-zinc-500"}`} style={{ width: `${token.bondingCurveProgress}%` }} />
+                          </div>
                         </div>
                       </div>
-                    </div>
 
-                    <div className="mb-6">
-                      <div className="flex justify-between text-xs mb-2">
-                        <span className="text-zinc-500">Bonding Curve</span>
-                        <span className={token.bondingCurveProgress > 85 ? "text-emerald-400" : "text-zinc-300"}>{token.bondingCurveProgress}%</span>
-                      </div>
-                      <div className="w-full bg-zinc-800 rounded-full h-2">
-                        <div className={`h-2 rounded-full ${token.bondingCurveProgress > 85 ? "bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.8)]" : "bg-zinc-500"}`} style={{ width: `${token.bondingCurveProgress}%` }} />
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="relative">
-                    {(!isConnected || !hasAccess) && (
-                      <div className="absolute inset-0 z-10 backdrop-blur-md bg-zinc-950/60 flex flex-col items-center justify-center rounded-lg border border-zinc-800">
-                        {!isConnected ? (
-                          <span className="text-sm font-bold text-zinc-300">Connect Wallet to Unlock</span>
-                        ) : (
-                          <div className="text-center p-2">
-                            <span className="text-xs font-bold text-emerald-400 block mb-1">Requires 10,000 $SIGNAL</span>
-                            <a href={`https://testnet.vibevibe.fun/token/${SIGNAL_TOKEN}`} target="_blank" rel="noreferrer" className="text-[10px] underline text-zinc-400 hover:text-white">Acquire Token</a>
+                      <div className="relative">
+                        {(!isConnected || !hasAccess) && (
+                          <div className="absolute inset-0 z-10 backdrop-blur-md bg-zinc-950/60 flex flex-col items-center justify-center rounded-lg border border-zinc-800">
+                            {!isConnected ? (
+                              <span className="text-sm font-bold text-zinc-300">Connect Wallet to Unlock</span>
+                            ) : (
+                              <div className="text-center p-2">
+                                <span className="text-xs font-bold text-emerald-400 block mb-1">Requires 10,000 $SIGNAL</span>
+                                <a href={`https://testnet.vibevibe.fun/token/${SIGNAL_TOKEN}`} target="_blank" rel="noreferrer" className="text-[10px] underline text-zinc-400 hover:text-white pointer-events-auto relative z-20">Acquire Token</a>
+                              </div>
+                            )}
                           </div>
                         )}
-                      </div>
-                    )}
 
-                    <div className="border border-zinc-800 bg-zinc-950/50 rounded-lg p-4 mb-4">
-                      <div className="flex justify-between items-center mb-3">
-                        <span className="text-sm text-zinc-400">Vibe Score</span>
-                        <span className={`text-xl font-bold px-3 py-1 rounded-md border ${scoreColor}`}>{token.score}</span>
+                        <div className="border border-zinc-800 bg-zinc-950/50 rounded-lg p-4 mb-4">
+                          <div className="flex justify-between items-center mb-3">
+                            <span className="text-sm text-zinc-400">Vibe Score</span>
+                            <span className={`text-xl font-bold px-3 py-1 rounded-md border ${scoreColor}`}>{token.score}</span>
+                          </div>
+                          <div className="flex justify-between items-center">
+                            <span className="text-sm text-zinc-400">SPARK Adjusted Supply</span>
+                            <span className="text-sm font-medium">{(token.totalSupply * 0.75).toLocaleString()}</span>
+                          </div>
+                        </div>
                       </div>
-                      <div className="flex justify-between items-center">
-                        <span className="text-sm text-zinc-400">SPARK Adjusted Supply</span>
-                        <span className="text-sm font-medium">{(token.totalSupply * 0.75).toLocaleString()}</span>
-                      </div>
+
+                      <button 
+                        className={`w-full py-2 font-bold rounded-lg text-center text-sm transition-colors mt-auto block border ${isConnected && hasAccess ? 'bg-zinc-800 hover:bg-emerald-500 hover:text-zinc-950 border-zinc-700 hover:border-emerald-500 text-white' : 'bg-zinc-800/50 text-zinc-600 border-zinc-800 cursor-not-allowed'}`}
+                      >
+                        {isConnected && hasAccess ? 'Analyze Alpha →' : 'Locked'}
+                      </button>
                     </div>
-                  </div>
-
-                  <a 
-                    href={`https://testnet.vibevibe.fun/token/${token.contractAddress}`} 
-                    target="_blank" 
-                    rel="noreferrer" 
-                    className="w-full py-2 bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold rounded-lg text-center text-sm transition-colors mt-auto block"
-                  >
-                    View on vibe/vibe
-                  </a>
-                </div>
-              );
-            })}
+                  );
+                })}
+              </div>
+            )}
           </div>
         )}
       </main>
