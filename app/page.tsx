@@ -2,46 +2,28 @@
 
 import { useState, useMemo, useEffect } from "react";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
-import { useAccount, useReadContract, useReadContracts, usePublicClient, useSendTransaction } from "wagmi";
-import { isAddress, parseEther, pad } from "viem";
+import { useAccount, useSendTransaction, useReadContract } from "wagmi";
+import { isAddress, parseEther } from "viem";
 
 const SIGNAL_TOKEN = "0xD4D41412033a72a0D1cCd0Cb02b666Cf771880B1" as `0x${string}`;
 const FACTORY_ADDRESS = "0xe794217880011f9cA6961340eD5c16EC9559Fea0" as `0x${string}`;
-
-const ERC20_ABI = [
-  { name: "name", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "string" }] },
-  { name: "symbol", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "string" }] },
-  { name: "totalSupply", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
-  { name: "decimals", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "uint8" }] },
-  { name: "balanceOf", type: "function", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "uint256" }] }
-] as const;
 
 const SIGNAL_BALANCE_ABI = [
   { name: "balanceOf", type: "function", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "uint256" }] }
 ] as const;
 
-interface TokenLaunchData {
+interface DBToken {
+  launchId: number;
   tokenAddress: string;
-  curveAddress: string;
+  ammAddress: string;
   devAddress: string;
-  launchBlock: bigint;
-}
-
-interface VibeToken {
-  id: string;
-  name: string;
-  ticker: string;
-  contractAddress: string;
-  devAddress: string;
-  bondingCurveProgress: number;
-  timeSinceLaunchMins: number;
-  blockZeroBuyers: number;
-  diamondHandsHoldersPct: number;
-  totalSupply: number;
-  score: number;
-  devProfile: { label: string; color: string; launches: number; gradRate: number; };
-  safetyChecks: { socials: { label: string; safe: boolean }; mev: { label: string; safe: boolean }; honeypot: { label: string; safe: boolean }; };
-  momentum: { buyPct: number; sellPct: number; volumeEth: string; };
+  ethDeposited: number;
+  pairSymbol: string;
+  curveProgress: number;
+  launchBlock: number;
+  timestamp: string;
+  name: string;      // <-- Added this
+  ticker: string;    // <-- Added this
 }
 
 function getDevProfile(devAddress: string) {
@@ -54,44 +36,40 @@ function getDevProfile(devAddress: string) {
 
 function getSafetyChecks(tokenAddress: string) {
   let seed = 0; for (let i = 0; i < tokenAddress.length; i++) seed += tokenAddress.charCodeAt(i);
-  return { 
-    socials: seed % 2 === 0 ? { label: "Linked (X & TG)", safe: true } : { label: "Ghost Launch (No Socials)", safe: false }, 
-    mev: seed % 100 > 60 ? { label: "High Bot Infiltration", safe: false } : { label: "Low Risk (< 5%)", safe: true }, 
-    honeypot: seed % 100 > 90 ? { label: "Flagged (Mint/Blacklist)", safe: false } : { label: "Clean (Renounced, 0/0 Tax)", safe: true } 
+  return {
+    socials: seed % 2 === 0 ? { label: "Linked (X & TG)", safe: true } : { label: "Ghost Launch (No Socials)", safe: false },
+    mev: seed % 100 > 60 ? { label: "High Bot Infiltration", safe: false } : { label: "Low Risk (< 5%)", safe: true },
+    honeypot: seed % 100 > 90 ? { label: "Flagged (Mint/Blacklist)", safe: false } : { label: "Clean (Renounced, 0/0 Tax)", safe: true }
   };
 }
 
 function getMomentumMetrics(tokenAddress: string) {
   let seed = 0; for (let i = 0; i < tokenAddress.length; i++) seed += tokenAddress.charCodeAt(i);
-  const buyPct = (seed % 45) + 45; 
+  const buyPct = (seed % 45) + 45;
   return { buyPct, sellPct: 100 - buyPct, volumeEth: ((seed % 80) / 10 + 0.5).toFixed(2) };
 }
 
 function calculateVibeScore(blockZeroBuyers: number, timeSinceLaunchMins: number, bondingCurveProgress: number, diamondHandsHoldersPct: number) {
   let score = 50;
-  if (blockZeroBuyers > 15) score -= 25; 
-  if (timeSinceLaunchMins > 90 && bondingCurveProgress > 40) score += 20; 
-  if (timeSinceLaunchMins < 15 && bondingCurveProgress > 70) score -= 20; 
-  if (diamondHandsHoldersPct >= 40) score += 15; 
+  if (blockZeroBuyers > 15) score -= 25;
+  if (timeSinceLaunchMins > 90 && bondingCurveProgress > 40) score += 20;
+  if (timeSinceLaunchMins < 15 && bondingCurveProgress > 70) score -= 20;
+  if (diamondHandsHoldersPct >= 40) score += 15;
   return Math.max(1, Math.min(99, score));
 }
 
-function shortenAddress(address: string) { 
-  return `${address.slice(0, 6)}...${address.slice(-4)}`; 
+function shortenAddress(address: string) {
+  return `${address.slice(0, 6)}...${address.slice(-4)}`;
 }
 
 export default function Home() {
   const { address, isConnected } = useAccount();
-  const publicClient = usePublicClient();
   const { sendTransaction, isPending: isTxPending } = useSendTransaction();
-  
+
   const [activeFilter, setActiveFilter] = useState<"all" | "alpha" | "graduating" | "risk">("all");
-  const [launchData, setLaunchData] = useState<TokenLaunchData[]>([]);
-  const [currentBlock, setCurrentBlock] = useState<bigint>(BigInt(0));
-  const [isFetchingLogs, setIsFetchingLogs] = useState(true);
-  
+  const [dbTokens, setDbTokens] = useState<DBToken[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedToken, setSelectedToken] = useState<VibeToken | null>(null);
+  const [selectedToken, setSelectedToken] = useState<any | null>(null);
 
   const [apeAmount, setApeAmount] = useState<string>("0.005");
   const [slippage, setSlippage] = useState<number>(15);
@@ -106,219 +84,86 @@ export default function Home() {
 
   const hasAccess = balanceData && BigInt(balanceData as any) >= BigInt("10000") * (BigInt("10") ** BigInt("18"));
 
+  // High-speed polling from our local JSON database API
   useEffect(() => {
-    async function fetchTokens() {
-      if (!publicClient) return;
+    const fetchDatabase = async () => {
       try {
-        const latestBlock = await publicClient.getBlockNumber();
-        setCurrentBlock(latestBlock);
-
-        const logs = await publicClient.getLogs({
-          address: FACTORY_ADDRESS,
-          fromBlock: latestBlock - BigInt("10000"), 
-          toBlock: latestBlock
-        });
-        
-        const creationTopic = "0xa7e8032bfd07a9fbcde50eabe91eb2901faee6dbddd9cced579491d9b07ef5c8";
-        
-        const extractedData: TokenLaunchData[] = logs
-          .filter(log => log.topics[0] === creationTopic)
-          .map(log => {
-            // STRICT MAPPING: Topic 1 = AMM, Topic 2 = Dev, Topic 3 = Token
-            const curveTopic = log.topics[1]; 
-            const devTopic = log.topics[2];   
-            const tokenTopic = log.topics[3];
-            
-            if (tokenTopic && curveTopic && devTopic) {
-              return {
-                tokenAddress: `0x${tokenTopic.slice(26)}`,
-                curveAddress: `0x${curveTopic.slice(26)}`,
-                devAddress: `0x${devTopic.slice(26)}`,
-                launchBlock: log.blockNumber as bigint
-              };
-            }
-            return null;
-          })
-          .filter(data => data !== null)
-          .reverse()
-          .slice(0, 20) as TokenLaunchData[];
-        
-        if (!extractedData.find(d => d.tokenAddress.toLowerCase() === SIGNAL_TOKEN.toLowerCase())) {
-          extractedData.unshift({
-            tokenAddress: SIGNAL_TOKEN,
-            curveAddress: "0x89944BC9D3b20764BeA771CFAf9711a8Fb839e72",
-            devAddress: "0xc8F14080c15801bab3747E9875e6894b86801bC7", 
-            launchBlock: latestBlock - BigInt(1500)
-          });
-        }
-        
-        setLaunchData(extractedData);
-      } catch (error) {
-        console.error("Error fetching launch events:", error);
-      } finally {
-        setIsFetchingLogs(false);
-      }
-    }
-    fetchTokens();
-  }, [publicClient]);
-
-  const handleSearch = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!isAddress(searchQuery) || !publicClient) return;
-    
-    const formattedSearch = searchQuery.toLowerCase();
-    const existing = launchData.find(t => t.tokenAddress.toLowerCase() === formattedSearch);
-
-    if (existing) {
-      setLaunchData(prev => [existing, ...prev.filter(t => t.tokenAddress.toLowerCase() !== formattedSearch)]);
-    } else {
-      setIsFetchingLogs(true);
-      try {
-        const creationTopic = "0xa7e8032bfd07a9fbcde50eabe91eb2901faee6dbddd9cced579491d9b07ef5c8";
-        const paddedTokenTopic = pad(searchQuery as `0x${string}`, { size: 32 });
-
-        const searchLogs: any[] = await publicClient.getLogs({
-          address: FACTORY_ADDRESS,
-          topics: [creationTopic, null, null, paddedTokenTopic],
-          fromBlock: BigInt(0),
-          toBlock: "latest"
-        } as any);
-
-        if (searchLogs.length > 0) {
-          const log = searchLogs[0];
-          if (log.topics[1] && log.topics[2]) {
-            const newEntry: TokenLaunchData = {
-              tokenAddress: searchQuery,
-              curveAddress: `0x${log.topics[1].slice(26)}`,
-              devAddress: `0x${log.topics[2].slice(26)}`,
-              launchBlock: log.blockNumber ? BigInt(log.blockNumber) : currentBlock
-            };
-            setLaunchData(prev => [newEntry, ...prev]);
-          }
+        const res = await fetch('/api/tokens');
+        if (res.ok) {
+          const data = await res.json();
+          setDbTokens(data);
         }
       } catch (err) {
-        console.error("Search lookup failed:", err);
-      } finally {
-        setIsFetchingLogs(false);
+        console.error("Database sync failed", err);
       }
+    };
+
+    fetchDatabase();
+    const interval = setInterval(fetchDatabase, 3000); // Check for new tokens every 3 seconds
+    return () => clearInterval(interval);
+  }, []);
+
+  const processedTokens = useMemo(() => {
+    return dbTokens.map(db => {
+      const timeSinceLaunchMins = Math.max(0, Math.floor((Date.now() - new Date(db.timestamp).getTime()) / 60000));
+      let seed = 0; for (let j = 0; j < db.tokenAddress.length; j++) seed += db.tokenAddress.charCodeAt(j);
+      const block0 = (seed % 25);
+      const diamond = (seed % 60) + 10;
+
+      return {
+        id: db.launchId.toString(),
+        name: db.name,
+        ticker: db.ticker,
+        contractAddress: db.tokenAddress,
+        devAddress: db.devAddress,
+        ammAddress: db.ammAddress,
+        bondingCurveProgress: db.curveProgress,
+        ethDeposited: db.ethDeposited,
+        pairSymbol: db.pairSymbol,
+        timeSinceLaunchMins,
+        blockZeroBuyers: block0,
+        diamondHandsHoldersPct: diamond,
+        totalSupply: 1000000000,
+        score: calculateVibeScore(block0, timeSinceLaunchMins, db.curveProgress, diamond),
+        devProfile: getDevProfile(db.devAddress),
+        safetyChecks: getSafetyChecks(db.tokenAddress),
+        momentum: getMomentumMetrics(db.tokenAddress)
+      };
+    });
+  }, [dbTokens]);
+
+  const filteredTokens = useMemo(() => {
+    let list = processedTokens;
+    if (searchQuery) {
+      list = list.filter(t => t.contractAddress.toLowerCase().includes(searchQuery.toLowerCase()));
     }
-    setActiveFilter("all");
-    setSearchQuery("");
-  };
+    switch (activeFilter) {
+      case "alpha": return list.filter(t => t.score >= 70);
+      case "graduating": return list.filter(t => t.bondingCurveProgress >= 85);
+      case "risk": return list.filter(t => t.score < 45 || t.blockZeroBuyers > 15);
+      default: return list;
+    }
+  }, [processedTokens, activeFilter, searchQuery]);
 
   const handleExecuteApe = async () => {
     if (!selectedToken || !apeAmount || Number(apeAmount) <= 0) return;
     try {
       setTxHash(null);
       sendTransaction(
-        {
-          to: FACTORY_ADDRESS,
-          value: parseEther(apeAmount),
-        },
-        {
-          onSuccess: (hash) => setTxHash(hash),
-          onError: (err) => console.error("Ape execution failed:", err),
-        }
+        { to: FACTORY_ADDRESS, value: parseEther(apeAmount) },
+        { onSuccess: (hash) => setTxHash(hash) }
       );
     } catch (err) {
       console.error(err);
     }
   };
 
-  // Upgraded payload to fetch decimals
-  const contractCalls = launchData.flatMap((data) => [
-    { address: data.tokenAddress as `0x${string}`, abi: ERC20_ABI, functionName: "name" },
-    { address: data.tokenAddress as `0x${string}`, abi: ERC20_ABI, functionName: "symbol" },
-    { address: data.tokenAddress as `0x${string}`, abi: ERC20_ABI, functionName: "totalSupply" },
-    { address: data.tokenAddress as `0x${string}`, abi: ERC20_ABI, functionName: "decimals" },
-    { address: data.tokenAddress as `0x${string}`, abi: ERC20_ABI, functionName: "balanceOf", args: [data.curveAddress as `0x${string}`] },
-    { address: data.tokenAddress as `0x${string}`, abi: ERC20_ABI, functionName: "balanceOf", args: [data.tokenAddress as `0x${string}`] }
-  ]);
-
-  const { data: onChainData, isLoading } = useReadContracts({
-    contracts: contractCalls as any,
-    query: { enabled: launchData.length > 0 }
-  });
-
-  const processedTokens: VibeToken[] = useMemo(() => {
-    if (!onChainData || launchData.length === 0) return [];
-    
-    const tokens: VibeToken[] = [];
-    for (let i = 0; i < launchData.length; i++) {
-      const data = launchData[i];
-      
-      const name = onChainData[i * 6]?.result as string || `Unknown Token`;
-      const ticker = onChainData[i * 6 + 1]?.result as string || "$UNKN";
-      const rawSupply = onChainData[i * 6 + 2]?.result as bigint;
-      const decimals = onChainData[i * 6 + 3]?.result as number || 18;
-      
-      const rawCurveBal = onChainData[i * 6 + 4]?.result as bigint;
-      const rawTokenBal = onChainData[i * 6 + 5]?.result as bigint;
-      
-      // Pure BigInt math completely eliminates the decimal bug
-      const validSupply = rawSupply || (BigInt(1000000000) * (BigInt(10) ** BigInt(decimals)));
-      const curveB = rawCurveBal || BigInt(0);
-      const tokenB = rawTokenBal || BigInt(0);
-
-      let actualVaultBal = curveB > tokenB ? curveB : tokenB;
-      if (actualVaultBal === BigInt(0)) {
-        actualVaultBal = validSupply;
-      }
-
-      let tokensSold = validSupply - actualVaultBal;
-      if (tokensSold < BigInt(0)) tokensSold = BigInt(0);
-
-      let gradTarget = (validSupply * BigInt(80)) / BigInt(100);
-      if (gradTarget === BigInt(0)) gradTarget = BigInt(1);
-
-      const realBondingCurveProgress = Number((tokensSold * BigInt(100)) / gradTarget);
-      const cappedProgress = Math.min(100, Math.max(0, realBondingCurveProgress));
-
-      const blocksPassed = Number(currentBlock - data.launchBlock);
-      const realTimeSinceLaunchMins = Math.max(0, Math.floor((blocksPassed * 2) / 60));
-
-      const displaySupply = Number(validSupply / (BigInt(10) ** BigInt(decimals)));
-
-      let seed = 0; for (let j = 0; j < data.tokenAddress.length; j++) seed += data.tokenAddress.charCodeAt(j);
-      const block0 = (seed % 25);
-      const diamond = (seed % 60) + 10;
-      const score = calculateVibeScore(block0, realTimeSinceLaunchMins, cappedProgress, diamond);
-
-      tokens.push({
-        id: i.toString(),
-        name,
-        ticker,
-        contractAddress: data.tokenAddress,
-        devAddress: data.devAddress,
-        bondingCurveProgress: cappedProgress,
-        timeSinceLaunchMins: realTimeSinceLaunchMins,
-        blockZeroBuyers: block0,
-        diamondHandsHoldersPct: diamond,
-        totalSupply: displaySupply,
-        score,
-        devProfile: getDevProfile(data.devAddress),
-        safetyChecks: getSafetyChecks(data.tokenAddress),
-        momentum: getMomentumMetrics(data.tokenAddress)
-      });
-    }
-    return tokens;
-  }, [onChainData, launchData, currentBlock]);
-
-  const filteredTokens = useMemo(() => {
-    switch (activeFilter) {
-      case "alpha": return processedTokens.filter(t => t.score >= 70);
-      case "graduating": return processedTokens.filter(t => t.bondingCurveProgress >= 85);
-      case "risk": return processedTokens.filter(t => t.score < 45 || t.blockZeroBuyers > 15);
-      default: return processedTokens;
-    }
-  }, [processedTokens, activeFilter]);
-
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 font-mono selection:bg-emerald-500/30">
       <nav className="flex justify-between items-center p-4 border-b border-zinc-800 bg-zinc-900/50 sticky top-0 z-50 backdrop-blur-md">
         <div>
           <h1 className="text-xl font-bold text-emerald-400">Vibe Signals</h1>
-          <span className="text-xs text-zinc-500">Robinhood Chain Testnet</span>
+          <span className="text-xs text-zinc-500">Robinhood Chain Testnet | High-Speed Node</span>
         </div>
         <ConnectButton />
       </nav>
@@ -326,20 +171,17 @@ export default function Home() {
       <main className="p-8 max-w-6xl mx-auto">
         {selectedToken ? (
           <div className="animate-in fade-in slide-in-from-bottom-4 duration-300">
-            <button 
-              onClick={() => {
-                setSelectedToken(null);
-                setTxHash(null);
-              }}
+            <button
+              onClick={() => { setSelectedToken(null); setTxHash(null); }}
               className="mb-6 text-zinc-400 hover:text-white flex items-center gap-2 text-sm transition-colors"
             >
               ← Back to Radar
             </button>
-            
+
             <header className="mb-8 flex justify-between items-end border-b border-zinc-800 pb-6">
               <div>
                 <h2 className="text-4xl font-bold tracking-tight mb-2 flex items-center gap-3">
-                  {selectedToken.name} 
+                  {selectedToken.name}
                   <span className="text-xl text-emerald-400 bg-emerald-400/10 px-3 py-1 rounded-lg border border-emerald-400/20">{selectedToken.ticker}</span>
                 </h2>
                 <p className="text-zinc-500 text-sm">Contract: {selectedToken.contractAddress}</p>
@@ -354,7 +196,7 @@ export default function Home() {
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               <div className="lg:col-span-2 space-y-6">
-                
+
                 <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
                   <div className="flex justify-between items-center mb-6">
                     <h3 className="text-lg font-bold text-white flex items-center gap-2">
@@ -365,10 +207,10 @@ export default function Home() {
                       LIVE: {selectedToken.timeSinceLaunchMins} mins
                     </span>
                   </div>
-                  
+
                   <div className="mb-8">
                     <div className="flex justify-between text-xs mb-2">
-                      <span className="text-zinc-400">Bonding Curve Progress (Token Sold Base)</span>
+                      <span className="text-zinc-400">Bonding Curve Progress ({selectedToken.ethDeposited} {selectedToken.pairSymbol})</span>
                       <span className="text-emerald-400 font-bold">{selectedToken.bondingCurveProgress}%</span>
                     </div>
                     <div className="w-full bg-zinc-950 rounded-full h-3 overflow-hidden border border-zinc-800">
@@ -394,7 +236,7 @@ export default function Home() {
 
                 <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
                   <h3 className="text-lg font-bold mb-4 text-white">Holder Clustering (Cabal Detector)</h3>
-                  
+
                   <div className="w-full bg-zinc-950 border border-zinc-800 rounded-lg mb-6 relative overflow-hidden h-56 group">
                     <svg className="absolute inset-0 w-full h-full z-0 pointer-events-none">
                       {selectedToken.score < 50 ? (
@@ -419,7 +261,7 @@ export default function Home() {
                       <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-12 h-12 bg-zinc-900 border-2 border-emerald-500/50 rounded-full flex items-center justify-center shadow-[0_0_15px_rgba(16,185,129,0.2)]">
                         <span className="text-[10px] font-bold text-emerald-400">AMM</span>
                       </div>
-                      
+
                       <div className={`absolute top-[30%] left-[25%] -translate-x-1/2 -translate-y-1/2 w-8 h-8 rounded-full border-2 flex items-center justify-center bg-zinc-900 ${selectedToken.score < 50 ? 'border-red-500 shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-zinc-600'}`}>
                         <span className="text-[8px] text-zinc-400">#1</span>
                       </div>
@@ -461,7 +303,7 @@ export default function Home() {
                     </div>
                   </div>
                 </div>
-                
+
                 <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
                   <div className="flex justify-between items-start mb-4">
                     <h3 className="text-lg font-bold text-white">Developer Profiler</h3>
@@ -470,9 +312,9 @@ export default function Home() {
                     </span>
                   </div>
                   <div className="flex items-center gap-2 mb-6">
-                    <a 
-                      href={`https://testnet.vibevibe.fun/profile/${selectedToken.devAddress}`} 
-                      target="_blank" 
+                    <a
+                      href={`https://testnet.vibevibe.fun/profile/${selectedToken.devAddress}`}
+                      target="_blank"
                       rel="noreferrer"
                       className="text-xs px-3 py-1.5 bg-zinc-950 border border-zinc-800 rounded hover:border-emerald-500/50 hover:text-white text-zinc-400 font-mono transition-colors"
                     >
@@ -566,39 +408,10 @@ export default function Home() {
                   </ul>
                 </div>
 
-                <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
-                  <h3 className="text-lg font-bold mb-4 text-white flex items-center gap-2">
-                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                    Smart Money Wallets
-                  </h3>
-                  
-                  <div className="space-y-3">
-                    {[
-                      { type: "Block 0 Sniper", addy: "0x82...3fA1", fullAddy: "0x8200000000000000000000000000000000003fA1", pnl: "+450%", bg: "bg-purple-500/10 text-purple-400 border-purple-500/20" },
-                      { type: "KOL / Cabal", addy: "0x11...bC22", fullAddy: "0x110000000000000000000000000000000000bC22", pnl: "+120%", bg: "bg-blue-500/10 text-blue-400 border-blue-500/20" },
-                      { type: "High Win-Rate", addy: "0x99...4dEE", fullAddy: "0x9900000000000000000000000000000000004dEE", pnl: "+85%", bg: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" }
-                    ].map((wallet, idx) => (
-                      <a 
-                        key={idx}
-                        href={`https://testnet.vibevibe.fun/profile/${wallet.fullAddy}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="p-3 bg-zinc-950 rounded-lg border border-zinc-800 flex justify-between items-center hover:border-emerald-500/50 cursor-pointer transition-all group"
-                      >
-                        <div>
-                          <span className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded border mb-1 block w-max ${wallet.bg}`}>{wallet.type}</span>
-                          <span className="text-sm font-mono text-zinc-300 group-hover:text-white transition-colors">{wallet.addy}</span>
-                        </div>
-                        <span className="text-emerald-400 font-bold text-sm">{wallet.pnl}</span>
-                      </a>
-                    ))}
-                  </div>
-                </div>
-                
-                <a 
-                  href={`https://testnet.vibevibe.fun/token/${selectedToken.contractAddress}`} 
-                  target="_blank" 
-                  rel="noreferrer" 
+                <a
+                  href={`https://testnet.vibevibe.fun/token/${selectedToken.contractAddress}`}
+                  target="_blank"
+                  rel="noreferrer"
                   className="w-full py-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-bold rounded-xl text-center text-sm transition-colors border border-zinc-700 block"
                 >
                   View on vibe/vibe ↗
@@ -613,21 +426,15 @@ export default function Home() {
               <p className="text-zinc-400">Querying real-time bonding curves and accumulating signals.</p>
             </header>
 
-            <form onSubmit={handleSearch} className="mb-8 flex gap-3 max-w-2xl">
+            <div className="flex gap-4 mb-8">
               <input
                 type="text"
-                placeholder="Search by token contract (0x...)"
+                placeholder="Search by contract (0x...)"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="flex-1 bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-3 text-sm focus:outline-none focus:border-emerald-500 transition-colors shadow-inner text-white"
+                className="flex-1 bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-3 text-sm focus:outline-none focus:border-emerald-500 transition-colors shadow-inner text-white max-w-md"
               />
-              <button
-                type="submit"
-                className="px-8 py-3 bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold rounded-lg text-sm transition-colors shadow-lg shadow-emerald-500/20"
-              >
-                Scan
-              </button>
-            </form>
+            </div>
 
             <div className="flex gap-2 mb-8 border-b border-zinc-800 pb-4 overflow-x-auto">
               <button onClick={() => setActiveFilter("all")} className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${activeFilter === "all" ? "bg-zinc-800 text-white" : "text-zinc-500 hover:text-white hover:bg-zinc-800/50"}`}>
@@ -644,18 +451,16 @@ export default function Home() {
               </button>
             </div>
 
-            {isFetchingLogs || isLoading ? (
-              <div className="text-center py-12 text-zinc-500 animate-pulse">Querying factory contract logs for recent launches...</div>
-            ) : filteredTokens.length === 0 ? (
-              <div className="text-center py-12 text-zinc-500 border border-dashed border-zinc-800 rounded-xl">No tokens match this filter.</div>
+            {filteredTokens.length === 0 ? (
+              <div className="text-center py-12 text-zinc-500 border border-dashed border-zinc-800 rounded-xl">No tokens indexed yet. Waiting for Node...</div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {filteredTokens.map((token) => {
                   const scoreColor = token.score >= 70 ? "text-emerald-400 border-emerald-400/30 bg-emerald-400/10" : token.score >= 45 ? "text-yellow-400 border-yellow-400/30 bg-yellow-400/10" : "text-red-400 border-red-400/30 bg-red-400/10";
-                  
+
                   return (
-                    <div 
-                      key={token.id} 
+                    <div
+                      key={token.id}
                       onClick={() => {
                         if (isConnected && hasAccess) setSelectedToken(token);
                       }}
@@ -706,14 +511,10 @@ export default function Home() {
                             <span className="text-sm text-zinc-400">Vibe Score</span>
                             <span className={`text-xl font-bold px-3 py-1 rounded-md border ${scoreColor}`}>{token.score}</span>
                           </div>
-                          <div className="flex justify-between items-center">
-                            <span className="text-sm text-zinc-400">SPARK Adjusted Supply</span>
-                            <span className="text-sm font-medium">{(token.totalSupply * 0.75).toLocaleString()}</span>
-                          </div>
                         </div>
                       </div>
 
-                      <button 
+                      <button
                         className={`w-full py-2 font-bold rounded-lg text-center text-sm transition-colors mt-auto block border ${isConnected && hasAccess ? 'bg-zinc-800 hover:bg-emerald-500 hover:text-zinc-950 border-zinc-700 hover:border-emerald-500 text-white' : 'bg-zinc-800/50 text-zinc-600 border-zinc-800 cursor-not-allowed'}`}
                       >
                         {isConnected && hasAccess ? 'Analyze Alpha →' : 'Locked'}
