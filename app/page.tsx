@@ -102,10 +102,9 @@ export default function Home() {
         const extractedData: TokenLaunchData[] = logs
           .filter(log => log.topics[0] === creationTopic)
           .map(log => {
-            // FIXED: Topic 1 is Curve (AMM), Topic 2 is Dev (Creator)
-            const curveTopic = log.topics[1]; 
-            const devTopic = log.topics[2];   
-            const tokenTopic = log.topics[3];
+            const devTopic = log.topics[1]; // Topic 1 is Creator
+            const curveTopic = log.topics[2]; // Topic 2 is AMM Pool
+            const tokenTopic = log.topics[3]; // Topic 3 is Token Contract
             
             if (tokenTopic && curveTopic && devTopic) {
               return {
@@ -120,15 +119,6 @@ export default function Home() {
           .filter(data => data !== null)
           .reverse()
           .slice(0, 20) as TokenLaunchData[];
-        
-        if (!extractedData.find(d => d.tokenAddress.toLowerCase() === SIGNAL_TOKEN.toLowerCase())) {
-          extractedData.unshift({
-            tokenAddress: SIGNAL_TOKEN,
-            curveAddress: "0x89944BC9D3b20764BeA771CFAf9711a8Fb839e72", // $SIGNAL AMM
-            devAddress: "0xc8F14080c15801bab3747E9875e6894b86801bC7", // Your Dev Address
-            launchBlock: latestBlock - BigInt(1500)
-          });
-        }
         
         setLaunchData(extractedData);
       } catch (error) {
@@ -150,6 +140,7 @@ export default function Home() {
     if (existing) {
       setLaunchData(prev => [existing, ...prev.filter(t => t.tokenAddress.toLowerCase() !== formattedSearch)]);
     } else {
+      setIsFetchingLogs(true);
       try {
         const creationTopic = "0xa7e8032bfd07a9fbcde50eabe91eb2901faee6dbddd9cced579491d9b07ef5c8";
         const paddedTokenTopic = pad(searchQuery as `0x${string}`, { size: 32 });
@@ -165,13 +156,13 @@ export default function Home() {
           const log = searchLogs[0];
           const newEntry: TokenLaunchData = {
             tokenAddress: searchQuery,
-            // FIXED: Search mapping updated to match the corrected topics
-            curveAddress: `0x${log.topics[1]!.slice(26)}`,
-            devAddress: `0x${log.topics[2]!.slice(26)}`,
+            devAddress: `0x${log.topics[1]!.slice(26)}`,
+            curveAddress: `0x${log.topics[2]!.slice(26)}`,
             launchBlock: log.blockNumber
           };
           setLaunchData(prev => [newEntry, ...prev]);
         } else {
+          // Fallback if not found in factory logs
           setLaunchData(prev => [{
             tokenAddress: searchQuery,
             curveAddress: searchQuery,
@@ -181,6 +172,8 @@ export default function Home() {
         }
       } catch (err) {
         console.error("Search lookup failed:", err);
+      } finally {
+        setIsFetchingLogs(false);
       }
     }
     setActiveFilter("all");
@@ -231,7 +224,7 @@ export default function Home() {
       const rawVaultBalance = onChainData[i * 4 + 3]?.result as bigint;
       
       const totalSupply = rawSupply ? Number(rawSupply / (BigInt("10") ** BigInt("18"))) : 1000000000;
-      const vaultBalance = rawVaultBalance ? Number(rawVaultBalance / (BigInt("10") ** BigInt("18"))) : totalSupply;
+      const vaultBalance = rawVaultBalance !== undefined ? Number(rawVaultBalance / (BigInt("10") ** BigInt("18"))) : totalSupply;
 
       const blocksPassed = Number(currentBlock - data.launchBlock);
       const realTimeSinceLaunchMins = Math.max(0, Math.floor((blocksPassed * 2) / 60));
@@ -316,7 +309,6 @@ export default function Home() {
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               <div className="lg:col-span-2 space-y-6">
                 
-                {/* RESTORED: Master Live Telemetry Block (Time, Curve & Momentum) */}
                 <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
                   <div className="flex justify-between items-center mb-6">
                     <h3 className="text-lg font-bold text-white flex items-center gap-2">
@@ -328,10 +320,9 @@ export default function Home() {
                     </span>
                   </div>
                   
-                  {/* Bonding Curve UI */}
                   <div className="mb-8">
                     <div className="flex justify-between text-xs mb-2">
-                      <span className="text-zinc-400">Bonding Curve Progress</span>
+                      <span className="text-zinc-400">Bonding Curve Progress (Token Sold Base)</span>
                       <span className="text-emerald-400 font-bold">{selectedToken.bondingCurveProgress}%</span>
                     </div>
                     <div className="w-full bg-zinc-950 rounded-full h-3 overflow-hidden border border-zinc-800">
@@ -339,7 +330,6 @@ export default function Home() {
                     </div>
                   </div>
 
-                  {/* 5M Taker Momentum UI */}
                   <div>
                     <div className="flex justify-between text-xs mb-2">
                       <span className="text-zinc-400 uppercase tracking-wider font-bold">5M Taker Momentum</span>
