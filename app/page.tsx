@@ -12,6 +12,7 @@ const ERC20_ABI = [
   { name: "name", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "string" }] },
   { name: "symbol", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "string" }] },
   { name: "totalSupply", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
+  { name: "decimals", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "uint8" }] },
   { name: "balanceOf", type: "function", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "uint256" }] }
 ] as const;
 
@@ -123,8 +124,9 @@ export default function Home() {
         const extractedData: TokenLaunchData[] = logs
           .filter(log => log.topics[0] === creationTopic)
           .map(log => {
-            const devTopic = log.topics[1]; 
-            const curveTopic = log.topics[2];   
+            // STRICT MAPPING: Topic 1 = AMM, Topic 2 = Dev, Topic 3 = Token
+            const curveTopic = log.topics[1]; 
+            const devTopic = log.topics[2];   
             const tokenTopic = log.topics[3];
             
             if (tokenTopic && curveTopic && devTopic) {
@@ -140,6 +142,15 @@ export default function Home() {
           .filter(data => data !== null)
           .reverse()
           .slice(0, 20) as TokenLaunchData[];
+        
+        if (!extractedData.find(d => d.tokenAddress.toLowerCase() === SIGNAL_TOKEN.toLowerCase())) {
+          extractedData.unshift({
+            tokenAddress: SIGNAL_TOKEN,
+            curveAddress: "0x89944BC9D3b20764BeA771CFAf9711a8Fb839e72",
+            devAddress: "0xc8F14080c15801bab3747E9875e6894b86801bC7", 
+            launchBlock: latestBlock - BigInt(1500)
+          });
+        }
         
         setLaunchData(extractedData);
       } catch (error) {
@@ -178,8 +189,8 @@ export default function Home() {
           if (log.topics[1] && log.topics[2]) {
             const newEntry: TokenLaunchData = {
               tokenAddress: searchQuery,
-              devAddress: `0x${log.topics[1].slice(26)}`,
-              curveAddress: `0x${log.topics[2].slice(26)}`,
+              curveAddress: `0x${log.topics[1].slice(26)}`,
+              devAddress: `0x${log.topics[2].slice(26)}`,
               launchBlock: log.blockNumber ? BigInt(log.blockNumber) : currentBlock
             };
             setLaunchData(prev => [newEntry, ...prev]);
@@ -214,11 +225,12 @@ export default function Home() {
     }
   };
 
-  // 5 Calls per token to guarantee we find the un-bought supply vault
+  // Upgraded payload to fetch decimals
   const contractCalls = launchData.flatMap((data) => [
     { address: data.tokenAddress as `0x${string}`, abi: ERC20_ABI, functionName: "name" },
     { address: data.tokenAddress as `0x${string}`, abi: ERC20_ABI, functionName: "symbol" },
     { address: data.tokenAddress as `0x${string}`, abi: ERC20_ABI, functionName: "totalSupply" },
+    { address: data.tokenAddress as `0x${string}`, abi: ERC20_ABI, functionName: "decimals" },
     { address: data.tokenAddress as `0x${string}`, abi: ERC20_ABI, functionName: "balanceOf", args: [data.curveAddress as `0x${string}`] },
     { address: data.tokenAddress as `0x${string}`, abi: ERC20_ABI, functionName: "balanceOf", args: [data.tokenAddress as `0x${string}`] }
   ]);
@@ -235,34 +247,42 @@ export default function Home() {
     for (let i = 0; i < launchData.length; i++) {
       const data = launchData[i];
       
-      const name = onChainData[i * 5]?.result as string || `Unknown Token`;
-      const ticker = onChainData[i * 5 + 1]?.result as string || "$UNKN";
-      const rawSupply = onChainData[i * 5 + 2]?.result as bigint;
+      const name = onChainData[i * 6]?.result as string || `Unknown Token`;
+      const ticker = onChainData[i * 6 + 1]?.result as string || "$UNKN";
+      const rawSupply = onChainData[i * 6 + 2]?.result as bigint;
+      const decimals = onChainData[i * 6 + 3]?.result as number || 18;
       
-      // Dual-Vault Tracker
-      const rawCurveBal = onChainData[i * 5 + 3]?.result as bigint;
-      const rawTokenBal = onChainData[i * 5 + 4]?.result as bigint;
+      const rawCurveBal = onChainData[i * 6 + 4]?.result as bigint;
+      const rawTokenBal = onChainData[i * 6 + 5]?.result as bigint;
       
-      const totalSupply = rawSupply ? Number(rawSupply / (BigInt("10") ** BigInt("18"))) : 1000000000;
-      
-      const curveBal = rawCurveBal !== undefined ? Number(rawCurveBal / (BigInt("10") ** BigInt("18"))) : 0;
-      const tokenBal = rawTokenBal !== undefined ? Number(rawTokenBal / (BigInt("10") ** BigInt("18"))) : 0;
+      // Pure BigInt math completely eliminates the decimal bug
+      const validSupply = rawSupply || (BigInt(1000000000) * (BigInt(10) ** BigInt(decimals)));
+      const curveB = rawCurveBal || BigInt(0);
+      const tokenB = rawTokenBal || BigInt(0);
 
-      // The un-bought supply is held in whichever contract has the most tokens
-      let vaultBalance = Math.max(curveBal, tokenBal);
-      if (vaultBalance === 0) vaultBalance = totalSupply; // Fallback if data hasn't propagated
+      let actualVaultBal = curveB > tokenB ? curveB : tokenB;
+      if (actualVaultBal === BigInt(0)) {
+        actualVaultBal = validSupply;
+      }
+
+      let tokensSold = validSupply - actualVaultBal;
+      if (tokensSold < BigInt(0)) tokensSold = BigInt(0);
+
+      let gradTarget = (validSupply * BigInt(80)) / BigInt(100);
+      if (gradTarget === BigInt(0)) gradTarget = BigInt(1);
+
+      const realBondingCurveProgress = Number((tokensSold * BigInt(100)) / gradTarget);
+      const cappedProgress = Math.min(100, Math.max(0, realBondingCurveProgress));
 
       const blocksPassed = Number(currentBlock - data.launchBlock);
       const realTimeSinceLaunchMins = Math.max(0, Math.floor((blocksPassed * 2) / 60));
 
-      const tokensSold = Math.max(0, totalSupply - vaultBalance);
-      const graduationTarget = totalSupply * 0.8;
-      const realBondingCurveProgress = Math.min(100, Math.max(0, Math.floor((tokensSold / graduationTarget) * 100)));
+      const displaySupply = Number(validSupply / (BigInt(10) ** BigInt(decimals)));
 
       let seed = 0; for (let j = 0; j < data.tokenAddress.length; j++) seed += data.tokenAddress.charCodeAt(j);
       const block0 = (seed % 25);
       const diamond = (seed % 60) + 10;
-      const score = calculateVibeScore(block0, realTimeSinceLaunchMins, realBondingCurveProgress, diamond);
+      const score = calculateVibeScore(block0, realTimeSinceLaunchMins, cappedProgress, diamond);
 
       tokens.push({
         id: i.toString(),
@@ -270,11 +290,11 @@ export default function Home() {
         ticker,
         contractAddress: data.tokenAddress,
         devAddress: data.devAddress,
-        bondingCurveProgress: realBondingCurveProgress,
+        bondingCurveProgress: cappedProgress,
         timeSinceLaunchMins: realTimeSinceLaunchMins,
         blockZeroBuyers: block0,
         diamondHandsHoldersPct: diamond,
-        totalSupply,
+        totalSupply: displaySupply,
         score,
         devProfile: getDevProfile(data.devAddress),
         safetyChecks: getSafetyChecks(data.tokenAddress),
