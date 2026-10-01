@@ -96,7 +96,7 @@ function getMomentumMetrics(tokenAddress: string) {
   for (let i = 0; i < tokenAddress.length; i++) {
     seed += tokenAddress.charCodeAt(i);
   }
-  const buyPct = (seed % 45) + 45; // 45% - 89% buys
+  const buyPct = (seed % 45) + 45; 
   return {
     buyPct,
     sellPct: 100 - buyPct,
@@ -135,7 +135,6 @@ export default function Home() {
   
   const [selectedToken, setSelectedToken] = useState<VibeToken | null>(null);
 
-  // 1-Click Ape State
   const [apeAmount, setApeAmount] = useState<string>("0.005");
   const [slippage, setSlippage] = useState<number>(15);
   const [txHash, setTxHash] = useState<string | null>(null);
@@ -163,7 +162,7 @@ export default function Home() {
         const currentBlock = await publicClient.getBlockNumber();
         const logs = await publicClient.getLogs({
           address: FACTORY_ADDRESS,
-          fromBlock: currentBlock - BigInt("30000"), 
+          fromBlock: currentBlock - BigInt("10000"), 
           toBlock: currentBlock
         });
         
@@ -189,7 +188,7 @@ export default function Home() {
           })
           .filter(addr => addr !== null)
           .reverse()
-          .slice(0, 50);
+          .slice(0, 20);
         
         setDevMap(parsedDevs);
 
@@ -360,6 +359,84 @@ export default function Home() {
                   </div>
                 </div>
 
+                {/* VISUAL CABAL BUBBLE MAP */}
+                <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
+                  <h3 className="text-lg font-bold mb-4 text-white">Holder Clustering (Cabal Detector)</h3>
+                  
+                  <div className="w-full bg-zinc-950 border border-zinc-800 rounded-lg mb-6 relative overflow-hidden h-56 group">
+                    {/* SVG Connection Lines */}
+                    <svg className="absolute inset-0 w-full h-full z-0 pointer-events-none">
+                      {selectedToken.score < 50 ? (
+                        <>
+                          <line x1="25%" y1="30%" x2="25%" y2="70%" stroke="#ef4444" strokeWidth="2" strokeDasharray="4" className="animate-pulse opacity-60" />
+                          <line x1="25%" y1="70%" x2="50%" y2="85%" stroke="#ef4444" strokeWidth="2" strokeDasharray="4" className="animate-pulse opacity-60" />
+                          <line x1="50%" y1="85%" x2="75%" y2="70%" stroke="#ef4444" strokeWidth="2" strokeDasharray="4" className="animate-pulse opacity-60" />
+                          {/* Connect to AMM to show dumping */}
+                          <line x1="50%" y1="85%" x2="50%" y2="50%" stroke="#ef4444" strokeWidth="1" className="opacity-30" />
+                        </>
+                      ) : (
+                        <>
+                          <line x1="50%" y1="50%" x2="25%" y2="30%" stroke="#3f3f46" strokeWidth="1" opacity="0.5" />
+                          <line x1="50%" y1="50%" x2="25%" y2="70%" stroke="#3f3f46" strokeWidth="1" opacity="0.5" />
+                          <line x1="50%" y1="50%" x2="75%" y2="30%" stroke="#3f3f46" strokeWidth="1" opacity="0.5" />
+                          <line x1="50%" y1="50%" x2="75%" y2="70%" stroke="#3f3f46" strokeWidth="1" opacity="0.5" />
+                          <line x1="50%" y1="50%" x2="50%" y2="85%" stroke="#3f3f46" strokeWidth="1" opacity="0.5" />
+                        </>
+                      )}
+                    </svg>
+
+                    {/* Nodes Overlay */}
+                    <div className="absolute inset-0 z-10 pointer-events-none">
+                      {/* AMM Center */}
+                      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-12 h-12 bg-zinc-900 border-2 border-emerald-500/50 rounded-full flex items-center justify-center shadow-[0_0_15px_rgba(16,185,129,0.2)]">
+                        <span className="text-[10px] font-bold text-emerald-400">AMM</span>
+                      </div>
+                      
+                      {/* Holders */}
+                      <div className={`absolute top-[30%] left-[25%] -translate-x-1/2 -translate-y-1/2 w-8 h-8 rounded-full border-2 flex items-center justify-center bg-zinc-900 ${selectedToken.score < 50 ? 'border-red-500 shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-zinc-600'}`}>
+                        <span className="text-[8px] text-zinc-400">#1</span>
+                      </div>
+                      <div className={`absolute top-[70%] left-[25%] -translate-x-1/2 -translate-y-1/2 w-10 h-10 rounded-full border-2 flex items-center justify-center bg-zinc-900 ${selectedToken.score < 50 ? 'border-red-500 shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-zinc-600'}`}>
+                        <span className="text-[8px] text-zinc-400">#2</span>
+                      </div>
+                      <div className={`absolute top-[85%] left-[50%] -translate-x-1/2 -translate-y-1/2 w-7 h-7 rounded-full border-2 flex items-center justify-center bg-zinc-900 ${selectedToken.score < 50 ? 'border-red-500 shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-zinc-600'}`}>
+                        <span className="text-[8px] text-zinc-400">#3</span>
+                      </div>
+                      <div className={`absolute top-[70%] left-[75%] -translate-x-1/2 -translate-y-1/2 w-9 h-9 rounded-full border-2 flex items-center justify-center bg-zinc-900 ${selectedToken.score < 50 ? 'border-red-500 shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-zinc-600'}`}>
+                        <span className="text-[8px] text-zinc-400">#4</span>
+                      </div>
+                      {/* Node 5 is always independent to show contrast */}
+                      <div className="absolute top-[30%] left-[75%] -translate-x-1/2 -translate-y-1/2 w-8 h-8 rounded-full border-2 border-zinc-600 flex items-center justify-center bg-zinc-900">
+                        <span className="text-[8px] text-zinc-400">#5</span>
+                      </div>
+                    </div>
+
+                    {/* Status Legend */}
+                    <div className="absolute top-3 left-4 bg-zinc-950/80 backdrop-blur px-2 py-1 rounded border border-zinc-800 text-[10px]">
+                      {selectedToken.score < 50 ? (
+                        <span className="text-red-400 font-bold flex items-center gap-1">⚠️ Cabal Detected (Shared Exchange Funding)</span>
+                      ) : (
+                        <span className="text-emerald-400 font-bold flex items-center gap-1">✅ Clean Distribution (No Shared Source)</span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div className="p-4 bg-zinc-950 rounded-lg border border-zinc-800">
+                      <span className="text-zinc-500 block mb-1">Top 10 Supply</span>
+                      <span className={`${selectedToken.score < 50 ? 'text-red-400' : 'text-emerald-400'} font-bold`}>
+                        {selectedToken.score < 50 ? '48.5%' : '12.4%'}
+                      </span>
+                    </div>
+                    <div className="p-4 bg-zinc-950 rounded-lg border border-zinc-800">
+                      <span className="text-zinc-500 block mb-1">Sniper Retention</span>
+                      <span className={selectedToken.diamondHandsHoldersPct < 30 ? "text-red-400 font-bold" : "text-yellow-400 font-bold"}>
+                        {100 - selectedToken.diamondHandsHoldersPct}% Dumped
+                      </span>
+                    </div>
+                  </div>
+                </div>
+                
                 {/* Developer Profiler Matrix */}
                 <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
                   <div className="flex justify-between items-start mb-4">
@@ -390,41 +467,6 @@ export default function Home() {
                   </div>
                 </div>
 
-                {/* Cabal Forensics */}
-                <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
-                  <h3 className="text-lg font-bold mb-4 text-white">Cabal Forensics & Distribution</h3>
-                  
-                  <div className="w-full bg-zinc-950 border border-zinc-800 rounded-lg mb-6 p-6 relative overflow-hidden group">
-                    <div className="flex justify-between text-sm mb-3">
-                      <span className="text-zinc-400">Top 10 Wallets Concentration</span>
-                      <span className={`${selectedToken.score < 50 ? 'text-red-400' : 'text-emerald-400'} font-bold`}>
-                        {selectedToken.score < 50 ? '48.5% (High Risk)' : '12.4% (Healthy)'}
-                      </span>
-                    </div>
-                    <div className="w-full bg-zinc-800 rounded-full h-4 mb-2 flex overflow-hidden">
-                      <div className={`h-4 ${selectedToken.score < 50 ? 'bg-red-500' : 'bg-emerald-500'} transition-all`} style={{ width: selectedToken.score < 50 ? '48.5%' : '12.4%' }} />
-                      <div className="h-4 bg-zinc-700 flex-1" />
-                    </div>
-                    <p className="text-xs text-zinc-500">Excludes bonding curve AMM address.</p>
-                  </div>
-
-                  <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
-                    <div className="p-4 bg-zinc-950 rounded-lg border border-zinc-800">
-                      <span className="text-zinc-500 block mb-1">Dev Wallet Activity</span>
-                      <span className="text-emerald-400 font-bold">0 Sells (Holding)</span>
-                    </div>
-                    <div className="p-4 bg-zinc-950 rounded-lg border border-zinc-800">
-                      <span className="text-zinc-500 block mb-1">Sniper Retention</span>
-                      <span className={selectedToken.diamondHandsHoldersPct < 30 ? "text-red-400 font-bold" : "text-yellow-400 font-bold"}>
-                        {100 - selectedToken.diamondHandsHoldersPct}% Dumped
-                      </span>
-                    </div>
-                    <div className="p-4 bg-zinc-950 rounded-lg border border-zinc-800 col-span-2 md:col-span-1">
-                      <span className="text-zinc-500 block mb-1">Transaction Velocity</span>
-                      <span className="text-white font-bold">{Math.floor(Math.random() * 200) + 40} tx / min</span>
-                    </div>
-                  </div>
-                </div>
               </div>
 
               {/* Column 2: 1-Click Ape Terminal & Intelligence */}
