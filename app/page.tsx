@@ -175,12 +175,13 @@ export default function Home() {
         const creationTopic = "0xa7e8032bfd07a9fbcde50eabe91eb2901faee6dbddd9cced579491d9b07ef5c8";
         const paddedTokenTopic = pad(searchQuery as `0x${string}`, { size: 32 });
 
-        const searchLogs = await publicClient.getLogs({
+        // Bypassing TypeScript's strict ABI checking for the topics array here
+        const searchLogs: any[] = await publicClient.getLogs({
           address: FACTORY_ADDRESS,
           topics: [creationTopic, null, null, paddedTokenTopic],
           fromBlock: BigInt(0),
           toBlock: "latest"
-        });
+        } as any);
 
         if (searchLogs.length > 0) {
           const log = searchLogs[0];
@@ -189,7 +190,7 @@ export default function Home() {
               tokenAddress: searchQuery,
               devAddress: `0x${log.topics[1].slice(26)}`,
               curveAddress: `0x${log.topics[2].slice(26)}`,
-              launchBlock: log.blockNumber as bigint
+              launchBlock: log.blockNumber ? BigInt(log.blockNumber) : currentBlock
             };
             setLaunchData(prev => [newEntry, ...prev]);
           }
