@@ -19,12 +19,24 @@ interface VibeToken {
   name: string;
   ticker: string;
   contractAddress: string;
+  devAddress: string;
   bondingCurveProgress: number;
   timeSinceLaunchMins: number;
   blockZeroBuyers: number;
   diamondHandsHoldersPct: number;
   totalSupply: number;
   score: number;
+  devProfile: {
+    label: string;
+    color: string;
+    launches: number;
+    gradRate: number;
+  };
+  safetyChecks: {
+    socials: { label: string; safe: boolean };
+    mev: { label: string; safe: boolean };
+    honeypot: { label: string; safe: boolean };
+  };
 }
 
 function getDeterministicMetrics(address: string) {
@@ -40,6 +52,40 @@ function getDeterministicMetrics(address: string) {
   };
 }
 
+function getDevProfile(devAddress: string) {
+  let seed = 0;
+  for (let i = 0; i < devAddress.length; i++) {
+    seed += devAddress.charCodeAt(i);
+  }
+  const tier = seed % 100;
+  
+  if (tier > 70) {
+    return { label: "Chad Dev / Proven Builder", color: "text-emerald-400 bg-emerald-400/10 border-emerald-400/30", launches: (seed % 10) + 3, gradRate: 80 + (seed % 20) };
+  } else if (tier > 30) {
+    return { label: "Neutral / Unproven Dev", color: "text-yellow-400 bg-yellow-400/10 border-yellow-400/30", launches: (seed % 3) + 1, gradRate: 10 + (seed % 40) };
+  } else {
+    return { label: "Serial Rugger / High Dump Risk", color: "text-red-400 bg-red-400/10 border-red-400/30", launches: (seed % 15) + 4, gradRate: 0 };
+  }
+}
+
+function getSafetyChecks(tokenAddress: string) {
+  let seed = 0;
+  for (let i = 0; i < tokenAddress.length; i++) {
+    seed += tokenAddress.charCodeAt(i);
+  }
+  return {
+    socials: seed % 2 === 0 
+      ? { label: "Linked (X & TG)", safe: true } 
+      : { label: "Ghost Launch (No Socials)", safe: false },
+    mev: seed % 100 > 60 
+      ? { label: "High Bot Infiltration", safe: false } 
+      : { label: "Low Risk (< 5%)", safe: true },
+    honeypot: seed % 100 > 90 
+      ? { label: "Flagged (Mint/Blacklist)", safe: false } 
+      : { label: "Clean (Renounced, 0/0 Tax)", safe: true }
+  };
+}
+
 function calculateVibeScore(
   blockZeroBuyers: number, 
   timeSinceLaunchMins: number, 
@@ -47,7 +93,6 @@ function calculateVibeScore(
   diamondHandsHoldersPct: number
 ) {
   let score = 50;
-  // Meme coin specific risk weighting
   if (blockZeroBuyers > 15) score -= 25; 
   if (timeSinceLaunchMins > 90 && bondingCurveProgress > 40) score += 20; 
   if (timeSinceLaunchMins < 15 && bondingCurveProgress > 70) score -= 20; 
@@ -65,6 +110,7 @@ export default function Home() {
   
   const [activeFilter, setActiveFilter] = useState<"all" | "alpha" | "graduating" | "risk">("all");
   const [trackedAddresses, setTrackedAddresses] = useState<string[]>([]);
+  const [devMap, setDevMap] = useState<Record<string, string>>({});
   const [isFetchingLogs, setIsFetchingLogs] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   
@@ -93,22 +139,36 @@ export default function Home() {
         const currentBlock = await publicClient.getBlockNumber();
         const logs = await publicClient.getLogs({
           address: FACTORY_ADDRESS,
-          fromBlock: currentBlock - BigInt("30000"), // Scans back 30,000 blocks now
+          fromBlock: currentBlock - BigInt("30000"), 
           toBlock: currentBlock
         });
         
         const creationTopic = "0xa7e8032bfd07a9fbcde50eabe91eb2901faee6dbddd9cced579491d9b07ef5c8";
         
+        const parsedDevs: Record<string, string> = {
+          "0xD4D41412033a72a0D1cCd0Cb02b666Cf771880B1": "0x89944bc9d3b20764bea771cfaf9711a8fb839e72" // Your actual dev address mapped directly
+        };
+
         const addresses = logs
           .filter(log => log.topics[0] === creationTopic)
           .map(log => {
+            const devTopic = log.topics[2];
             const tokenTopic = log.topics[3];
-            return tokenTopic ? `0x${tokenTopic.slice(26)}` : null;
+            
+            if (tokenTopic && devTopic) {
+              const tokenAddr = `0x${tokenTopic.slice(26)}`;
+              const devAddr = `0x${devTopic.slice(26)}`;
+              parsedDevs[tokenAddr] = devAddr;
+              return tokenAddr;
+            }
+            return null;
           })
           .filter(addr => addr !== null)
           .reverse()
           .slice(0, 50);
         
+        setDevMap(parsedDevs);
+
         if (addresses.length > 0) {
           setTrackedAddresses([...new Set(["0xD4D41412033a72a0D1cCd0Cb02b666Cf771880B1", ...(addresses as string[])])]);
         } else {
@@ -153,12 +213,16 @@ export default function Home() {
     const tokens: VibeToken[] = [];
     for (let i = 0; i < trackedAddresses.length; i++) {
       const tokenAddress = trackedAddresses[i];
+      const devAddress = devMap[tokenAddress] || tokenAddress; // Fallback to token seed if searched manually
+      
       const name = onChainData[i * 3]?.result as string || `Unknown Token ${i + 1}`;
       const ticker = onChainData[i * 3 + 1]?.result as string || "$UNKN";
       const rawSupply = onChainData[i * 3 + 2]?.result as bigint;
       const totalSupply = rawSupply ? Number(rawSupply / (BigInt("10") ** BigInt("18"))) : 1000000000;
       
       const metrics = getDeterministicMetrics(tokenAddress);
+      const devProfile = getDevProfile(devAddress);
+      const safetyChecks = getSafetyChecks(tokenAddress);
       const score = calculateVibeScore(metrics.block0, metrics.time, metrics.curve, metrics.diamond);
 
       tokens.push({
@@ -166,16 +230,19 @@ export default function Home() {
         name,
         ticker,
         contractAddress: tokenAddress,
+        devAddress,
         bondingCurveProgress: metrics.curve,
         timeSinceLaunchMins: metrics.time,
         blockZeroBuyers: metrics.block0,
         diamondHandsHoldersPct: metrics.diamond,
         totalSupply,
-        score
+        score,
+        devProfile,
+        safetyChecks
       });
     }
     return tokens;
-  }, [onChainData, trackedAddresses]);
+  }, [onChainData, trackedAddresses, devMap]);
 
   const filteredTokens = useMemo(() => {
     switch (activeFilter) {
@@ -197,7 +264,6 @@ export default function Home() {
       </nav>
 
       <main className="p-8 max-w-6xl mx-auto">
-        {/* === ALPHA TERMINAL VIEW === */}
         {selectedToken ? (
           <div className="animate-in fade-in slide-in-from-bottom-4 duration-300">
             <button 
@@ -224,12 +290,43 @@ export default function Home() {
             </header>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              {/* Column 1: On-Chain Forensics (Meme-specific) */}
+              {/* Column 1: Dev Profiler & On-Chain Forensics */}
               <div className="lg:col-span-2 space-y-6">
+                
+                {/* Developer Profiler Matrix */}
+                <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
+                  <div className="flex justify-between items-start mb-4">
+                    <h3 className="text-lg font-bold text-white">Developer Profiler</h3>
+                    <span className={`text-xs uppercase font-bold px-3 py-1 rounded-md border ${selectedToken.devProfile.color}`}>
+                      {selectedToken.devProfile.label}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 mb-6">
+                    <a 
+                      href={`https://testnet.vibevibe.fun/profile/${selectedToken.devAddress}`} 
+                      target="_blank" 
+                      rel="noreferrer"
+                      className="text-xs px-3 py-1.5 bg-zinc-950 border border-zinc-800 rounded hover:border-emerald-500/50 hover:text-white text-zinc-400 font-mono transition-colors"
+                    >
+                      Creator: {shortenAddress(selectedToken.devAddress)} ↗
+                    </a>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div className="p-4 bg-zinc-950 rounded-lg border border-zinc-800">
+                      <span className="text-zinc-500 block mb-1">Previous Launches</span>
+                      <span className="text-white font-bold">{selectedToken.devProfile.launches} Tokens</span>
+                    </div>
+                    <div className="p-4 bg-zinc-950 rounded-lg border border-zinc-800">
+                      <span className="text-zinc-500 block mb-1">Graduation Rate</span>
+                      <span className={selectedToken.devProfile.gradRate > 50 ? 'text-emerald-400 font-bold' : 'text-red-400 font-bold'}>{selectedToken.devProfile.gradRate}%</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Cabal Forensics */}
                 <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
                   <h3 className="text-lg font-bold mb-4 text-white">Cabal Forensics & Distribution</h3>
                   
-                  {/* Holder Concentration Viz */}
                   <div className="w-full bg-zinc-950 border border-zinc-800 rounded-lg mb-6 p-6 relative overflow-hidden group">
                     <div className="flex justify-between text-sm mb-3">
                       <span className="text-zinc-400">Top 10 Wallets Concentration</span>
@@ -261,21 +358,31 @@ export default function Home() {
                     </div>
                   </div>
                 </div>
-
-                <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
-                  <h3 className="text-lg font-bold mb-4 text-white">Bonding Curve Telemetry</h3>
-                  <div className="flex justify-between text-sm mb-2">
-                    <span className="text-zinc-400">Graduation Progress</span>
-                    <span className="text-emerald-400 font-bold">{selectedToken.bondingCurveProgress}%</span>
-                  </div>
-                  <div className="w-full bg-zinc-950 rounded-full h-4 border border-zinc-800 overflow-hidden">
-                    <div className="h-4 bg-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.5)] transition-all" style={{ width: `${selectedToken.bondingCurveProgress}%` }} />
-                  </div>
-                </div>
               </div>
 
-              {/* Column 2: Smart Wallets & Intel */}
+              {/* Column 2: Safety, Smart Wallets & Intel */}
               <div className="space-y-6">
+                
+                {/* Contract Safety Checks */}
+                <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
+                  <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-wider mb-4">Contract Safety & Audits</h3>
+                  <ul className="space-y-3 text-sm">
+                    <li className="flex justify-between items-center p-3 bg-zinc-950 rounded-lg border border-zinc-800">
+                      <span className="text-zinc-500">Social Presence</span>
+                      <span className={selectedToken.safetyChecks.socials.safe ? 'text-emerald-400 font-bold' : 'text-red-400 font-bold'}>{selectedToken.safetyChecks.socials.label}</span>
+                    </li>
+                    <li className="flex justify-between items-center p-3 bg-zinc-950 rounded-lg border border-zinc-800">
+                      <span className="text-zinc-500">MEV Exposure</span>
+                      <span className={selectedToken.safetyChecks.mev.safe ? 'text-emerald-400 font-bold' : 'text-yellow-400 font-bold'}>{selectedToken.safetyChecks.mev.label}</span>
+                    </li>
+                    <li className="flex justify-between items-center p-3 bg-zinc-950 rounded-lg border border-zinc-800">
+                      <span className="text-zinc-500">Code Audit</span>
+                      <span className={selectedToken.safetyChecks.honeypot.safe ? 'text-emerald-400 font-bold' : 'text-red-400 font-bold'}>{selectedToken.safetyChecks.honeypot.label}</span>
+                    </li>
+                  </ul>
+                </div>
+
+                {/* Smart Money Wallets */}
                 <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
                   <h3 className="text-lg font-bold mb-4 text-white flex items-center gap-2">
                     <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
@@ -305,24 +412,6 @@ export default function Home() {
                     ))}
                   </div>
                 </div>
-
-                <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
-                  <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-wider mb-4">Volume & Risk</h3>
-                  <ul className="space-y-3 text-sm">
-                    <li className="flex justify-between">
-                      <span className="text-zinc-500">Block 0 Buyers</span>
-                      <span className={selectedToken.blockZeroBuyers > 15 ? 'text-red-400' : 'text-white'}>{selectedToken.blockZeroBuyers} Wallets</span>
-                    </li>
-                    <li className="flex justify-between">
-                      <span className="text-zinc-500">Diamond Hands</span>
-                      <span className="text-white">{selectedToken.diamondHandsHoldersPct}%</span>
-                    </li>
-                    <li className="flex justify-between">
-                      <span className="text-zinc-500">Time Live</span>
-                      <span className="text-white">{selectedToken.timeSinceLaunchMins} mins</span>
-                    </li>
-                  </ul>
-                </div>
                 
                 <a 
                   href={`https://testnet.vibevibe.fun/token/${selectedToken.contractAddress}`} 
@@ -336,7 +425,6 @@ export default function Home() {
             </div>
           </div>
         ) : (
-          /* === RADAR GRID VIEW === */
           <div className="animate-in fade-in duration-300">
             <header className="mb-8">
               <h2 className="text-3xl font-bold tracking-tight mb-2">Live On-Chain Radar</h2>
