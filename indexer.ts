@@ -1,3 +1,4 @@
+import { createServer } from 'http';
 import 'dotenv/config';
 import { createPublicClient, http, defineChain, formatEther } from 'viem';
 import { createClient } from '@supabase/supabase-js';
@@ -98,3 +99,5 @@ async function runIndexer() {
 }
 
 runIndexer();
+
+createServer((req: any, res: any) => res.end('Indexer is Live!')).listen(process.env.PORT || 3000);
