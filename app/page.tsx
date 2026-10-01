@@ -5,8 +5,8 @@ import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { useAccount, useReadContract, useReadContracts, usePublicClient, useSendTransaction } from "wagmi";
 import { isAddress, parseEther, pad } from "viem";
 
-const SIGNAL_TOKEN = "0xD4D41412033a72a0D1cCd0Cb02b666Cf771880B1";
-const FACTORY_ADDRESS = "0xe794217880011f9cA6961340eD5c16EC9559Fea0";
+const SIGNAL_TOKEN = "0xD4D41412033a72a0D1cCd0Cb02b666Cf771880B1" as `0x${string}`;
+const FACTORY_ADDRESS = "0xe794217880011f9cA6961340eD5c16EC9559Fea0" as `0x${string}`;
 
 const ERC20_ABI = [
   { name: "name", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "string" }] },
@@ -15,11 +15,32 @@ const ERC20_ABI = [
   { name: "balanceOf", type: "function", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "uint256" }] }
 ] as const;
 
+const SIGNAL_BALANCE_ABI = [
+  { name: "balanceOf", type: "function", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "uint256" }] }
+] as const;
+
 interface TokenLaunchData {
   tokenAddress: string;
   curveAddress: string;
   devAddress: string;
   launchBlock: bigint;
+}
+
+interface VibeToken {
+  id: string;
+  name: string;
+  ticker: string;
+  contractAddress: string;
+  devAddress: string;
+  bondingCurveProgress: number;
+  timeSinceLaunchMins: number;
+  blockZeroBuyers: number;
+  diamondHandsHoldersPct: number;
+  totalSupply: number;
+  score: number;
+  devProfile: { label: string; color: string; launches: number; gradRate: number; };
+  safetyChecks: { socials: { label: string; safe: boolean }; mev: { label: string; safe: boolean }; honeypot: { label: string; safe: boolean }; };
+  momentum: { buyPct: number; sellPct: number; volumeEth: string; };
 }
 
 function getDevProfile(devAddress: string) {
@@ -69,7 +90,7 @@ export default function Home() {
   const [isFetchingLogs, setIsFetchingLogs] = useState(true);
   
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedToken, setSelectedToken] = useState<any | null>(null);
+  const [selectedToken, setSelectedToken] = useState<VibeToken | null>(null);
 
   const [apeAmount, setApeAmount] = useState<string>("0.005");
   const [slippage, setSlippage] = useState<number>(15);
@@ -77,7 +98,7 @@ export default function Home() {
 
   const { data: balanceData } = useReadContract({
     address: SIGNAL_TOKEN,
-    abi: [{ name: "balanceOf", type: "function", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "uint256" }] }],
+    abi: SIGNAL_BALANCE_ABI,
     functionName: "balanceOf",
     args: address ? [address] : undefined,
   });
@@ -102,9 +123,9 @@ export default function Home() {
         const extractedData: TokenLaunchData[] = logs
           .filter(log => log.topics[0] === creationTopic)
           .map(log => {
-            const devTopic = log.topics[1]; // Topic 1 is Creator
-            const curveTopic = log.topics[2]; // Topic 2 is AMM Pool
-            const tokenTopic = log.topics[3]; // Topic 3 is Token Contract
+            const devTopic = log.topics[1]; 
+            const curveTopic = log.topics[2];   
+            const tokenTopic = log.topics[3];
             
             if (tokenTopic && curveTopic && devTopic) {
               return {
@@ -119,6 +140,15 @@ export default function Home() {
           .filter(data => data !== null)
           .reverse()
           .slice(0, 20) as TokenLaunchData[];
+        
+        if (!extractedData.find(d => d.tokenAddress.toLowerCase() === SIGNAL_TOKEN.toLowerCase())) {
+          extractedData.unshift({
+            tokenAddress: SIGNAL_TOKEN,
+            curveAddress: "0x89944BC9D3b20764BeA771CFAf9711a8Fb839e72",
+            devAddress: "0xc8F14080c15801bab3747E9875e6894b86801bC7", 
+            launchBlock: latestBlock - BigInt(1500)
+          });
+        }
         
         setLaunchData(extractedData);
       } catch (error) {
@@ -154,15 +184,16 @@ export default function Home() {
 
         if (searchLogs.length > 0) {
           const log = searchLogs[0];
-          const newEntry: TokenLaunchData = {
-            tokenAddress: searchQuery,
-            devAddress: `0x${log.topics[1]!.slice(26)}`,
-            curveAddress: `0x${log.topics[2]!.slice(26)}`,
-            launchBlock: log.blockNumber
-          };
-          setLaunchData(prev => [newEntry, ...prev]);
+          if (log.topics[1] && log.topics[2]) {
+            const newEntry: TokenLaunchData = {
+              tokenAddress: searchQuery,
+              devAddress: `0x${log.topics[1].slice(26)}`,
+              curveAddress: `0x${log.topics[2].slice(26)}`,
+              launchBlock: log.blockNumber as bigint
+            };
+            setLaunchData(prev => [newEntry, ...prev]);
+          }
         } else {
-          // Fallback if not found in factory logs
           setLaunchData(prev => [{
             tokenAddress: searchQuery,
             curveAddress: searchQuery,
@@ -186,7 +217,7 @@ export default function Home() {
       setTxHash(null);
       sendTransaction(
         {
-          to: FACTORY_ADDRESS as `0x${string}`,
+          to: FACTORY_ADDRESS,
           value: parseEther(apeAmount),
         },
         {
@@ -211,10 +242,10 @@ export default function Home() {
     query: { enabled: launchData.length > 0 }
   });
 
-  const processedTokens = useMemo(() => {
+  const processedTokens: VibeToken[] = useMemo(() => {
     if (!onChainData || launchData.length === 0) return [];
     
-    const tokens = [];
+    const tokens: VibeToken[] = [];
     for (let i = 0; i < launchData.length; i++) {
       const data = launchData[i];
       
