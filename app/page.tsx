@@ -94,6 +94,18 @@ function shortenAddress(address: string) {
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
 }
 
+function formatTimeLive(totalMinutes: number) {
+  if (!totalMinutes && totalMinutes !== 0) return '0m';
+  if (totalMinutes < 60) return `${totalMinutes}m`;
+  
+  const days = Math.floor(totalMinutes / 1440);
+  const hours = Math.floor((totalMinutes % 1440) / 60);
+  const mins = Math.floor(totalMinutes % 60);
+  
+  if (days > 0) return `${days}d ${hours}h ${mins}m`;
+  return `${hours}h ${mins}m`;
+}
+
 export default function Home() {
   const { address, isConnected } = useAccount();
   const { sendTransaction, isPending: isTxPending } = useSendTransaction();
@@ -353,7 +365,7 @@ export default function Home() {
                       Live Telemetry
                     </h3>
                     <span className="text-xs text-zinc-400 font-bold border border-zinc-700 px-2 py-1 rounded bg-zinc-950">
-                      LIVE: {selectedToken.timeSinceLaunchMins} mins
+                      LIVE: {formatTimeLive(selectedToken.timeSinceLaunchMins)}
                     </span>
                   </div>
 
@@ -645,7 +657,7 @@ export default function Home() {
                           {/* The missing time block you are adding back: */}
                           <div className="flex justify-between text-xs mb-2">
                             <span className="text-zinc-500">Time Live (est)</span>
-                            <span className="text-zinc-300">{token.timeSinceLaunchMins} mins</span>
+                            <span className="text-zinc-300">{formatTimeLive(token.timeSinceLaunchMins)}</span>
                           </div>
 
                           {/* The existing bonding curve code you just shared: */}
