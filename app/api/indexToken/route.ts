@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { createPublicClient, http, formatEther, parseAbiItem, pad } from 'viem';
+import { createPublicClient, http, formatEther, parseAbiItem } from 'viem';
 import { createClient } from '@supabase/supabase-js';
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -12,7 +12,7 @@ const publicClient = createPublicClient({
 
 const FACTORY_ADDRESS = "0xe794217880011f9cA6961340eD5c16EC9559Fea0";
 const ROUTER_ADDRESS = "0x89944BC9D3b20764BeA771CFAf9711a8Fb839e72";
-const CREATION_TOPIC = "0xa7e8032bfd07a9fbcde50eabe91eb2901faee6dbddd9cced579491d9b07ef5c8";
+const creationEvent = parseAbiItem('event Creation(uint256 indexed launchId, address indexed creator, address indexed token)');
 const curveBuyEvent = parseAbiItem('event CurveBuy(address indexed token, address indexed buyer, uint256 tokensOut, uint256 bnbIn, uint256 fee, uint256 reserveAfter, uint256 soldAfter, uint256 timestamp)');
 
 const ERC20_ABI = [
@@ -37,10 +37,12 @@ export async function GET(request: Request) {
 
         // 2. Fetch creation event from Factory
         const creationLogs = await publicClient.getLogs({
-            address: FACTORY_ADDRESS,
-            topics: [CREATION_TOPIC, null, null, pad(tokenAddress as `0x${string}`)],
+            address: FACTORY_ADDRESS as `0x${string}`,
+            event: creationEvent,
+            args: { token: tokenAddress as `0x${string}` },
             fromBlock: 0n,
-            toBlock: 'latest'
+            toBlock: 'latest',
+            strict: false
         });
 
         if (creationLogs.length === 0) {
@@ -48,8 +50,8 @@ export async function GET(request: Request) {
         }
 
         const log = creationLogs[0];
-        const launchId = parseInt(log.topics[1] as string, 16);
-        const devAddress = `0x${log.topics[2]!.slice(26)}`.toLowerCase();
+        const launchId = Number(log.args.launchId);
+        const devAddress = log.args.creator?.toLowerCase() || '';
         const ammAddress = `0x${log.data.slice(26, 66)}`.toLowerCase() as `0x${string}`;
         
         const baseTokenHex = log.data.slice(282, 322);
@@ -66,7 +68,7 @@ export async function GET(request: Request) {
 
         // 5. Query Router for CurveBuy events to calculate momentum
         const buyLogs = await publicClient.getLogs({
-            address: ROUTER_ADDRESS,
+            address: ROUTER_ADDRESS as `0x${string}`,
             event: curveBuyEvent,
             args: { token: tokenAddress as `0x${string}` },
             fromBlock: log.blockNumber,
@@ -102,7 +104,11 @@ export async function GET(request: Request) {
             sell_pct: buyCount > 0 ? 0 : 50
         }, { onConflict: 'token_address' });
 
-        return NextResponse.json({ success: true });
+        return NextResponse.json({ 
+            success: true, 
+            launchBlock: log.blockNumber.toString(),
+            launchId: launchId.toString()
+        });
     } catch (error) {
         console.error("JIT Indexing error:", error);
         return NextResponse.json({ error: 'Failed to index token' }, { status: 500 });
