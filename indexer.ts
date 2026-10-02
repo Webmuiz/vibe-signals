@@ -35,7 +35,7 @@ async function updateMomentumInDatabase(tokenAddress: string, isBuy: boolean, et
     const { data: token } = await supabase
         .from('launches')
         .select('volume_eth, buy_count, sell_count')
-        .eq('token_address', tokenAddress)
+        .eq('token_address', tokenAddress.toLowerCase())
         .single();
 
     if (!token) return;
@@ -60,7 +60,7 @@ async function updateMomentumInDatabase(tokenAddress: string, isBuy: boolean, et
             buy_pct: buyPct,
             sell_pct: sellPct
         })
-        .eq('token_address', tokenAddress);
+        .eq('token_address', tokenAddress.toLowerCase());
 }
 
 async function runIndexer() {
@@ -73,9 +73,9 @@ async function runIndexer() {
             for (const log of logs) {
                 if (log.topics[0] === CREATION_TOPIC && log.topics[1] && log.topics[2] && log.topics[3]) {
                     const launchId = parseInt(log.topics[1] as string, 16);
-                    const devAddress = `0x${log.topics[2].slice(26)}`;
-                    const tokenAddress = `0x${log.topics[3].slice(26)}`;
-                    const ammAddress = `0x${log.data.slice(26, 66)}` as `0x${string}`;
+                    const devAddress = `0x${log.topics[2].slice(26)}`.toLowerCase();
+                    const tokenAddress = `0x${log.topics[3].slice(26)}`.toLowerCase();
+                    const ammAddress = `0x${log.data.slice(26, 66)}`.toLowerCase() as `0x${string}`;
 
                     const baseTokenHex = log.data.slice(282, 322);
                     const isNativeEth = baseTokenHex === "0000000000000000000000000000000000000000";
@@ -108,7 +108,7 @@ async function runIndexer() {
     });
 
     // 2. THE BUY MOMENTUM CATCHER
-    const curveBuyEvent = parseAbiItem('event CurveBuy(address indexed token, address indexed buyer, uint256 bnbIn, uint256 tokensOut, uint256 fee, uint256 reserveAfter, uint256 soldAfter, uint256 timestamp)');
+    const curveBuyEvent = parseAbiItem('event CurveBuy(address indexed token, address indexed buyer, uint256 tokensOut, uint256 bnbIn, uint256 fee, uint256 reserveAfter, uint256 soldAfter, uint256 timestamp)');
 
     publicClient.watchEvent({
         address: ROUTER_ADDRESS,
@@ -121,7 +121,7 @@ async function runIndexer() {
                 const ethVolume = Number(formatEther(bnbIn as bigint));
                 console.log(`🟢 BUY DETECTED: ${ethVolume.toFixed(4)} ETH on token ${token}`);
 
-                await updateMomentumInDatabase(token, true, ethVolume);
+                await updateMomentumInDatabase(token.toLowerCase(), true, ethVolume);
             }
         }
     });

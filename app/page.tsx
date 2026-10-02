@@ -192,7 +192,8 @@ export default function Home() {
   const filteredTokens = useMemo(() => {
     let list = processedTokens;
     if (searchQuery) {
-      list = list.filter(t => t.contractAddress.toLowerCase().includes(searchQuery.toLowerCase()));
+      const query = searchQuery.trim().toLowerCase();
+      list = list.filter(token => token.contractAddress.toLowerCase().includes(query));
     }
     switch (activeFilter) {
       case "alpha": return list.filter(t => t.score >= 70);
