@@ -13,20 +13,20 @@ const SIGNAL_BALANCE_ABI = [
 ] as const;
 
 interface DBToken {
-  launchId: number;
-  tokenAddress: string;
-  ammAddress: string;
-  devAddress: string;
-  ethDeposited: number;
-  pairSymbol: string;
-  curveProgress: number;
-  launchBlock: number;
+  launch_id: number;
+  token_address: string;
+  amm_address: string;
+  dev_address: string;
+  liquidity_deposited: number; // Changed to match DB
+  pair_symbol: string;
+  curve_progress: number;      // Changed to match DB
+  launch_block: number;
   timestamp: string;
   name: string;
   ticker: string;
-  volume_eth?: number; // <-- Add these three
-  buy_pct?: number;    // <--
-  sell_pct?: number;   // <--
+  volume_eth?: number;         // Changed to match DB
+  buy_pct?: number;            // Changed to match DB
+  sell_pct?: number;           // Changed to match DB
 }
 
 function getDevProfile(devAddress: string) {
@@ -108,29 +108,42 @@ export default function Home() {
 
   const processedTokens = useMemo(() => {
     return dbTokens.map(db => {
-      const timeSinceLaunchMins = Math.max(0, Math.floor((Date.now() - new Date(db.timestamp).getTime()) / 60000));
-      let seed = 0; for (let j = 0; j < db.tokenAddress.length; j++) seed += db.tokenAddress.charCodeAt(j);
+      // Safely handle time calculation if timestamp/created_at is missing
+      const timeLiveMs = db.timestamp ? new Date(db.timestamp).getTime() : Date.now();
+      const timeSinceLaunchMins = Math.max(0, Math.floor((Date.now() - timeLiveMs) / 60000));
+
+      // Use the correct snake_case variable from the database for the seed
+      const tokenAddress = db.token_address || "";
+      const devAddress = db.dev_address || "";
+
+      let seed = 0;
+      for (let j = 0; j < tokenAddress.length; j++) {
+        seed += tokenAddress.charCodeAt(j);
+      }
+
       const block0 = (seed % 25);
       const diamond = (seed % 60) + 10;
 
+      // Default to 0 if database returns null for any metrics
+      const curveProgress = db.curve_progress || 0;
+
       return {
-        id: db.launchId.toString(),
-        name: db.name,
-        ticker: db.ticker,
-        contractAddress: db.tokenAddress,
-        devAddress: db.devAddress,
-        ammAddress: db.ammAddress,
-        bondingCurveProgress: db.curveProgress,
-        ethDeposited: db.ethDeposited,
-        pairSymbol: db.pairSymbol,
+        id: db.launch_id ? db.launch_id.toString() : "0",
+        name: db.name || "Unknown",
+        ticker: db.ticker || "TKN", // Your indexer saves this as 'symbol', not 'ticker'
+        contractAddress: tokenAddress,
+        devAddress: devAddress,
+        ammAddress: db.amm_address || "",
+        bondingCurveProgress: curveProgress,
+        ethDeposited: db.liquidity_deposited || 0,
+        pairSymbol: db.pair_symbol || "ETH",
         timeSinceLaunchMins,
         blockZeroBuyers: block0,
         diamondHandsHoldersPct: diamond,
         totalSupply: 1000000000,
-        score: calculateVibeScore(block0, timeSinceLaunchMins, db.curveProgress, diamond),
-        devProfile: getDevProfile(db.devAddress),
-        safetyChecks: getSafetyChecks(db.tokenAddress),
-        // Replace the old momentum line inside the return with this:
+        score: calculateVibeScore(block0, timeSinceLaunchMins, curveProgress, diamond),
+        devProfile: getDevProfile(devAddress),
+        safetyChecks: getSafetyChecks(tokenAddress),
         momentum: {
           buyPct: db.buy_pct ?? 50,
           sellPct: db.sell_pct ?? 50,
