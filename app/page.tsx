@@ -168,7 +168,10 @@ export default function Home() {
       const block0 = (seed % 25);
       const diamond = (seed % 60) + 10;
 
-      const bondingCurveProgress = db.curve_progress ?? db.curveProgress ?? db.bondingCurveProgress ?? 0;
+      let bondingCurveProgress = db.curve_progress ?? db.curveProgress ?? db.bondingCurveProgress ?? 0;
+      if (bondingCurveProgress > 0 && bondingCurveProgress < 0.1) {
+        bondingCurveProgress = 0.1;
+      }
       const ethDeposited = db.liquidity_deposited ?? db.ethDeposited ?? 0;
 
       const buyPct = db.buy_pct ?? db.buyPct ?? 50;
@@ -231,9 +234,12 @@ export default function Home() {
             const createdMs = new Date(launch.createdAt).getTime();
             const timeLiveMins = Math.max(0, Math.floor((Date.now() - createdMs) / 60000));
             
-            const reserve = Number(launch.curve?.pairReserveUnits || 0);
-            const target = Number(launch.targetPairUnits || 1);
-            const curveProgress = Math.min(100, Math.max(0, (reserve / target) * 100));
+            const currentEth = Number(launch.curve?.pairReserveUnits || 0) / 1e18;
+            const targetEth = Number(launch.targetPairUnits || 4000000000000000000) / 1e18;
+            let curveProgress = Math.min(100, Math.max(0, (currentEth / targetEth) * 100));
+            if (curveProgress > 0 && curveProgress < 0.1) {
+              curveProgress = 0.1;
+            }
 
             const imageUri = launch.content?.image?.uri?.startsWith('ipfs://') 
               ? launch.content.image.uri.replace('ipfs://', 'https://ipfs.io/ipfs/') 
@@ -254,7 +260,7 @@ export default function Home() {
               devAddress: launch.creatorAddress || query,
               timeSinceLaunchMins: timeLiveMins,
               bondingCurveProgress: curveProgress,
-              ethDeposited: reserve.toFixed(4),
+              ethDeposited: `${currentEth.toFixed(4)} / ${targetEth.toFixed(1)}`,
               pairSymbol: "ETH",
               blockZeroBuyers: 0,
               diamondHandsHoldersPct: 50,
@@ -355,7 +361,7 @@ export default function Home() {
                     <div className="flex justify-between text-xs mb-2">
                       <span className="text-zinc-400">{selectedToken.bondingCurveProgress >= 100 ? 'Status' : `Bonding Curve Progress (${selectedToken.ethDeposited} ${selectedToken.pairSymbol})`}</span>
                       <span className={selectedToken.bondingCurveProgress >= 100 ? "text-amber-400 font-bold" : "text-emerald-400 font-bold"}>
-                        {selectedToken.bondingCurveProgress >= 100 ? 'Graduated 🚀' : `${selectedToken.bondingCurveProgress}%`}
+                        {selectedToken.bondingCurveProgress >= 100 ? 'Graduated 🚀' : `${selectedToken.bondingCurveProgress.toFixed(1)}%`}
                       </span>
                     </div>
                     <div className="w-full bg-zinc-950 rounded-full h-3 overflow-hidden border border-zinc-800">
@@ -364,7 +370,7 @@ export default function Home() {
                           ? 'bg-gradient-to-r from-amber-400 via-amber-500 to-amber-600 shadow-[0_0_15px_rgba(251,191,36,0.5)]'
                           : 'bg-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.5)]'
                           }`}
-                        style={{ width: `${Math.min(selectedToken.bondingCurveProgress, 100)}%` }}
+                        style={{ width: `${Math.min(100, Math.max(1, selectedToken.bondingCurveProgress))}%` }}
                       />
                     </div>
                   </div>
@@ -646,7 +652,7 @@ export default function Home() {
                           <div className="flex justify-between text-xs mb-2">
                             <span className="text-zinc-500">{token.bondingCurveProgress >= 100 ? 'Status' : 'Bonding Curve'}</span>
                             <span className={token.bondingCurveProgress >= 100 ? "text-amber-400 font-bold" : token.bondingCurveProgress > 85 ? "text-emerald-400" : "text-zinc-300"}>
-                              {token.bondingCurveProgress >= 100 ? 'Graduated 🚀' : `${token.bondingCurveProgress}%`}
+                              {token.bondingCurveProgress >= 100 ? 'Graduated 🚀' : `${token.bondingCurveProgress.toFixed(1)}%`}
                             </span>
                           </div>
                           <div className="w-full bg-zinc-800 rounded-full h-2">
@@ -657,7 +663,7 @@ export default function Home() {
                                   ? "bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.8)]"
                                   : "bg-zinc-500"
                                 }`}
-                              style={{ width: `${Math.min(token.bondingCurveProgress, 100)}%` }}
+                              style={{ width: `${Math.min(100, Math.max(1, token.bondingCurveProgress))}%` }}
                             />
                           </div>
                         </div>
