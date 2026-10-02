@@ -4,6 +4,7 @@ import { useState, useMemo, useEffect } from "react";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { useAccount, useSendTransaction, useReadContract } from "wagmi";
 import { isAddress, parseEther } from "viem";
+import { createClient } from "@supabase/supabase-js";
 
 const SIGNAL_TOKEN = "0xD4D41412033a72a0D1cCd0Cb02b666Cf771880B1" as `0x${string}`;
 const FACTORY_ADDRESS = "0xe794217880011f9cA6961340eD5c16EC9559Fea0" as `0x${string}`;
@@ -12,21 +13,40 @@ const SIGNAL_BALANCE_ABI = [
   { name: "balanceOf", type: "function", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "uint256" }] }
 ] as const;
 
+// Initialize Supabase client
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
 interface DBToken {
-  launch_id: number;
-  token_address: string;
-  amm_address: string;
-  dev_address: string;
-  liquidity_deposited: number; // Changed to match DB
-  pair_symbol: string;
-  curve_progress: number;      // Changed to match DB
-  launch_block: number;
-  timestamp: string;
-  name: string;
-  ticker: string;
-  volume_eth?: number;         // Changed to match DB
-  buy_pct?: number;            // Changed to match DB
-  sell_pct?: number;           // Changed to match DB
+  launch_id?: number;
+  launchId?: number;
+  token_address?: string;
+  tokenAddress?: string;
+  amm_address?: string;
+  ammAddress?: string;
+  dev_address?: string;
+  devAddress?: string;
+  liquidity_deposited?: number;
+  ethDeposited?: number;
+  pair_symbol?: string;
+  pairSymbol?: string;
+  curve_progress?: number;
+  curveProgress?: number;
+  bondingCurveProgress?: number;
+  launch_block?: number;
+  launchBlock?: number;
+  timestamp?: string;
+  created_at?: string;
+  name?: string;
+  ticker?: string;
+  symbol?: string;
+  volume_eth?: number;
+  volumeEth?: number;
+  buy_pct?: number;
+  buyPct?: number;
+  sell_pct?: number;
+  sellPct?: number;
 }
 
 function getDevProfile(devAddress: string) {
@@ -87,14 +107,22 @@ export default function Home() {
 
   const hasAccess = balanceData && BigInt(balanceData as any) >= BigInt("10000") * (BigInt("10") ** BigInt("18"));
 
-  // High-speed polling from our local JSON database API
+  // High-speed polling from our local JSON database API or Supabase
   useEffect(() => {
     const fetchDatabase = async () => {
       try {
-        const res = await fetch('/api/tokens');
-        if (res.ok) {
-          const data = await res.json();
-          setDbTokens(data);
+        const { data, error } = await supabase
+          .from('launches')
+          .select('*')
+          .order('launch_id', { ascending: false });
+
+        if (error) {
+          console.error('Supabase fetch error:', error);
+          return;
+        }
+
+        if (data && data.length > 0) {
+          setDbTokens(data as DBToken[]);
         }
       } catch (err) {
         console.error("Database sync failed", err);
@@ -108,46 +136,54 @@ export default function Home() {
 
   const processedTokens = useMemo(() => {
     return dbTokens.map(db => {
-      // Safely handle time calculation if timestamp/created_at is missing
-      const timeLiveMs = db.timestamp ? new Date(db.timestamp).getTime() : Date.now();
-      const timeSinceLaunchMins = Math.max(0, Math.floor((Date.now() - timeLiveMs) / 60000));
+      // Safely handle time calculation
+      const timestampToParse = db.created_at || db.timestamp || Date.now();
+      const timeLiveMs = new Date(timestampToParse).getTime();
+      let timeSinceLaunchMins = 0;
+      if (!isNaN(timeLiveMs) && timeLiveMs > 0) {
+        timeSinceLaunchMins = Math.max(0, Math.floor((Date.now() - timeLiveMs) / 60000));
+      }
 
-      // Use the correct snake_case variable from the database for the seed
-      const tokenAddress = db.token_address || "";
-      const devAddress = db.dev_address || "";
+      const contractAddress = db.token_address || db.tokenAddress || "";
+      const devAddress = db.dev_address || db.devAddress || "";
+      const ammAddress = db.amm_address || db.ammAddress || "";
 
       let seed = 0;
-      for (let j = 0; j < tokenAddress.length; j++) {
-        seed += tokenAddress.charCodeAt(j);
+      for (let j = 0; j < contractAddress.length; j++) {
+        seed += contractAddress.charCodeAt(j);
       }
 
       const block0 = (seed % 25);
       const diamond = (seed % 60) + 10;
 
-      // Default to 0 if database returns null for any metrics
-      const curveProgress = db.curve_progress || 0;
+      const bondingCurveProgress = db.curve_progress ?? db.curveProgress ?? db.bondingCurveProgress ?? 0;
+      const ethDeposited = db.liquidity_deposited ?? db.ethDeposited ?? 0;
+      
+      const buyPct = db.buy_pct ?? db.buyPct ?? 50;
+      const sellPct = db.sell_pct ?? db.sellPct ?? 50;
+      const volumeEth = Number(db.volume_eth ?? db.volumeEth ?? 0).toFixed(4);
 
       return {
-        id: db.launch_id ? db.launch_id.toString() : "0",
+        id: (db.launch_id || db.launchId || "0").toString(),
         name: db.name || "Unknown",
-        ticker: db.ticker || "TKN", // Your indexer saves this as 'symbol', not 'ticker'
-        contractAddress: tokenAddress,
-        devAddress: devAddress,
-        ammAddress: db.amm_address || "",
-        bondingCurveProgress: curveProgress,
-        ethDeposited: db.liquidity_deposited || 0,
-        pairSymbol: db.pair_symbol || "ETH",
+        ticker: db.symbol || db.ticker || "TKN",
+        contractAddress,
+        devAddress,
+        ammAddress,
+        bondingCurveProgress,
+        ethDeposited,
+        pairSymbol: db.pair_symbol || db.pairSymbol || "ETH",
         timeSinceLaunchMins,
         blockZeroBuyers: block0,
         diamondHandsHoldersPct: diamond,
         totalSupply: 1000000000,
-        score: calculateVibeScore(block0, timeSinceLaunchMins, curveProgress, diamond),
+        score: calculateVibeScore(block0, timeSinceLaunchMins, bondingCurveProgress, diamond),
         devProfile: getDevProfile(devAddress),
-        safetyChecks: getSafetyChecks(tokenAddress),
+        safetyChecks: getSafetyChecks(contractAddress),
         momentum: {
-          buyPct: db.buy_pct ?? 50,
-          sellPct: db.sell_pct ?? 50,
-          volumeEth: (db.volume_eth ?? 0).toFixed(4)
+          buyPct,
+          sellPct,
+          volumeEth
         }
       };
     });
