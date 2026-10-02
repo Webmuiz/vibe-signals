@@ -169,7 +169,7 @@ export default function Home() {
 
       const bondingCurveProgress = db.curve_progress ?? db.curveProgress ?? db.bondingCurveProgress ?? 0;
       const ethDeposited = db.liquidity_deposited ?? db.ethDeposited ?? 0;
-      
+
       const buyPct = db.buy_pct ?? db.buyPct ?? 50;
       const sellPct = db.sell_pct ?? db.sellPct ?? 50;
       const volumeEth = Number(db.volume_eth ?? db.volumeEth ?? 0).toFixed(4);
@@ -221,16 +221,12 @@ export default function Home() {
       if (query.length === 42 && query.startsWith("0x") && filteredTokens.length === 0) {
         setIsSearchingChain(true);
         try {
-          const res = await fetch("/api/proxyVibe");
+          const res = await fetch(`/api/proxyVibe?address=${query}`);
           if (res.ok) {
             const data = await res.json();
-            const tokenArray = data.data || data;
-            const foundToken = tokenArray.find((t: any) => {
-              const addr = t.token_address || t.address || t.tokenAddress || "";
-              return addr.toLowerCase() === query.toLowerCase();
-            });
+            const foundToken = data.data || data;
 
-            if (foundToken) {
+            if (foundToken && Object.keys(foundToken).length > 0) {
               setDbTokens(prev => [{
                 token_address: query,
                 name: foundToken.name || "Unknown",
@@ -250,8 +246,10 @@ export default function Home() {
               setSearchError("Token not found in VibeVibe API");
             }
           } else {
-            console.error("VibeVibe API failed:", await res.text());
-            setSearchError("Failed to fetch from VibeVibe API");
+            const errData = await res.json().catch(() => ({}));
+            const errMsg = errData.error || await res.text() || "Failed to fetch from VibeVibe API";
+            console.error("VibeVibe API failed:", errMsg);
+            setSearchError(errMsg);
           }
         } catch (err) {
           console.error("On-chain fallback failed", err);
@@ -262,9 +260,9 @@ export default function Home() {
         setSearchError(null);
       }
     };
-    
+
     fetchOnChain();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchQuery, filteredTokens.length]);
 
   const handleExecuteApe = async () => {
