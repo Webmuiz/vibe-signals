@@ -346,8 +346,22 @@ export default function Home() {
         const buyPct = totalVolume > 0 ? Math.round((buyVolume / totalVolume) * 100) : 50;
         const sellPct = totalVolume > 0 ? 100 - buyPct : 50;
 
+        const launch = json.data?.launch;
+        const socials = launch?.content?.socials || {};
+        const hasSocials = !!(socials.x || socials.telegram || socials.website);
+        
+        let dynamicScore = 50;
+        if (hasSocials) dynamicScore += 15;
+        if (totalVolume > 0.01) dynamicScore += 10;
+        if (buyPct > 60) dynamicScore += 15;
+        if (sellPct > 70) dynamicScore -= 20;
+        dynamicScore = Math.max(1, Math.min(99, dynamicScore));
+
         setSelectedToken((prev: any) => ({
           ...prev,
+          score: dynamicScore,
+          hasSocials: hasSocials,
+          socialLinks: socials,
           momentum: { buyPct, sellPct, volumeEth: totalVolume.toFixed(4) }
         }));
       })
@@ -614,7 +628,9 @@ export default function Home() {
                   <ul className="space-y-3 text-sm">
                     <li className="flex justify-between items-center p-3 bg-zinc-950 rounded-lg border border-zinc-800">
                       <span className="text-zinc-500">Social Presence</span>
-                      <span className={selectedToken.safetyChecks.socials.safe ? 'text-emerald-400 font-bold' : 'text-red-400 font-bold'}>{selectedToken.safetyChecks.socials.label}</span>
+                      <span className={selectedToken.hasSocials ? 'text-emerald-400 font-bold' : 'text-red-400 font-bold'}>
+                        {selectedToken.hasSocials ? 'Linked' : 'No Socials'}
+                      </span>
                     </li>
                     <li className="flex justify-between items-center p-3 bg-zinc-950 rounded-lg border border-zinc-800">
                       <span className="text-zinc-500">MEV Exposure</span>
