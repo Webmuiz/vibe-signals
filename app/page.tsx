@@ -257,9 +257,28 @@ export default function Home() {
               ? launch.content.image.uri.replace('ipfs://', 'https://ipfs.io/ipfs/') 
               : launch.content?.image?.uri;
 
+            let buyVolume = 0;
+            let sellVolume = 0;
+            const feeEvents = launch.feeEvents || [];
+            feeEvents.forEach((event: any) => {
+              const ethAmount = Number(event.pairPrincipalUnits || 0) / 1e18;
+              if (event.side === 'BUY' || (event.source && (event.source.startsWith('CURVE_BUY') || event.source.startsWith('INITIAL_PURCHASE')))) {
+                buyVolume += ethAmount;
+              } else if (event.side === 'SELL') {
+                sellVolume += ethAmount;
+              }
+            });
+            const totalVolume = buyVolume + sellVolume;
+            let buyRatio = 50;
+            let sellRatio = 50;
+            if (totalVolume > 0) {
+              buyRatio = Math.round((buyVolume / totalVolume) * 100);
+              sellRatio = 100 - buyRatio;
+            }
+
             let score = 50;
             if (curveProgress > 40) score += 20;
-            const tradeCount = launch.feeEvents?.length || 0;
+            const tradeCount = feeEvents.length;
             if (tradeCount > 50) score += 15;
             const vibeScore = Math.max(1, Math.min(99, score));
 
@@ -280,7 +299,7 @@ export default function Home() {
               score: vibeScore,
               devProfile: getDevProfile(launch.creatorAddress || query),
               safetyChecks: getSafetyChecks(launch.tokenAddress || query),
-              momentum: { buyPct: 50, sellPct: 50, volumeEth: "0.0000" },
+              momentum: { buyPct: buyRatio, sellPct: sellRatio, volumeEth: totalVolume.toFixed(4) },
               imageUri
             };
 
