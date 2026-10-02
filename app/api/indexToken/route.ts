@@ -36,17 +36,32 @@ export async function GET(request: Request) {
         ]);
 
         // 2. Fetch creation event from Factory
-        const creationLogs = await publicClient.getLogs({
-            address: FACTORY_ADDRESS as `0x${string}`,
-            event: creationEvent,
-            args: { token: tokenAddress as `0x${string}` },
-            fromBlock: 0n,
-            toBlock: 'latest',
-            strict: false
-        });
+        const currentBlock = await publicClient.getBlockNumber();
+        let creationLogs;
+        
+        try {
+            creationLogs = await publicClient.getLogs({
+                address: FACTORY_ADDRESS as `0x${string}`,
+                event: creationEvent,
+                args: { token: tokenAddress as `0x${string}` },
+                fromBlock: 0n,
+                toBlock: 'latest',
+                strict: false
+            });
+        } catch (rpcError) {
+            console.warn("RPC rejected large block range, falling back to last 200,000 blocks", rpcError);
+            creationLogs = await publicClient.getLogs({
+                address: FACTORY_ADDRESS as `0x${string}`,
+                event: creationEvent,
+                args: { token: tokenAddress as `0x${string}` },
+                fromBlock: currentBlock > 200000n ? currentBlock - 200000n : 0n,
+                toBlock: 'latest',
+                strict: false
+            });
+        }
 
         if (creationLogs.length === 0) {
-            return NextResponse.json({ error: 'Token not created by this factory' }, { status: 404 });
+            return NextResponse.json({ error: 'Token not found on chain' }, { status: 404 });
         }
 
         const log = creationLogs[0];
