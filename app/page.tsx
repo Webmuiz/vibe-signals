@@ -97,11 +97,11 @@ function shortenAddress(address: string) {
 function formatTimeLive(totalMinutes: number) {
   if (!totalMinutes && totalMinutes !== 0) return '0m';
   if (totalMinutes < 60) return `${totalMinutes}m`;
-  
+
   const days = Math.floor(totalMinutes / 1440);
   const hours = Math.floor((totalMinutes % 1440) / 60);
   const mins = Math.floor(totalMinutes % 60);
-  
+
   if (days > 0) return `${days}d ${hours}h ${mins}m`;
   return `${hours}h ${mins}m`;
 }
@@ -245,7 +245,7 @@ export default function Home() {
 
             const createdMs = new Date(launch.createdAt).getTime();
             const timeLiveMins = Math.max(0, Math.floor((Date.now() - createdMs) / 60000));
-            
+
             const currentEth = Number(launch.curve?.pairReserveUnits || 0) / 1e18;
             const targetEth = Number(launch.targetPairUnits || 4000000000000000000) / 1e18;
             let curveProgress = Math.min(100, Math.max(0, (currentEth / targetEth) * 100));
@@ -253,8 +253,8 @@ export default function Home() {
               curveProgress = 0.1;
             }
 
-            const imageUri = launch.content?.image?.uri?.startsWith('ipfs://') 
-              ? launch.content.image.uri.replace('ipfs://', 'https://ipfs.io/ipfs/') 
+            const imageUri = launch.content?.image?.uri?.startsWith('ipfs://')
+              ? launch.content.image.uri.replace('ipfs://', 'https://ipfs.io/ipfs/')
               : launch.content?.image?.uri;
 
             const feeEvents = json.data?.feeEvents || [];
@@ -323,6 +323,38 @@ export default function Home() {
     fetchOnChain();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchQuery, filteredTokens.length]);
+
+  useEffect(() => {
+    if (!selectedToken?.contractAddress) return;
+    let isMounted = true;
+
+    fetch(`/api/proxyVibe?address=${selectedToken.contractAddress}`)
+      .then(res => res.json())
+      .then(json => {
+        if (!isMounted) return;
+        const feeEvents = json.data?.feeEvents || [];
+        let buyVolume = 0;
+        let sellVolume = 0;
+
+        feeEvents.forEach((ev: any) => {
+          const eth = Number(ev.pairPrincipalUnits || 0) / 1e18;
+          if (ev.side === 'BUY' || ev.source === 'CURVE_BUY' || ev.source === 'INITIAL_PURCHASE') buyVolume += eth;
+          else if (ev.side === 'SELL' || ev.source === 'CURVE_SELL') sellVolume += eth;
+        });
+
+        const totalVolume = buyVolume + sellVolume;
+        const buyPct = totalVolume > 0 ? Math.round((buyVolume / totalVolume) * 100) : 50;
+        const sellPct = totalVolume > 0 ? 100 - buyPct : 50;
+
+        setSelectedToken((prev: any) => ({
+          ...prev,
+          momentum: { buyPct, sellPct, volumeEth: totalVolume.toFixed(4) }
+        }));
+      })
+      .catch(console.error);
+
+    return () => { isMounted = false; };
+  }, [selectedToken?.contractAddress]);
 
   const handleExecuteApe = async () => {
     if (!selectedToken || !apeAmount || Number(apeAmount) <= 0) return;
@@ -408,15 +440,15 @@ export default function Home() {
                   <div>
                     <div className="flex justify-between text-xs mb-2">
                       <span className="text-zinc-400 uppercase tracking-wider font-bold">5M Taker Momentum</span>
-                      <span className="text-zinc-500">Vol: {onChainToken?.volumeEth || '0.0000'} ETH</span>
+                      <span className="text-zinc-500">Vol: {selectedToken.momentum?.volumeEth || '0.0000'} ETH</span>
                     </div>
                     <div className="flex justify-between text-xs mb-2">
-                      <span className="text-emerald-400 font-bold">{onChainToken?.buyRatio ?? 50}% Buys</span>
-                      <span className="text-red-400 font-bold">{onChainToken?.sellRatio ?? 50}% Sells</span>
+                      <span className="text-emerald-400 font-bold">{selectedToken.momentum?.buyPct ?? 50}% Buys</span>
+                      <span className="text-red-400 font-bold">{selectedToken.momentum?.sellPct ?? 50}% Sells</span>
                     </div>
                     <div className="w-full bg-zinc-950 rounded-full h-2 overflow-hidden flex border border-zinc-800">
-                      <div className="bg-emerald-500 h-full transition-all" style={{ width: `${onChainToken?.buyRatio ?? 50}%` }} />
-                      <div className="bg-red-500 h-full transition-all" style={{ width: `${onChainToken?.sellRatio ?? 50}%` }} />
+                      <div className="bg-emerald-500 h-full transition-all" style={{ width: `${selectedToken.momentum?.buyPct ?? 50}%` }} />
+                      <div className="bg-red-500 h-full transition-all" style={{ width: `${selectedToken.momentum?.sellPct ?? 50}%` }} />
                     </div>
                   </div>
                 </div>
