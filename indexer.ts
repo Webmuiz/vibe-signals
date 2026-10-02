@@ -134,8 +134,7 @@ async function runIndexer() {
 
             for (const token of recentTokens) {
                 if (token.pair_symbol === 'ETH') {
-                    const rawEth = await publicClient.getBalance({ address: token.amm_address as `0x${string}` });
-                    const currentLiq = parseFloat(formatEther(rawEth));
+                    const rawEth = await publicClient.getBalance({ address: token.token_address as `0x${string}` }); const currentLiq = parseFloat(formatEther(rawEth));
                     const progress = Math.min(100, Math.max(0, (currentLiq / 4.0) * 100)); // Assuming 4 ETH target
 
                     // Only write to DB if the balance actually changed

@@ -24,6 +24,9 @@ interface DBToken {
   timestamp: string;
   name: string;
   ticker: string;
+  volume_eth?: number; // <-- Add these three
+  buy_pct?: number;    // <--
+  sell_pct?: number;   // <--
 }
 
 function getDevProfile(devAddress: string) {
@@ -127,7 +130,12 @@ export default function Home() {
         score: calculateVibeScore(block0, timeSinceLaunchMins, db.curveProgress, diamond),
         devProfile: getDevProfile(db.devAddress),
         safetyChecks: getSafetyChecks(db.tokenAddress),
-        momentum: getMomentumMetrics(db.tokenAddress)
+        // Replace the old momentum line inside the return with this:
+        momentum: {
+          buyPct: db.buy_pct ?? 50,
+          sellPct: db.sell_pct ?? 50,
+          volumeEth: (db.volume_eth ?? 0).toFixed(4)
+        }
       };
     });
   }, [dbTokens]);
@@ -486,6 +494,14 @@ export default function Home() {
                         </div>
 
                         <div className="mb-6">
+
+                          {/* The missing time block you are adding back: */}
+                          <div className="flex justify-between text-xs mb-2">
+                            <span className="text-zinc-500">Time Live (est)</span>
+                            <span className="text-zinc-300">{token.timeSinceLaunchMins} mins</span>
+                          </div>
+
+                          {/* The existing bonding curve code you just shared: */}
                           <div className="flex justify-between text-xs mb-2">
                             <span className="text-zinc-500">{token.bondingCurveProgress >= 100 ? 'Status' : 'Bonding Curve'}</span>
                             <span className={token.bondingCurveProgress >= 100 ? "text-amber-400 font-bold" : token.bondingCurveProgress > 85 ? "text-emerald-400" : "text-zinc-300"}>
