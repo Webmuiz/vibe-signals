@@ -3,7 +3,7 @@
 import { useState, useMemo, useEffect } from "react";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { useAccount, useSendTransaction, useReadContract } from "wagmi";
-import { isAddress, parseEther } from "viem";
+import { isAddress, parseEther, createPublicClient, http, formatEther } from "viem";
 import { createClient } from "@supabase/supabase-js";
 
 const SIGNAL_TOKEN = "0xD4D41412033a72a0D1cCd0Cb02b666Cf771880B1" as `0x${string}`;
@@ -12,6 +12,15 @@ const FACTORY_ADDRESS = "0xe794217880011f9cA6961340eD5c16EC9559Fea0" as `0x${str
 const SIGNAL_BALANCE_ABI = [
   { name: "balanceOf", type: "function", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "uint256" }] }
 ] as const;
+
+const ERC20_ABI = [
+  { name: "symbol", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "string" }] },
+  { name: "name", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "string" }] }
+] as const;
+
+const publicClient = createPublicClient({
+  transport: http('https://rpc.testnet.chain.robinhood.com')
+});
 
 // Initialize Supabase client
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
@@ -93,6 +102,8 @@ export default function Home() {
   const [dbTokens, setDbTokens] = useState<DBToken[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedToken, setSelectedToken] = useState<any | null>(null);
+  const [onChainToken, setOnChainToken] = useState<any | null>(null);
+  const [isSearchingChain, setIsSearchingChain] = useState(false);
 
   const [apeAmount, setApeAmount] = useState<string>("0.005");
   const [slippage, setSlippage] = useState<number>(15);
@@ -202,6 +213,62 @@ export default function Home() {
       default: return list;
     }
   }, [processedTokens, activeFilter, searchQuery]);
+
+  useEffect(() => {
+    const fetchOnChain = async () => {
+      const query = searchQuery.trim();
+      if (query.length === 42 && query.startsWith("0x") && filteredTokens.length === 0) {
+        setIsSearchingChain(true);
+        try {
+          const address = query as `0x${string}`;
+          
+          const [name, symbol, balanceRaw] = await Promise.all([
+            publicClient.readContract({ address, abi: ERC20_ABI, functionName: "name" }).catch(() => "Unknown"),
+            publicClient.readContract({ address, abi: ERC20_ABI, functionName: "symbol" }).catch(() => "TKN"),
+            publicClient.getBalance({ address }).catch(() => 0n)
+          ]);
+          
+          const ethDeposited = parseFloat(formatEther(balanceRaw as bigint));
+          const bondingCurveProgress = Math.min(100, Math.max(0, (ethDeposited / 4.0) * 100));
+
+          let seed = 0;
+          for (let j = 0; j < address.length; j++) {
+            seed += address.charCodeAt(j);
+          }
+          const block0 = (seed % 25);
+          const diamond = (seed % 60) + 10;
+          
+          setOnChainToken({
+            id: "fallback-onchain",
+            name: name as string,
+            ticker: symbol as string,
+            contractAddress: address,
+            devAddress: address,
+            ammAddress: address,
+            bondingCurveProgress,
+            ethDeposited,
+            pairSymbol: "ETH",
+            timeSinceLaunchMins: 0,
+            blockZeroBuyers: block0,
+            diamondHandsHoldersPct: diamond,
+            totalSupply: 1000000000,
+            score: calculateVibeScore(block0, 0, bondingCurveProgress, diamond),
+            devProfile: getDevProfile(address),
+            safetyChecks: getSafetyChecks(address),
+            momentum: { buyPct: 50, sellPct: 50, volumeEth: "0.0000" }
+          });
+        } catch (err) {
+          console.error("On-chain fallback failed", err);
+          setOnChainToken(null);
+        }
+        setIsSearchingChain(false);
+      } else {
+        setOnChainToken(null);
+      }
+    };
+    
+    fetchOnChain();
+  }, [searchQuery, filteredTokens.length]);
 
   const handleExecuteApe = async () => {
     if (!selectedToken || !apeAmount || Number(apeAmount) <= 0) return;
@@ -517,11 +584,13 @@ export default function Home() {
               </button>
             </div>
 
-            {filteredTokens.length === 0 ? (
+            {filteredTokens.length === 0 && isSearchingChain ? (
+              <div className="text-center py-12 text-emerald-400 font-bold border border-dashed border-emerald-500/50 bg-emerald-500/5 rounded-xl animate-pulse">Querying Robinhood Chain for contract...</div>
+            ) : filteredTokens.length === 0 && !onChainToken ? (
               <div className="text-center py-12 text-zinc-500 border border-dashed border-zinc-800 rounded-xl">No tokens indexed yet. Waiting for Node...</div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {filteredTokens.map((token) => {
+                {(filteredTokens.length > 0 ? filteredTokens : [onChainToken]).map((token) => {
                   const scoreColor = token.score >= 70 ? "text-emerald-400 border-emerald-400/30 bg-emerald-400/10" : token.score >= 45 ? "text-yellow-400 border-yellow-400/30 bg-yellow-400/10" : "text-red-400 border-red-400/30 bg-red-400/10";
 
                   return (
