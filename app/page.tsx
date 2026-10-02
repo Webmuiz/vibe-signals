@@ -102,6 +102,7 @@ export default function Home() {
   const [dbTokens, setDbTokens] = useState<DBToken[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedToken, setSelectedToken] = useState<any | null>(null);
+  const [onChainToken, setOnChainToken] = useState<any | null>(null);
   const [isSearchingChain, setIsSearchingChain] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
 
@@ -223,28 +224,50 @@ export default function Home() {
         try {
           const res = await fetch(`/api/proxyVibe?address=${query}`);
           if (res.ok) {
-            const data = await res.json();
-            const foundToken = data.data || data;
+            const json = await res.json();
+            const launch = json.data?.launch;
+            if (!launch) throw new Error('Token launch data missing from API response');
 
-            if (foundToken && Object.keys(foundToken).length > 0) {
-              setDbTokens(prev => [{
-                token_address: query,
-                name: foundToken.name || "Unknown",
-                symbol: foundToken.symbol || foundToken.ticker || "TKN",
-                amm_address: foundToken.amm_address || foundToken.ammAddress || query,
-                dev_address: foundToken.dev_address || foundToken.devAddress || foundToken.creator || query,
-                curve_progress: foundToken.curve_progress || foundToken.curveProgress || foundToken.bondingCurveProgress || 0,
-                liquidity_deposited: foundToken.liquidity_deposited || foundToken.liquidityDeposited || foundToken.ethDeposited || 0,
-                launch_id: foundToken.launch_id || foundToken.launchId || foundToken.id || 0,
-                launch_block: foundToken.launch_block || foundToken.launchBlock || 0,
-                created_at: foundToken.created_at || foundToken.createdAt || foundToken.timestamp || new Date().toISOString(),
-                buy_pct: 50,
-                sell_pct: 50,
-                volume_eth: 0
-              } as any, ...prev]);
-            } else {
-              setSearchError("Token not found in VibeVibe API");
-            }
+            const createdMs = new Date(launch.createdAt).getTime();
+            const timeLiveMins = Math.max(0, Math.floor((Date.now() - createdMs) / 60000));
+            
+            const reserve = Number(launch.curve?.pairReserveUnits || 0);
+            const target = Number(launch.targetPairUnits || 1);
+            const curveProgress = Math.min(100, Math.max(0, (reserve / target) * 100));
+
+            const imageUri = launch.content?.image?.uri?.startsWith('ipfs://') 
+              ? launch.content.image.uri.replace('ipfs://', 'https://ipfs.io/ipfs/') 
+              : launch.content?.image?.uri;
+
+            let score = 50;
+            if (curveProgress > 40) score += 20;
+            const tradeCount = launch.feeEvents?.length || 0;
+            if (tradeCount > 50) score += 15;
+            const vibeScore = Math.max(1, Math.min(99, score));
+
+            const mappedToken = {
+              id: launch.id || "0",
+              name: launch.name || "Unknown",
+              ticker: launch.symbol || "TKN",
+              contractAddress: launch.tokenAddress,
+              ammAddress: launch.curveAddress,
+              devAddress: launch.creatorAddress || query,
+              timeSinceLaunchMins: timeLiveMins,
+              bondingCurveProgress: curveProgress,
+              ethDeposited: reserve.toFixed(4),
+              pairSymbol: "ETH",
+              blockZeroBuyers: 0,
+              diamondHandsHoldersPct: 50,
+              totalSupply: 1000000000,
+              score: vibeScore,
+              devProfile: getDevProfile(launch.creatorAddress || query),
+              safetyChecks: getSafetyChecks(launch.tokenAddress || query),
+              momentum: { buyPct: 50, sellPct: 50, volumeEth: "0.0000" },
+              imageUri
+            };
+
+            setOnChainToken(mappedToken);
+            setSelectedToken(mappedToken);
           } else {
             const errData = await res.json().catch(() => ({}));
             const errMsg = errData.error || await res.text() || "Failed to fetch from VibeVibe API";
