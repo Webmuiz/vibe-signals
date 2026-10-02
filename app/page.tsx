@@ -22,8 +22,8 @@ interface DBToken {
   curveProgress: number;
   launchBlock: number;
   timestamp: string;
-  name: string;      // <-- Added this
-  ticker: string;    // <-- Added this
+  name: string;
+  ticker: string;
 }
 
 function getDevProfile(devAddress: string) {
@@ -210,11 +210,19 @@ export default function Home() {
 
                   <div className="mb-8">
                     <div className="flex justify-between text-xs mb-2">
-                      <span className="text-zinc-400">Bonding Curve Progress ({selectedToken.ethDeposited} {selectedToken.pairSymbol})</span>
-                      <span className="text-emerald-400 font-bold">{selectedToken.bondingCurveProgress}%</span>
+                      <span className="text-zinc-400">{selectedToken.bondingCurveProgress >= 100 ? 'Status' : `Bonding Curve Progress (${selectedToken.ethDeposited} ${selectedToken.pairSymbol})`}</span>
+                      <span className={selectedToken.bondingCurveProgress >= 100 ? "text-amber-400 font-bold" : "text-emerald-400 font-bold"}>
+                        {selectedToken.bondingCurveProgress >= 100 ? 'Graduated 🚀' : `${selectedToken.bondingCurveProgress}%`}
+                      </span>
                     </div>
                     <div className="w-full bg-zinc-950 rounded-full h-3 overflow-hidden border border-zinc-800">
-                      <div className="bg-emerald-500 h-full shadow-[0_0_15px_rgba(16,185,129,0.5)] transition-all" style={{ width: `${selectedToken.bondingCurveProgress}%` }} />
+                      <div
+                        className={`h-full transition-all ${selectedToken.bondingCurveProgress >= 100
+                          ? 'bg-gradient-to-r from-amber-400 via-amber-500 to-amber-600 shadow-[0_0_15px_rgba(251,191,36,0.5)]'
+                          : 'bg-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.5)]'
+                          }`}
+                        style={{ width: `${Math.min(selectedToken.bondingCurveProgress, 100)}%` }}
+                      />
                     </div>
                   </div>
 
@@ -479,15 +487,21 @@ export default function Home() {
 
                         <div className="mb-6">
                           <div className="flex justify-between text-xs mb-2">
-                            <span className="text-zinc-500">Time Live (est)</span>
-                            <span className="text-zinc-300">{token.timeSinceLaunchMins} mins</span>
-                          </div>
-                          <div className="flex justify-between text-xs mb-2">
-                            <span className="text-zinc-500">Bonding Curve</span>
-                            <span className={token.bondingCurveProgress > 85 ? "text-emerald-400" : "text-zinc-300"}>{token.bondingCurveProgress}%</span>
+                            <span className="text-zinc-500">{token.bondingCurveProgress >= 100 ? 'Status' : 'Bonding Curve'}</span>
+                            <span className={token.bondingCurveProgress >= 100 ? "text-amber-400 font-bold" : token.bondingCurveProgress > 85 ? "text-emerald-400" : "text-zinc-300"}>
+                              {token.bondingCurveProgress >= 100 ? 'Graduated 🚀' : `${token.bondingCurveProgress}%`}
+                            </span>
                           </div>
                           <div className="w-full bg-zinc-800 rounded-full h-2">
-                            <div className={`h-2 rounded-full ${token.bondingCurveProgress > 85 ? "bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.8)]" : "bg-zinc-500"}`} style={{ width: `${token.bondingCurveProgress}%` }} />
+                            <div
+                              className={`h-2 rounded-full ${token.bondingCurveProgress >= 100
+                                ? "bg-gradient-to-r from-amber-400 via-amber-500 to-amber-600 shadow-[0_0_10px_rgba(251,191,36,0.8)]"
+                                : token.bondingCurveProgress > 85
+                                  ? "bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.8)]"
+                                  : "bg-zinc-500"
+                                }`}
+                              style={{ width: `${Math.min(token.bondingCurveProgress, 100)}%` }}
+                            />
                           </div>
                         </div>
                       </div>
