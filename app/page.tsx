@@ -221,7 +221,7 @@ export default function Home() {
       if (query.length === 42 && query.startsWith("0x") && filteredTokens.length === 0) {
         setIsSearchingChain(true);
         try {
-          const res = await fetch("https://testnet.vibevibe.fun/api/v1/chains/46630/launches?limit=500");
+          const res = await fetch("/api/proxyVibe");
           if (res.ok) {
             const data = await res.json();
             const tokenArray = data.data || data;
