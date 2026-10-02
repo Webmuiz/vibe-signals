@@ -103,6 +103,7 @@ export default function Home() {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedToken, setSelectedToken] = useState<any | null>(null);
   const [isSearchingChain, setIsSearchingChain] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
 
   const [apeAmount, setApeAmount] = useState<string>("0.005");
   const [slippage, setSlippage] = useState<number>(15);
@@ -216,6 +217,7 @@ export default function Home() {
   useEffect(() => {
     const fetchOnChain = async () => {
       const query = searchQuery.trim();
+      setSearchError(null);
       if (query.length === 42 && query.startsWith("0x") && filteredTokens.length === 0) {
         setIsSearchingChain(true);
         try {
@@ -224,12 +226,36 @@ export default function Home() {
             // Trigger a manual refresh of our DB immediately after JIT is done
             await fetchDatabase();
           } else {
-            console.error("JIT Indexing failed:", await res.text());
+            const errData = await res.json().catch(() => ({}));
+            if (res.status === 404 && errData.partialToken) {
+              setSearchError("Token not found in factory logs. Showing partial on-chain data.");
+              setDbTokens(prev => [{
+                token_address: query,
+                name: errData.partialToken.name,
+                symbol: errData.partialToken.symbol,
+                amm_address: query,
+                dev_address: query,
+                curve_progress: 0,
+                liquidity_deposited: 0,
+                launch_id: 0,
+                launch_block: 0,
+                buy_pct: 50,
+                sell_pct: 50,
+                volume_eth: 0
+              } as any, ...prev]);
+            } else {
+              const errMsg = errData.error || await res.text() || "Unknown error";
+              console.error("JIT Indexing failed:", errMsg);
+              setSearchError(errMsg);
+            }
           }
         } catch (err) {
           console.error("On-chain fallback failed", err);
+          setSearchError("Network error while indexing");
         }
         setIsSearchingChain(false);
+      } else if (!query || query.length !== 42) {
+        setSearchError(null);
       }
     };
     
@@ -553,6 +579,10 @@ export default function Home() {
 
             {filteredTokens.length === 0 && isSearchingChain ? (
               <div className="text-center py-12 text-emerald-400 font-bold border border-dashed border-emerald-500/50 bg-emerald-500/5 rounded-xl animate-pulse">Querying Robinhood Chain for contract...</div>
+            ) : filteredTokens.length === 0 && searchError ? (
+              <div className="text-center py-12 text-red-400 font-bold border border-dashed border-red-500/50 bg-red-500/5 rounded-xl">
+                JIT Failed: {searchError}
+              </div>
             ) : filteredTokens.length === 0 ? (
               <div className="text-center py-12 text-zinc-500 border border-dashed border-zinc-800 rounded-xl">No tokens indexed yet. Waiting for Node...</div>
             ) : (
