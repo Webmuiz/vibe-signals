@@ -257,24 +257,20 @@ export default function Home() {
               ? launch.content.image.uri.replace('ipfs://', 'https://ipfs.io/ipfs/') 
               : launch.content?.image?.uri;
 
+            const feeEvents = json.data?.feeEvents || [];
             let buyVolume = 0;
             let sellVolume = 0;
-            const feeEvents = launch.feeEvents || [];
-            feeEvents.forEach((event: any) => {
-              const ethAmount = Number(event.pairPrincipalUnits || 0) / 1e18;
-              if (event.side === 'BUY' || (event.source && (event.source.startsWith('CURVE_BUY') || event.source.startsWith('INITIAL_PURCHASE')))) {
-                buyVolume += ethAmount;
-              } else if (event.side === 'SELL') {
-                sellVolume += ethAmount;
+            feeEvents.forEach((ev: any) => {
+              const eth = Number(ev.pairPrincipalUnits || 0) / 1e18;
+              if (ev.side === 'BUY' || ev.source === 'CURVE_BUY' || ev.source === 'INITIAL_PURCHASE') {
+                buyVolume += eth;
+              } else if (ev.side === 'SELL' || ev.source === 'CURVE_SELL') {
+                sellVolume += eth;
               }
             });
             const totalVolume = buyVolume + sellVolume;
-            let buyRatio = 50;
-            let sellRatio = 50;
-            if (totalVolume > 0) {
-              buyRatio = Math.round((buyVolume / totalVolume) * 100);
-              sellRatio = 100 - buyRatio;
-            }
+            const buyRatio = totalVolume > 0 ? Math.round((buyVolume / totalVolume) * 100) : 50;
+            const sellRatio = totalVolume > 0 ? 100 - buyRatio : 50;
 
             let score = 50;
             if (curveProgress > 40) score += 20;
@@ -300,6 +296,9 @@ export default function Home() {
               devProfile: getDevProfile(launch.creatorAddress || query),
               safetyChecks: getSafetyChecks(launch.tokenAddress || query),
               momentum: { buyPct: buyRatio, sellPct: sellRatio, volumeEth: totalVolume.toFixed(4) },
+              volumeEth: totalVolume.toFixed(4),
+              buyRatio: buyRatio,
+              sellRatio: sellRatio,
               imageUri
             };
 
@@ -409,15 +408,15 @@ export default function Home() {
                   <div>
                     <div className="flex justify-between text-xs mb-2">
                       <span className="text-zinc-400 uppercase tracking-wider font-bold">5M Taker Momentum</span>
-                      <span className="text-zinc-500">Vol: {selectedToken.momentum.volumeEth} ETH</span>
+                      <span className="text-zinc-500">Vol: {onChainToken?.volumeEth || '0.0000'} ETH</span>
                     </div>
                     <div className="flex justify-between text-xs mb-2">
-                      <span className="text-emerald-400 font-bold">{selectedToken.momentum.buyPct}% Buys</span>
-                      <span className="text-red-400 font-bold">{selectedToken.momentum.sellPct}% Sells</span>
+                      <span className="text-emerald-400 font-bold">{onChainToken?.buyRatio ?? 50}% Buys</span>
+                      <span className="text-red-400 font-bold">{onChainToken?.sellRatio ?? 50}% Sells</span>
                     </div>
                     <div className="w-full bg-zinc-950 rounded-full h-2 overflow-hidden flex border border-zinc-800">
-                      <div className="bg-emerald-500 h-full transition-all" style={{ width: `${selectedToken.momentum.buyPct}%` }} />
-                      <div className="bg-red-500 h-full transition-all" style={{ width: `${selectedToken.momentum.sellPct}%` }} />
+                      <div className="bg-emerald-500 h-full transition-all" style={{ width: `${onChainToken?.buyRatio ?? 50}%` }} />
+                      <div className="bg-red-500 h-full transition-all" style={{ width: `${onChainToken?.sellRatio ?? 50}%` }} />
                     </div>
                   </div>
                 </div>
