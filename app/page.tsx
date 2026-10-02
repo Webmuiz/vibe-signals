@@ -221,37 +221,41 @@ export default function Home() {
       if (query.length === 42 && query.startsWith("0x") && filteredTokens.length === 0) {
         setIsSearchingChain(true);
         try {
-          const res = await fetch(`/api/indexToken?address=${query}`);
+          const res = await fetch("https://testnet.vibevibe.fun/api/v1/chains/46630/launches?limit=500");
           if (res.ok) {
-            // Trigger a manual refresh of our DB immediately after JIT is done
-            await fetchDatabase();
-          } else {
-            const errData = await res.json().catch(() => ({}));
-            if (res.status === 404 && errData.partialToken) {
-              setSearchError("Token not found in factory logs. Showing partial on-chain data.");
+            const data = await res.json();
+            const tokenArray = data.data || data;
+            const foundToken = tokenArray.find((t: any) => {
+              const addr = t.token_address || t.address || t.tokenAddress || "";
+              return addr.toLowerCase() === query.toLowerCase();
+            });
+
+            if (foundToken) {
               setDbTokens(prev => [{
                 token_address: query,
-                name: errData.partialToken.name,
-                symbol: errData.partialToken.symbol,
-                amm_address: query,
-                dev_address: query,
-                curve_progress: 0,
-                liquidity_deposited: 0,
-                launch_id: 0,
-                launch_block: 0,
+                name: foundToken.name || "Unknown",
+                symbol: foundToken.symbol || foundToken.ticker || "TKN",
+                amm_address: foundToken.amm_address || foundToken.ammAddress || query,
+                dev_address: foundToken.dev_address || foundToken.devAddress || foundToken.creator || query,
+                curve_progress: foundToken.curve_progress || foundToken.curveProgress || foundToken.bondingCurveProgress || 0,
+                liquidity_deposited: foundToken.liquidity_deposited || foundToken.liquidityDeposited || foundToken.ethDeposited || 0,
+                launch_id: foundToken.launch_id || foundToken.launchId || foundToken.id || 0,
+                launch_block: foundToken.launch_block || foundToken.launchBlock || 0,
+                created_at: foundToken.created_at || foundToken.createdAt || foundToken.timestamp || new Date().toISOString(),
                 buy_pct: 50,
                 sell_pct: 50,
                 volume_eth: 0
               } as any, ...prev]);
             } else {
-              const errMsg = errData.error || await res.text() || "Unknown error";
-              console.error("JIT Indexing failed:", errMsg);
-              setSearchError(errMsg);
+              setSearchError("Token not found in VibeVibe API");
             }
+          } else {
+            console.error("VibeVibe API failed:", await res.text());
+            setSearchError("Failed to fetch from VibeVibe API");
           }
         } catch (err) {
           console.error("On-chain fallback failed", err);
-          setSearchError("Network error while indexing");
+          setSearchError("Network error while querying VibeVibe API");
         }
         setIsSearchingChain(false);
       } else if (!query || query.length !== 42) {
@@ -578,7 +582,7 @@ export default function Home() {
             </div>
 
             {filteredTokens.length === 0 && isSearchingChain ? (
-              <div className="text-center py-12 text-emerald-400 font-bold border border-dashed border-emerald-500/50 bg-emerald-500/5 rounded-xl animate-pulse">Querying Robinhood Chain for contract...</div>
+              <div className="text-center py-12 text-emerald-400 font-bold border border-dashed border-emerald-500/50 bg-emerald-500/5 rounded-xl animate-pulse">Querying VibeVibe API...</div>
             ) : filteredTokens.length === 0 && searchError ? (
               <div className="text-center py-12 text-red-400 font-bold border border-dashed border-red-500/50 bg-red-500/5 rounded-xl">
                 JIT Failed: {searchError}
