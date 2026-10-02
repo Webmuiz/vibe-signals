@@ -102,7 +102,6 @@ export default function Home() {
   const [dbTokens, setDbTokens] = useState<DBToken[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedToken, setSelectedToken] = useState<any | null>(null);
-  const [onChainToken, setOnChainToken] = useState<any | null>(null);
   const [isSearchingChain, setIsSearchingChain] = useState(false);
 
   const [apeAmount, setApeAmount] = useState<string>("0.005");
@@ -118,28 +117,28 @@ export default function Home() {
 
   const hasAccess = balanceData && BigInt(balanceData as any) >= BigInt("10000") * (BigInt("10") ** BigInt("18"));
 
+  const fetchDatabase = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('launches')
+        .select('*')
+        .order('launch_id', { ascending: false });
+
+      if (error) {
+        console.error('Supabase fetch error:', error);
+        return;
+      }
+
+      if (data && data.length > 0) {
+        setDbTokens(data as DBToken[]);
+      }
+    } catch (err) {
+      console.error("Database sync failed", err);
+    }
+  };
+
   // High-speed polling from our local JSON database API or Supabase
   useEffect(() => {
-    const fetchDatabase = async () => {
-      try {
-        const { data, error } = await supabase
-          .from('launches')
-          .select('*')
-          .order('launch_id', { ascending: false });
-
-        if (error) {
-          console.error('Supabase fetch error:', error);
-          return;
-        }
-
-        if (data && data.length > 0) {
-          setDbTokens(data as DBToken[]);
-        }
-      } catch (err) {
-        console.error("Database sync failed", err);
-      }
-    };
-
     fetchDatabase();
     const interval = setInterval(fetchDatabase, 3000); // Check for new tokens every 3 seconds
     return () => clearInterval(interval);
@@ -220,54 +219,22 @@ export default function Home() {
       if (query.length === 42 && query.startsWith("0x") && filteredTokens.length === 0) {
         setIsSearchingChain(true);
         try {
-          const address = query as `0x${string}`;
-          
-          const [name, symbol, balanceRaw] = await Promise.all([
-            publicClient.readContract({ address, abi: ERC20_ABI, functionName: "name" }).catch(() => "Unknown"),
-            publicClient.readContract({ address, abi: ERC20_ABI, functionName: "symbol" }).catch(() => "TKN"),
-            publicClient.getBalance({ address }).catch(() => 0n)
-          ]);
-          
-          const ethDeposited = parseFloat(formatEther(balanceRaw as bigint));
-          const bondingCurveProgress = Math.min(100, Math.max(0, (ethDeposited / 4.0) * 100));
-
-          let seed = 0;
-          for (let j = 0; j < address.length; j++) {
-            seed += address.charCodeAt(j);
+          const res = await fetch(`/api/indexToken?address=${query}`);
+          if (res.ok) {
+            // Trigger a manual refresh of our DB immediately after JIT is done
+            await fetchDatabase();
+          } else {
+            console.error("JIT Indexing failed:", await res.text());
           }
-          const block0 = (seed % 25);
-          const diamond = (seed % 60) + 10;
-          
-          setOnChainToken({
-            id: "fallback-onchain",
-            name: name as string,
-            ticker: symbol as string,
-            contractAddress: address,
-            devAddress: address,
-            ammAddress: address,
-            bondingCurveProgress,
-            ethDeposited,
-            pairSymbol: "ETH",
-            timeSinceLaunchMins: 0,
-            blockZeroBuyers: block0,
-            diamondHandsHoldersPct: diamond,
-            totalSupply: 1000000000,
-            score: calculateVibeScore(block0, 0, bondingCurveProgress, diamond),
-            devProfile: getDevProfile(address),
-            safetyChecks: getSafetyChecks(address),
-            momentum: { buyPct: 50, sellPct: 50, volumeEth: "0.0000" }
-          });
         } catch (err) {
           console.error("On-chain fallback failed", err);
-          setOnChainToken(null);
         }
         setIsSearchingChain(false);
-      } else {
-        setOnChainToken(null);
       }
     };
     
     fetchOnChain();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchQuery, filteredTokens.length]);
 
   const handleExecuteApe = async () => {
@@ -586,11 +553,11 @@ export default function Home() {
 
             {filteredTokens.length === 0 && isSearchingChain ? (
               <div className="text-center py-12 text-emerald-400 font-bold border border-dashed border-emerald-500/50 bg-emerald-500/5 rounded-xl animate-pulse">Querying Robinhood Chain for contract...</div>
-            ) : filteredTokens.length === 0 && !onChainToken ? (
+            ) : filteredTokens.length === 0 ? (
               <div className="text-center py-12 text-zinc-500 border border-dashed border-zinc-800 rounded-xl">No tokens indexed yet. Waiting for Node...</div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {(filteredTokens.length > 0 ? filteredTokens : [onChainToken]).map((token) => {
+                {filteredTokens.map((token) => {
                   const scoreColor = token.score >= 70 ? "text-emerald-400 border-emerald-400/30 bg-emerald-400/10" : token.score >= 45 ? "text-yellow-400 border-yellow-400/30 bg-yellow-400/10" : "text-red-400 border-red-400/30 bg-red-400/10";
 
                   return (
