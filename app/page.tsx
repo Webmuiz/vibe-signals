@@ -2,14 +2,13 @@
 
 import { useState, useMemo, useEffect } from "react";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
-import { useAccount, useWriteContract, useReadContract } from "wagmi";
-import { isAddress, parseEther, createPublicClient, http, formatEther } from "viem";
+import { useAccount, useSendTransaction, useReadContract } from "wagmi";
+import { isAddress, parseEther, createPublicClient, http, formatEther, encodeAbiParameters, parseAbiParameters } from "viem";
 import { createClient } from "@supabase/supabase-js";
 
 const SIGNAL_TOKEN = "0xD4D41412033a72a0D1cCd0Cb02b666Cf771880B1" as `0x${string}`;
 const FACTORY_ADDRESS = "0xe794217880011f9cA6961340eD5c16EC9559Fea0" as `0x${string}`;
-const ROUTER_ADDRESS = "0x89944BC9D3b20764BeA771CFAf9711a8Fb839e72" as `0x${string}`;
-const ROUTER_ABI = [{ name: "buy", type: "function", stateMutability: "payable", inputs: [{ name: "token", type: "address" }] }] as const;
+const ZAP_ROUTER = "0x2784448c519D01d3aE257C0aac0b7cDAd8AccEB1" as `0x${string}`;
 
 const SIGNAL_BALANCE_ABI = [
   { name: "balanceOf", type: "function", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "uint256" }] }
@@ -143,7 +142,7 @@ function formatTimeLive(totalMinutes: number) {
 
 export default function Home() {
   const { address, isConnected } = useAccount();
-  const { writeContract, isPending: isTxPending, data: hash } = useWriteContract();
+  const { sendTransaction, isPending: isTxPending, data: hash } = useSendTransaction();
 
   const [activeFilter, setActiveFilter] = useState<"all" | "alpha" | "graduating" | "risk">("all");
   const [dbTokens, setDbTokens] = useState<DBToken[]>([]);
@@ -468,12 +467,30 @@ export default function Home() {
   const handleExecuteApe = async () => {
     if (!selectedToken || !apeAmount || Number(apeAmount) <= 0) return;
     try {
-      writeContract({
-        address: ROUTER_ADDRESS,
-        abi: ROUTER_ABI,
-        functionName: "buy",
-        args: [selectedToken.contractAddress as `0x${string}`],
-        value: parseEther(apeAmount),
+      const amountInWei = parseEther(apeAmount);
+      const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600); // 1 hour deadline
+
+      const argsData = encodeAbiParameters(
+        parseAbiParameters('address, address, uint256, uint256, uint256, uint256, address[], address[]'),
+        [
+          selectedToken.ammAddress as `0x${string}`, // market AMM
+          "0x0000000000000000000000000000000000000000", // tokenIn (ETH)
+          amountInWei,
+          256n, // specific rate/tax bps from raw tx
+          0n, // minOut (0 for ape slippage)
+          deadline,
+          [], // empty path1
+          []  // empty path2
+        ]
+      );
+
+      // Prepend the function selector
+      const txData = `0x7681fb10${argsData.slice(2)}` as `0x${string}`;
+
+      sendTransaction({
+        to: ZAP_ROUTER,
+        value: amountInWei,
+        data: txData,
       });
     } catch (err) {
       console.error("Ape execution failed:", err);
@@ -716,8 +733,9 @@ export default function Home() {
                   </button>
 
                   {hash && (
-                    <div className="mt-3 p-2 bg-emerald-500/10 border border-emerald-500/20 rounded text-[11px] text-emerald-400 text-center truncate">
-                      Tx Sent: {shortenAddress(hash)}
+                    <div className="mt-3 p-2 bg-emerald-500/10 border border-emerald-500/20 rounded text-[11px] text-emerald-400 text-center truncate flex flex-col items-center">
+                      <span>Tx Sent Successfully!</span>
+                      <a href={`https://testnet.robinhood.com/tx/${hash}`} target="_blank" rel="noreferrer" className="underline mt-1">View on Explorer</a>
                     </div>
                   )}
                 </div>
