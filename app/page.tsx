@@ -358,6 +358,16 @@ export default function Home() {
         const socials = launch?.content?.socials || {};
         const hasSocials = !!(socials.x || socials.telegram || socials.website);
 
+        if (selectedToken?.contractAddress) {
+          supabase
+            .from('launches')
+            .update({ has_socials: hasSocials })
+            .eq('token_address', selectedToken.contractAddress.toLowerCase())
+            .then(({ error }) => {
+              if (error) console.error("Failed to sync social status to DB:", error);
+            });
+        }
+
         const dynamicScore = calculateVibeScore(selectedToken.blockZeroBuyers, selectedToken.timeSinceLaunchMins, selectedToken.bondingCurveProgress, selectedToken.diamondHandsHoldersPct, totalVolume, buyPct, hasSocials);
 
         setSelectedToken((prev: any) => ({
