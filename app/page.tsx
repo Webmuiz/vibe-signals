@@ -225,7 +225,7 @@ export default function Home() {
       const sellPct = db.sell_pct ?? db.sellPct ?? 50;
       const volumeEth = Number(db.volume_eth ?? db.volumeEth ?? 0).toFixed(4);
       const hasSocials = db.has_socials ?? db.hasSocials ?? false;
-      const creatorHolding = db.creator_holding_pct ?? db.creatorHoldingPct ?? 0;
+      const creatorHoldingPct = Number(db.creator_holding_pct ?? db.creatorHoldingPct ?? 0);
 
       return {
         id: (db.launch_id || db.launchId || "0").toString(),
@@ -241,7 +241,17 @@ export default function Home() {
         blockZeroBuyers: block0,
         diamondHandsHoldersPct: diamond,
         totalSupply: 1000000000,
-        score: calculateVibeScore(block0, timeSinceLaunchMins, bondingCurveProgress, diamond, Number(volumeEth), buyPct, hasSocials, creatorHolding),
+        creatorHoldingPct,
+        score: calculateVibeScore(
+          block0,
+          timeSinceLaunchMins,
+          bondingCurveProgress,
+          diamond,
+          Number(volumeEth),
+          buyPct,
+          hasSocials,
+          creatorHoldingPct
+        ),
         hasSocials: hasSocials,
         devProfile: getDevProfile(devAddress),
         safetyChecks: getSafetyChecks(contractAddress),
@@ -417,9 +427,9 @@ export default function Home() {
               sell_pct: sellPct,
               creator_holding_pct: Number(creatorHoldingPct.toFixed(2))
             })
-            .eq('token_address', selectedToken.contractAddress.toLowerCase())
-            .then(({ error }) => {
-              if (error) console.error("Failed to sync live data to DB:", error);
+            .ilike('token_address', selectedToken.contractAddress)
+            .then(({ error, data }) => {
+              if (error) console.error("Supabase live sync error:", error);
             });
         }
 
