@@ -379,19 +379,30 @@ export default function Home() {
         const socials = launch?.content?.socials || {};
         const hasSocials = !!(socials.x || socials.telegram || socials.website);
 
+        const creatorAddress = (launch?.creatorAddress || selectedToken?.devAddress || "").toLowerCase();
         const creatorTokensBought = feeEvents
-          .filter((ev: any) => ev.actorAddress?.toLowerCase() === launch?.creatorAddress?.toLowerCase() && ev.side === 'BUY')
-          .reduce((acc: number, ev: any) => acc + (Number(ev.pairBaseUnits || ev.baseUnits || 0) / 1e18), 0);
+          .filter((ev: any) => {
+            const buyer = (ev.actorAddress || ev.userAddress || ev.maker || ev.buyer || ev.user || "").toLowerCase();
+            const isBuy = ev.side === 'BUY' || ev.source === 'CURVE_BUY' || ev.source === 'INITIAL_PURCHASE';
+            return buyer === creatorAddress && isBuy;
+          })
+          .reduce((acc: number, ev: any) => acc + (Number(ev.pairBaseUnits || ev.baseUnits || ev.tokenUnits || ev.tokensOut || 0) / 1e18), 0);
+          
         const creatorHoldingPct = Math.min(100, (creatorTokensBought / 1_000_000_000) * 100);
         const isCreatorSafe = creatorHoldingPct <= 5;
 
         if (selectedToken?.contractAddress) {
           supabase
             .from('launches')
-            .update({ has_socials: hasSocials })
+            .update({ 
+              has_socials: hasSocials,
+              volume_eth: Number(totalVolume.toFixed(4)),
+              buy_pct: buyPct,
+              sell_pct: sellPct
+            })
             .eq('token_address', selectedToken.contractAddress.toLowerCase())
             .then(({ error }) => {
-              if (error) console.error("Failed to sync social status to DB:", error);
+              if (error) console.error("Failed to sync live data to DB:", error);
             });
         }
 
