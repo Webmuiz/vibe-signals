@@ -3,6 +3,13 @@ import 'dotenv/config';
 import { createPublicClient, http, defineChain, formatEther, parseAbiItem } from 'viem';
 import { createClient } from '@supabase/supabase-js';
 
+process.on('uncaughtException', (err) => {
+  console.error('Unhandled Exception trapped:', err);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled Rejection trapped:', reason);
+});
+
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_SECRET_KEY = process.env.SUPABASE_SECRET_KEY!;
 
@@ -71,55 +78,62 @@ async function runIndexer() {
         address: FACTORY_ADDRESS,
         onLogs: async logs => {
             for (const log of logs) {
-                if (log.topics[0] === CREATION_TOPIC && log.topics[1] && log.topics[2] && log.topics[3]) {
-                    const launchId = parseInt(log.topics[1] as string, 16);
-                    const devAddress = `0x${log.topics[2].slice(26)}`.toLowerCase();
-                    const tokenAddress = `0x${log.topics[3].slice(26)}`.toLowerCase();
-                    const ammAddress = `0x${log.data.slice(26, 66)}`.toLowerCase() as `0x${string}`;
+                try {
+                    if (log.topics[0] === CREATION_TOPIC && log.topics[1] && log.topics[2] && log.topics[3]) {
+                        const launchId = parseInt(log.topics[1] as string, 16);
+                        const devAddress = `0x${log.topics[2].slice(26)}`.toLowerCase();
+                        const tokenAddress = `0x${log.topics[3].slice(26)}`.toLowerCase();
+                        const ammAddress = `0x${log.data.slice(26, 66)}`.toLowerCase() as `0x${string}`;
 
-                    const baseTokenHex = log.data.slice(282, 322);
-                    const isNativeEth = baseTokenHex === "0000000000000000000000000000000000000000";
+                        const baseTokenHex = log.data.slice(282, 322);
+                        const isNativeEth = baseTokenHex === "0000000000000000000000000000000000000000";
 
-                    // Fetch real token name and ticker from the contract
-                    let tokenName = `Token #${launchId}`;
-                    let tokenSymbol = "TKN";
-                    try {
-                        tokenName = await publicClient.readContract({ address: tokenAddress as `0x${string}`, abi: ERC20_ABI, functionName: "name" }) as string;
-                        tokenSymbol = await publicClient.readContract({ address: tokenAddress as `0x${string}`, abi: ERC20_ABI, functionName: "symbol" }) as string;
-                    } catch (e) { console.log("⚠ Could not read token metadata"); }
+                        // Fetch real token name and ticker from the contract
+                        let tokenName = `Token #${launchId}`;
+                        let tokenSymbol = "TKN";
+                        try {
+                            tokenName = await publicClient.readContract({ address: tokenAddress as `0x${string}`, abi: ERC20_ABI, functionName: "name" }) as string;
+                            tokenSymbol = await publicClient.readContract({ address: tokenAddress as `0x${string}`, abi: ERC20_ABI, functionName: "symbol" }) as string;
+                        } catch (e) { console.log("⚠ Could not read token metadata"); }
 
-                    let hasSocials = false;
-                    try {
-                        // 2-second delay to let VibeVibe's off-chain DB catch up
-                        await new Promise(r => setTimeout(r, 2000));
-                        const res = await fetch(`https://vibe-signals.vercel.app/api/proxyVibe?address=${tokenAddress}`);
-                        if (res.ok) {
-                            const json = await res.json();
-                            const socials = json.data?.launch?.content?.socials || {};
-                            hasSocials = !!(socials.x || socials.telegram || socials.website);
-                            if (hasSocials) console.log(`🔗 Socials verified for ${tokenSymbol}`);
+                        let hasSocials = false;
+                        try {
+                            // 2-second delay to let VibeVibe's off-chain DB catch up
+                            await new Promise(r => setTimeout(r, 2000));
+                            const res = await fetch(`https://vibe-signals.vercel.app/api/proxyVibe?address=${tokenAddress}`);
+                            if (res.ok) {
+                                const json = await res.json();
+                                const socials = json.data?.launch?.content?.socials || {};
+                                hasSocials = !!(socials.x || socials.telegram || socials.website);
+                                if (hasSocials) console.log(`🔗 Socials verified for ${tokenSymbol}`);
+                            }
+                        } catch (e) {
+                            console.log(`⚠ Could not fetch socials for ${tokenSymbol}`);
                         }
-                    } catch (e) {
-                        console.log(`⚠ Could not fetch socials for ${tokenSymbol}`);
+
+                        console.log(`🚨 CLOUD SYNC: [#${launchId}] ${tokenName} ($${tokenSymbol})`);
+
+                        await supabase.from('launches').upsert({
+                            launch_id: launchId,
+                            token_address: tokenAddress,
+                            amm_address: ammAddress,
+                            dev_address: devAddress,
+                            pair_symbol: isNativeEth ? 'ETH' : 'STOCK',
+                            liquidity_deposited: 0,
+                            curve_progress: 0,
+                            launch_block: Number(log.blockNumber),
+                            name: tokenName,
+                            symbol: tokenSymbol,
+                            has_socials: hasSocials
+                        }, { onConflict: 'token_address' });
                     }
-
-                    console.log(`🚨 CLOUD SYNC: [#${launchId}] ${tokenName} ($${tokenSymbol})`);
-
-                    await supabase.from('launches').upsert({
-                        launch_id: launchId,
-                        token_address: tokenAddress,
-                        amm_address: ammAddress,
-                        dev_address: devAddress,
-                        pair_symbol: isNativeEth ? 'ETH' : 'STOCK',
-                        liquidity_deposited: 0,
-                        curve_progress: 0,
-                        launch_block: Number(log.blockNumber),
-                        name: tokenName,
-                        symbol: tokenSymbol,
-                        has_socials: hasSocials
-                    }, { onConflict: 'token_address' });
+                } catch (logErr) {
+                    console.error('Error processing log event:', logErr);
                 }
             }
+        },
+        onError: (error) => {
+            console.error('Factory watchEvent error (RPC hiccup):', error);
         }
     });
 
@@ -131,14 +145,21 @@ async function runIndexer() {
         event: curveBuyEvent,
         onLogs: async (logs) => {
             for (const log of logs) {
-                const { token, bnbIn } = log.args;
-                if (!token || !bnbIn) continue;
+                try {
+                    const { token, bnbIn } = log.args;
+                    if (!token || !bnbIn) continue;
 
-                const ethVolume = Number(formatEther(bnbIn as bigint));
-                console.log(`🟢 BUY DETECTED: ${ethVolume.toFixed(4)} ETH on token ${token}`);
+                    const ethVolume = Number(formatEther(bnbIn as bigint));
+                    console.log(`🟢 BUY DETECTED: ${ethVolume.toFixed(4)} ETH on token ${token}`);
 
-                await updateMomentumInDatabase(token.toLowerCase(), true, ethVolume);
+                    await updateMomentumInDatabase(token.toLowerCase(), true, ethVolume);
+                } catch (logErr) {
+                    console.error('Error processing log event:', logErr);
+                }
             }
+        },
+        onError: (error) => {
+            console.error('Router watchEvent error (RPC hiccup):', error);
         }
     });
 
@@ -170,4 +191,10 @@ async function runIndexer() {
 
 runIndexer();
 
-createServer((req: any, res: any) => res.end('Indexer is Live!')).listen(process.env.PORT || 3000);
+const PORT = Number(process.env.PORT) || 3000;
+createServer((req, res) => {
+  res.writeHead(200, { 'Content-Type': 'text/plain' });
+  res.end('Vibe Signals Indexer is Live and Healthy!');
+}).listen(PORT, '0.0.0.0', () => {
+  console.log(`Health check listening on 0.0.0.0:${PORT}`);
+});
