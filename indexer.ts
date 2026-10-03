@@ -88,6 +88,21 @@ async function runIndexer() {
                         tokenSymbol = await publicClient.readContract({ address: tokenAddress as `0x${string}`, abi: ERC20_ABI, functionName: "symbol" }) as string;
                     } catch (e) { console.log("⚠ Could not read token metadata"); }
 
+                    let hasSocials = false;
+                    try {
+                        // 2-second delay to let VibeVibe's off-chain DB catch up
+                        await new Promise(r => setTimeout(r, 2000));
+                        const res = await fetch(`https://vibe-signals.vercel.app/api/proxyVibe?address=${tokenAddress}`);
+                        if (res.ok) {
+                            const json = await res.json();
+                            const socials = json.data?.launch?.content?.socials || {};
+                            hasSocials = !!(socials.x || socials.telegram || socials.website);
+                            if (hasSocials) console.log(`🔗 Socials verified for ${tokenSymbol}`);
+                        }
+                    } catch (e) {
+                        console.log(`⚠ Could not fetch socials for ${tokenSymbol}`);
+                    }
+
                     console.log(`🚨 CLOUD SYNC: [#${launchId}] ${tokenName} ($${tokenSymbol})`);
 
                     await supabase.from('launches').upsert({
@@ -100,7 +115,8 @@ async function runIndexer() {
                         curve_progress: 0,
                         launch_block: Number(log.blockNumber),
                         name: tokenName,
-                        symbol: tokenSymbol
+                        symbol: tokenSymbol,
+                        has_socials: hasSocials
                     }, { onConflict: 'token_address' });
                 }
             }

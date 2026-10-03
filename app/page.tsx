@@ -56,6 +56,8 @@ interface DBToken {
   buyPct?: number;
   sell_pct?: number;
   sellPct?: number;
+  has_socials?: boolean;
+  hasSocials?: boolean;
 }
 
 function getDevProfile(devAddress: string) {
@@ -81,7 +83,7 @@ function getMomentumMetrics(tokenAddress: string) {
   return { buyPct, sellPct: 100 - buyPct, volumeEth: ((seed % 80) / 10 + 0.5).toFixed(2) };
 }
 
-function calculateVibeScore(blockZeroBuyers: number, timeSinceLaunchMins: number, curveProgress: number, diamondPct: number, volumeEth: number, buyPct: number) {
+function calculateVibeScore(blockZeroBuyers: number, timeSinceLaunchMins: number, curveProgress: number, diamondPct: number, volumeEth: number, buyPct: number, hasSocials: boolean = false) {
   let score = 50;
   if (blockZeroBuyers > 15) score -= 25;
   if (timeSinceLaunchMins > 90 && curveProgress > 40) score += 20;
@@ -90,6 +92,7 @@ function calculateVibeScore(blockZeroBuyers: number, timeSinceLaunchMins: number
   if (volumeEth > 0.01) score += 10;
   if (buyPct > 60) score += 15;
   if (buyPct < 30) score -= 20;
+  if (hasSocials) score += 15;
   return Math.max(1, Math.min(99, score));
 }
 
@@ -192,6 +195,7 @@ export default function Home() {
       const buyPct = db.buy_pct ?? db.buyPct ?? 50;
       const sellPct = db.sell_pct ?? db.sellPct ?? 50;
       const volumeEth = Number(db.volume_eth ?? db.volumeEth ?? 0).toFixed(4);
+      const hasSocials = db.has_socials ?? db.hasSocials ?? false;
 
       return {
         id: (db.launch_id || db.launchId || "0").toString(),
@@ -207,7 +211,8 @@ export default function Home() {
         blockZeroBuyers: block0,
         diamondHandsHoldersPct: diamond,
         totalSupply: 1000000000,
-        score: calculateVibeScore(block0, timeSinceLaunchMins, bondingCurveProgress, diamond, Number(volumeEth), buyPct),
+        score: calculateVibeScore(block0, timeSinceLaunchMins, bondingCurveProgress, diamond, Number(volumeEth), buyPct, hasSocials),
+        hasSocials: hasSocials,
         devProfile: getDevProfile(devAddress),
         safetyChecks: getSafetyChecks(contractAddress),
         momentum: {
@@ -275,11 +280,9 @@ export default function Home() {
             const buyRatio = totalVolume > 0 ? Math.round((buyVolume / totalVolume) * 100) : 50;
             const sellRatio = totalVolume > 0 ? 100 - buyRatio : 50;
 
-            let score = 50;
-            if (curveProgress > 40) score += 20;
-            const tradeCount = feeEvents.length;
-            if (tradeCount > 50) score += 15;
-            const vibeScore = Math.max(1, Math.min(99, score));
+            const socials = launch.content?.socials || {};
+            const hasSocials = !!(socials.x || socials.telegram || socials.website);
+            const vibeScore = calculateVibeScore(0, timeLiveMins, curveProgress, 50, totalVolume, buyRatio, hasSocials);
 
             const mappedToken = {
               id: launch.id || "0",
@@ -302,7 +305,9 @@ export default function Home() {
               volumeEth: totalVolume.toFixed(4),
               buyRatio: buyRatio,
               sellRatio: sellRatio,
-              imageUri
+              imageUri,
+              hasSocials: hasSocials,
+              socialLinks: socials
             };
 
             setOnChainToken(mappedToken);
@@ -353,12 +358,7 @@ export default function Home() {
         const socials = launch?.content?.socials || {};
         const hasSocials = !!(socials.x || socials.telegram || socials.website);
 
-        let dynamicScore = 50;
-        if (hasSocials) dynamicScore += 15;
-        if (totalVolume > 0.01) dynamicScore += 10;
-        if (buyPct > 60) dynamicScore += 15;
-        if (sellPct > 70) dynamicScore -= 20;
-        dynamicScore = Math.max(1, Math.min(99, dynamicScore));
+        const dynamicScore = calculateVibeScore(selectedToken.blockZeroBuyers, selectedToken.timeSinceLaunchMins, selectedToken.bondingCurveProgress, selectedToken.diamondHandsHoldersPct, totalVolume, buyPct, hasSocials);
 
         setSelectedToken((prev: any) => ({
           ...prev,
