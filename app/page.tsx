@@ -83,17 +83,38 @@ function getMomentumMetrics(tokenAddress: string) {
   return { buyPct, sellPct: 100 - buyPct, volumeEth: ((seed % 80) / 10 + 0.5).toFixed(2) };
 }
 
-function calculateVibeScore(blockZeroBuyers: number, timeSinceLaunchMins: number, curveProgress: number, diamondPct: number, volumeEth: number, buyPct: number, hasSocials: boolean = false) {
-  let score = 50;
-  if (blockZeroBuyers > 15) score -= 25;
-  if (timeSinceLaunchMins > 90 && curveProgress > 40) score += 20;
-  if (timeSinceLaunchMins < 15 && curveProgress > 70) score -= 20;
-  if (diamondPct >= 40) score += 15;
-  if (volumeEth > 0.01) score += 10;
-  if (buyPct > 60) score += 15;
-  if (buyPct < 30) score -= 20;
+function calculateVibeScore(
+  blockZeroBuyers: number,
+  timeSinceLaunchMins: number,
+  curveProgress: number,
+  diamondPct: number,
+  volumeEth: number,
+  buyPct: number,
+  hasSocials: boolean = false,
+  creatorHoldingPct: number = 0
+) {
+  let score = 30; // Grounded baseline
+
+  // Volume & Momentum requirements
+  if (volumeEth >= 0.05) score += 15;
+  else if (volumeEth >= 0.01) score += 5;
+
+  if (buyPct >= 60 && volumeEth >= 0.01) score += 15;
+  if (buyPct < 40 && volumeEth >= 0.01) score -= 15;
+
+  // Curve Progress
+  if (curveProgress >= 50) score += 20;
+  else if (curveProgress >= 15) score += 10;
+
+  // Socials & Legitimacy
   if (hasSocials) score += 15;
-  return Math.max(1, Math.min(99, score));
+
+  // Penalties
+  if (creatorHoldingPct > 10) score -= 25;
+  if (blockZeroBuyers > 15) score -= 20;
+  if (timeSinceLaunchMins < 15 && curveProgress > 70) score -= 20;
+
+  return Math.max(1, Math.min(100, Math.round(score)));
 }
 
 function shortenAddress(address: string) {
@@ -358,6 +379,12 @@ export default function Home() {
         const socials = launch?.content?.socials || {};
         const hasSocials = !!(socials.x || socials.telegram || socials.website);
 
+        const creatorTokensBought = feeEvents
+          .filter((ev: any) => ev.actorAddress?.toLowerCase() === launch?.creatorAddress?.toLowerCase() && ev.side === 'BUY')
+          .reduce((acc: number, ev: any) => acc + (Number(ev.tokenUnits || 0) / 1e18), 0);
+        const creatorHoldingPct = Math.min(100, (creatorTokensBought / 1_000_000_000) * 100);
+        const isCreatorSafe = creatorHoldingPct <= 5;
+
         if (selectedToken?.contractAddress) {
           supabase
             .from('launches')
@@ -368,14 +395,31 @@ export default function Home() {
             });
         }
 
-        const dynamicScore = calculateVibeScore(selectedToken.blockZeroBuyers, selectedToken.timeSinceLaunchMins, selectedToken.bondingCurveProgress, selectedToken.diamondHandsHoldersPct, totalVolume, buyPct, hasSocials);
+        const dynamicScore = calculateVibeScore(
+          selectedToken.blockZeroBuyers,
+          selectedToken.timeSinceLaunchMins,
+          selectedToken.bondingCurveProgress,
+          selectedToken.diamondHandsHoldersPct,
+          totalVolume,
+          buyPct,
+          hasSocials,
+          creatorHoldingPct
+        );
 
         setSelectedToken((prev: any) => ({
           ...prev,
           score: dynamicScore,
           hasSocials: hasSocials,
           socialLinks: socials,
-          momentum: { buyPct, sellPct, volumeEth: totalVolume.toFixed(4) }
+          momentum: { buyPct, sellPct, volumeEth: totalVolume.toFixed(4) },
+          safetyChecks: {
+            ...prev?.safetyChecks,
+            mev: { label: feeEvents.length <= 5 ? "Low Risk (< 5%)" : "Normal", safe: true },
+            creatorBag: {
+              label: `${isCreatorSafe ? 'Safe' : 'High Risk'} (${creatorHoldingPct.toFixed(1)}% Supply)`,
+              safe: isCreatorSafe
+            }
+          }
         }));
       })
       .catch(console.error);
