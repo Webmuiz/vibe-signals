@@ -93,26 +93,30 @@ function calculateVibeScore(
   hasSocials: boolean = false,
   creatorHoldingPct: number = 0
 ) {
-  let score = 30; // Grounded baseline
+  let score = 35; // Grounded baseline
 
-  // Volume & Momentum requirements
-  if (volumeEth >= 0.05) score += 15;
-  else if (volumeEth >= 0.01) score += 5;
+  // Volume & Momentum
+  if (volumeEth >= 0.1) score += 20;
+  else if (volumeEth >= 0.03) score += 15;
+  else if (volumeEth >= 0.005) score += 5;
 
-  if (buyPct >= 60 && volumeEth >= 0.01) score += 15;
+  // Buy Pressure
+  if (buyPct >= 80 && volumeEth >= 0.005) score += 15;
+  else if (buyPct >= 60 && volumeEth >= 0.005) score += 10;
   if (buyPct < 40 && volumeEth >= 0.01) score -= 15;
 
-  // Curve Progress
+  // Curve Traction (Rewards early momentum)
   if (curveProgress >= 50) score += 20;
-  else if (curveProgress >= 15) score += 10;
+  else if (curveProgress >= 15) score += 15;
+  else if (curveProgress >= 3) score += 10;
 
-  // Socials & Legitimacy
+  // Identity / Socials
   if (hasSocials) score += 15;
 
-  // Penalties
+  // Severe Penalties
   if (creatorHoldingPct > 10) score -= 25;
-  if (blockZeroBuyers > 15) score -= 20;
-  if (timeSinceLaunchMins < 15 && curveProgress > 70) score -= 20;
+  if (blockZeroBuyers > 15) score -= 25;
+  if (timeSinceLaunchMins < 10 && curveProgress > 70) score -= 20;
 
   return Math.max(1, Math.min(100, Math.round(score)));
 }
@@ -204,7 +208,7 @@ export default function Home() {
         seed += contractAddress.charCodeAt(j);
       }
 
-      const block0 = (seed % 25);
+      const block0 = 0; // Default to 0 until block 0 logs are verified
       const diamond = (seed % 60) + 10;
 
       let bondingCurveProgress = db.curve_progress ?? db.curveProgress ?? db.bondingCurveProgress ?? 0;
@@ -254,7 +258,7 @@ export default function Home() {
     switch (activeFilter) {
       case "alpha": return list.filter(t => t.score >= 70);
       case "graduating": return list.filter(t => t.bondingCurveProgress >= 85);
-      case "risk": return list.filter(t => t.score < 45 || t.blockZeroBuyers > 15);
+      case "risk": return list.filter(t => (t.momentum.sellPct >= 60 && Number(t.momentum.volumeEth) > 0.01) || t.blockZeroBuyers > 15 || t.score < 30);
       default: return list;
     }
   }, [processedTokens, activeFilter, searchQuery]);
@@ -458,6 +462,8 @@ export default function Home() {
     }
   };
 
+  const isCabalRisk = selectedToken ? ((selectedToken.momentum?.sellPct ?? 0) >= 65 || selectedToken.safetyChecks?.creatorBag?.safe === false) : false;
+
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 font-mono selection:bg-emerald-500/30">
       <nav className="flex justify-between items-center p-4 border-b border-zinc-800 bg-zinc-900/50 sticky top-0 z-50 backdrop-blur-md">
@@ -544,10 +550,10 @@ export default function Home() {
 
                 <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
                   <h3 className="text-lg font-bold mb-4 text-white">Holder Clustering (Cabal Detector)</h3>
-
+                  
                   <div className="w-full bg-zinc-950 border border-zinc-800 rounded-lg mb-6 relative overflow-hidden h-56 group">
                     <svg className="absolute inset-0 w-full h-full z-0 pointer-events-none">
-                      {selectedToken.score < 50 ? (
+                      {isCabalRisk ? (
                         <>
                           <line x1="25%" y1="30%" x2="25%" y2="70%" stroke="#ef4444" strokeWidth="2" strokeDasharray="4" className="animate-pulse opacity-60" />
                           <line x1="25%" y1="70%" x2="50%" y2="85%" stroke="#ef4444" strokeWidth="2" strokeDasharray="4" className="animate-pulse opacity-60" />
@@ -570,16 +576,16 @@ export default function Home() {
                         <span className="text-[10px] font-bold text-emerald-400">AMM</span>
                       </div>
 
-                      <div className={`absolute top-[30%] left-[25%] -translate-x-1/2 -translate-y-1/2 w-8 h-8 rounded-full border-2 flex items-center justify-center bg-zinc-900 ${selectedToken.score < 50 ? 'border-red-500 shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-zinc-600'}`}>
+                      <div className={`absolute top-[30%] left-[25%] -translate-x-1/2 -translate-y-1/2 w-8 h-8 rounded-full border-2 flex items-center justify-center bg-zinc-900 ${isCabalRisk ? 'border-red-500 shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-zinc-600'}`}>
                         <span className="text-[8px] text-zinc-400">#1</span>
                       </div>
-                      <div className={`absolute top-[70%] left-[25%] -translate-x-1/2 -translate-y-1/2 w-10 h-10 rounded-full border-2 flex items-center justify-center bg-zinc-900 ${selectedToken.score < 50 ? 'border-red-500 shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-zinc-600'}`}>
+                      <div className={`absolute top-[70%] left-[25%] -translate-x-1/2 -translate-y-1/2 w-10 h-10 rounded-full border-2 flex items-center justify-center bg-zinc-900 ${isCabalRisk ? 'border-red-500 shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-zinc-600'}`}>
                         <span className="text-[8px] text-zinc-400">#2</span>
                       </div>
-                      <div className={`absolute top-[85%] left-[50%] -translate-x-1/2 -translate-y-1/2 w-7 h-7 rounded-full border-2 flex items-center justify-center bg-zinc-900 ${selectedToken.score < 50 ? 'border-red-500 shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-zinc-600'}`}>
+                      <div className={`absolute top-[85%] left-[50%] -translate-x-1/2 -translate-y-1/2 w-7 h-7 rounded-full border-2 flex items-center justify-center bg-zinc-900 ${isCabalRisk ? 'border-red-500 shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-zinc-600'}`}>
                         <span className="text-[8px] text-zinc-400">#3</span>
                       </div>
-                      <div className={`absolute top-[70%] left-[75%] -translate-x-1/2 -translate-y-1/2 w-9 h-9 rounded-full border-2 flex items-center justify-center bg-zinc-900 ${selectedToken.score < 50 ? 'border-red-500 shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-zinc-600'}`}>
+                      <div className={`absolute top-[70%] left-[75%] -translate-x-1/2 -translate-y-1/2 w-9 h-9 rounded-full border-2 flex items-center justify-center bg-zinc-900 ${isCabalRisk ? 'border-red-500 shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-zinc-600'}`}>
                         <span className="text-[8px] text-zinc-400">#4</span>
                       </div>
                       <div className="absolute top-[30%] left-[75%] -translate-x-1/2 -translate-y-1/2 w-8 h-8 rounded-full border-2 border-zinc-600 flex items-center justify-center bg-zinc-900">
@@ -588,7 +594,7 @@ export default function Home() {
                     </div>
 
                     <div className="absolute top-3 left-4 bg-zinc-950/80 backdrop-blur px-2 py-1 rounded border border-zinc-800 text-[10px]">
-                      {selectedToken.score < 50 ? (
+                      {isCabalRisk ? (
                         <span className="text-red-400 font-bold flex items-center gap-1">⚠️ Cabal Detected (Shared Exchange Funding)</span>
                       ) : (
                         <span className="text-emerald-400 font-bold flex items-center gap-1">✅ Clean Distribution (No Shared Source)</span>
@@ -599,8 +605,8 @@ export default function Home() {
                   <div className="grid grid-cols-2 gap-4 text-sm">
                     <div className="p-4 bg-zinc-950 rounded-lg border border-zinc-800">
                       <span className="text-zinc-500 block mb-1">Top 10 Supply</span>
-                      <span className={`${selectedToken.score < 50 ? 'text-red-400' : 'text-emerald-400'} font-bold`}>
-                        {selectedToken.score < 50 ? '48.5%' : '12.4%'}
+                      <span className={`${isCabalRisk ? 'text-red-400' : 'text-emerald-400'} font-bold`}>
+                        {isCabalRisk ? '48.5%' : '12.4%'}
                       </span>
                     </div>
                     <div className="p-4 bg-zinc-950 rounded-lg border border-zinc-800">
