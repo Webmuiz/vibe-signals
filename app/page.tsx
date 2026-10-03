@@ -381,7 +381,7 @@ export default function Home() {
 
         const creatorTokensBought = feeEvents
           .filter((ev: any) => ev.actorAddress?.toLowerCase() === launch?.creatorAddress?.toLowerCase() && ev.side === 'BUY')
-          .reduce((acc: number, ev: any) => acc + (Number(ev.tokenUnits || 0) / 1e18), 0);
+          .reduce((acc: number, ev: any) => acc + (Number(ev.pairBaseUnits || ev.baseUnits || 0) / 1e18), 0);
         const creatorHoldingPct = Math.min(100, (creatorTokensBought / 1_000_000_000) * 100);
         const isCreatorSafe = creatorHoldingPct <= 5;
 
