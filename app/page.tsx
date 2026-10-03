@@ -381,19 +381,19 @@ export default function Home() {
 
         // 1. Use launcherAddress instead of creatorAddress
         const creatorAddress = (launch?.launcherAddress || selectedToken?.devAddress || "").toLowerCase();
-        
+
         // 2. Map through the correct keys for Zaps and Token amounts
         const creatorTokensBought = feeEvents
           .filter((ev: any) => {
             const buyer = (ev.actorAddress || "").toLowerCase();
             const recipient = (ev.recipientAddress || "").toLowerCase();
             const isBuy = ev.side === 'BUY' || ev.source === 'CURVE_BUY' || ev.source === 'INITIAL_PURCHASE';
-            
+
             // If a Zap was used, the user is the recipient. Otherwise they are the actor.
             return (buyer === creatorAddress || recipient === creatorAddress) && isBuy;
           })
           .reduce((acc: number, ev: any) => acc + (Number(ev.netTokenUnits || 0) / 1e18), 0);
-          
+
         const creatorHoldingPct = Math.min(100, (creatorTokensBought / 1_000_000_000) * 100);
         const isCreatorSafe = creatorHoldingPct <= 5;
 
@@ -401,7 +401,7 @@ export default function Home() {
         if (selectedToken?.contractAddress) {
           supabase
             .from('launches')
-            .update({ 
+            .update({
               has_socials: hasSocials,
               volume_eth: Number(totalVolume.toFixed(4)),
               buy_pct: buyPct,

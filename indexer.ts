@@ -141,7 +141,6 @@ async function runIndexer() {
     const curveBuyEvent = parseAbiItem('event CurveBuy(address indexed token, address indexed buyer, uint256 tokensOut, uint256 bnbIn, uint256 fee, uint256 reserveAfter, uint256 soldAfter, uint256 timestamp)');
 
     publicClient.watchEvent({
-        address: ROUTER_ADDRESS,
         event: curveBuyEvent,
         onLogs: async (logs) => {
             for (const log of logs) {
@@ -173,15 +172,23 @@ async function runIndexer() {
                 if (token.pair_symbol === 'ETH') {
                     const rawEth = await publicClient.getBalance({ address: token.amm_address as `0x${string}` });
                     const currentLiq = parseFloat(formatEther(rawEth));
-                    const progress = Math.min(100, Math.max(0, (currentLiq / 4.0) * 100)); // Assuming 4 ETH target
+                    const progress = Math.min(100, Math.max(0, (currentLiq / 4.0) * 100));
 
-                    // Only write to DB if the balance actually changed
-                    if (currentLiq !== token.liquidity_deposited) {
-                        await supabase.from('launches').update({
+                    if (currentLiq !== token.liquidity_deposited || (token.volume_eth || 0) < currentLiq) {
+                        const updatePayload: any = {
                             liquidity_deposited: Number(currentLiq.toFixed(4)),
                             curve_progress: Number(progress.toFixed(1))
-                        }).eq('launch_id', token.launch_id);
-                        console.log(`📈 CURVE UPDATE: $${token.symbol} is now at ${progress.toFixed(1)}%`);
+                        };
+
+                        // If database has 0 volume logged, initialize it with current curve liquidity
+                        if (!token.volume_eth || token.volume_eth < currentLiq) {
+                            updatePayload.volume_eth = Number(currentLiq.toFixed(4));
+                            updatePayload.buy_pct = 100;
+                            updatePayload.sell_pct = 0;
+                        }
+
+                        await supabase.from('launches').update(updatePayload).eq('launch_id', token.launch_id);
+                        console.log(`📈 SYNC: $${token.symbol} liq: ${currentLiq.toFixed(4)} ETH (${progress.toFixed(1)}%)`);
                     }
                 }
             }
