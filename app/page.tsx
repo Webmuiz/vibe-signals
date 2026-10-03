@@ -60,6 +60,8 @@ interface DBToken {
   sellPct?: number;
   has_socials?: boolean;
   hasSocials?: boolean;
+  creator_holding_pct?: number;
+  creatorHoldingPct?: number;
 }
 
 function getDevProfile(devAddress: string) {
@@ -223,6 +225,7 @@ export default function Home() {
       const sellPct = db.sell_pct ?? db.sellPct ?? 50;
       const volumeEth = Number(db.volume_eth ?? db.volumeEth ?? 0).toFixed(4);
       const hasSocials = db.has_socials ?? db.hasSocials ?? false;
+      const creatorHolding = db.creator_holding_pct ?? db.creatorHoldingPct ?? 0;
 
       return {
         id: (db.launch_id || db.launchId || "0").toString(),
@@ -238,7 +241,7 @@ export default function Home() {
         blockZeroBuyers: block0,
         diamondHandsHoldersPct: diamond,
         totalSupply: 1000000000,
-        score: calculateVibeScore(block0, timeSinceLaunchMins, bondingCurveProgress, diamond, Number(volumeEth), buyPct, hasSocials),
+        score: calculateVibeScore(block0, timeSinceLaunchMins, bondingCurveProgress, diamond, Number(volumeEth), buyPct, hasSocials, creatorHolding),
         hasSocials: hasSocials,
         devProfile: getDevProfile(devAddress),
         safetyChecks: getSafetyChecks(contractAddress),
@@ -411,7 +414,8 @@ export default function Home() {
               has_socials: hasSocials,
               volume_eth: Number(totalVolume.toFixed(4)),
               buy_pct: buyPct,
-              sell_pct: sellPct
+              sell_pct: sellPct,
+              creator_holding_pct: Number(creatorHoldingPct.toFixed(2))
             })
             .eq('token_address', selectedToken.contractAddress.toLowerCase())
             .then(({ error }) => {
