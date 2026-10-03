@@ -2,12 +2,14 @@
 
 import { useState, useMemo, useEffect } from "react";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
-import { useAccount, useSendTransaction, useReadContract } from "wagmi";
+import { useAccount, useWriteContract, useReadContract } from "wagmi";
 import { isAddress, parseEther, createPublicClient, http, formatEther } from "viem";
 import { createClient } from "@supabase/supabase-js";
 
 const SIGNAL_TOKEN = "0xD4D41412033a72a0D1cCd0Cb02b666Cf771880B1" as `0x${string}`;
 const FACTORY_ADDRESS = "0xe794217880011f9cA6961340eD5c16EC9559Fea0" as `0x${string}`;
+const ROUTER_ADDRESS = "0x89944BC9D3b20764BeA771CFAf9711a8Fb839e72" as `0x${string}`;
+const ROUTER_ABI = [{ name: "buy", type: "function", stateMutability: "payable", inputs: [{ name: "token", type: "address" }] }] as const;
 
 const SIGNAL_BALANCE_ABI = [
   { name: "balanceOf", type: "function", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "uint256" }] }
@@ -139,7 +141,7 @@ function formatTimeLive(totalMinutes: number) {
 
 export default function Home() {
   const { address, isConnected } = useAccount();
-  const { sendTransaction, isPending: isTxPending } = useSendTransaction();
+  const { writeContract, isPending: isTxPending, data: hash } = useWriteContract();
 
   const [activeFilter, setActiveFilter] = useState<"all" | "alpha" | "graduating" | "risk">("all");
   const [dbTokens, setDbTokens] = useState<DBToken[]>([]);
@@ -452,13 +454,15 @@ export default function Home() {
   const handleExecuteApe = async () => {
     if (!selectedToken || !apeAmount || Number(apeAmount) <= 0) return;
     try {
-      setTxHash(null);
-      sendTransaction(
-        { to: FACTORY_ADDRESS, value: parseEther(apeAmount) },
-        { onSuccess: (hash) => setTxHash(hash) }
-      );
+      writeContract({
+        address: ROUTER_ADDRESS,
+        abi: ROUTER_ABI,
+        functionName: "buy",
+        args: [selectedToken.contractAddress as `0x${string}`],
+        value: parseEther(apeAmount),
+      });
     } catch (err) {
-      console.error(err);
+      console.error("Ape execution failed:", err);
     }
   };
 
@@ -697,9 +701,9 @@ export default function Home() {
                     {!isConnected ? "Connect Wallet to Ape" : isTxPending ? "Aping In..." : `Quick Buy ${apeAmount} ETH`}
                   </button>
 
-                  {txHash && (
+                  {hash && (
                     <div className="mt-3 p-2 bg-emerald-500/10 border border-emerald-500/20 rounded text-[11px] text-emerald-400 text-center truncate">
-                      Tx Sent: {shortenAddress(txHash)}
+                      Tx Sent: {shortenAddress(hash)}
                     </div>
                   )}
                 </div>
