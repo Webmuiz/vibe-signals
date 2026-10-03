@@ -71,7 +71,7 @@ function getSafetyChecks(tokenAddress: string) {
   return {
     socials: seed % 2 === 0 ? { label: "Linked (X & TG)", safe: true } : { label: "Ghost Launch (No Socials)", safe: false },
     mev: seed % 100 > 60 ? { label: "High Bot Infiltration", safe: false } : { label: "Low Risk (< 5%)", safe: true },
-    honeypot: seed % 100 > 90 ? { label: "Flagged (Mint/Blacklist)", safe: false } : { label: "Clean (Renounced, 0/0 Tax)", safe: true }
+    creatorBag: seed % 100 > 85 ? { label: "High Risk (> 10% Supply)", safe: false } : { label: "Safe (< 5% Supply)", safe: true }
   };
 }
 
@@ -81,12 +81,15 @@ function getMomentumMetrics(tokenAddress: string) {
   return { buyPct, sellPct: 100 - buyPct, volumeEth: ((seed % 80) / 10 + 0.5).toFixed(2) };
 }
 
-function calculateVibeScore(blockZeroBuyers: number, timeSinceLaunchMins: number, bondingCurveProgress: number, diamondHandsHoldersPct: number) {
+function calculateVibeScore(blockZeroBuyers: number, timeSinceLaunchMins: number, curveProgress: number, diamondPct: number, volumeEth: number, buyPct: number) {
   let score = 50;
   if (blockZeroBuyers > 15) score -= 25;
-  if (timeSinceLaunchMins > 90 && bondingCurveProgress > 40) score += 20;
-  if (timeSinceLaunchMins < 15 && bondingCurveProgress > 70) score -= 20;
-  if (diamondHandsHoldersPct >= 40) score += 15;
+  if (timeSinceLaunchMins > 90 && curveProgress > 40) score += 20;
+  if (timeSinceLaunchMins < 15 && curveProgress > 70) score -= 20;
+  if (diamondPct >= 40) score += 15;
+  if (volumeEth > 0.01) score += 10;
+  if (buyPct > 60) score += 15;
+  if (buyPct < 30) score -= 20;
   return Math.max(1, Math.min(99, score));
 }
 
@@ -204,7 +207,7 @@ export default function Home() {
         blockZeroBuyers: block0,
         diamondHandsHoldersPct: diamond,
         totalSupply: 1000000000,
-        score: calculateVibeScore(block0, timeSinceLaunchMins, bondingCurveProgress, diamond),
+        score: calculateVibeScore(block0, timeSinceLaunchMins, bondingCurveProgress, diamond, Number(volumeEth), buyPct),
         devProfile: getDevProfile(devAddress),
         safetyChecks: getSafetyChecks(contractAddress),
         momentum: {
@@ -349,7 +352,7 @@ export default function Home() {
         const launch = json.data?.launch;
         const socials = launch?.content?.socials || {};
         const hasSocials = !!(socials.x || socials.telegram || socials.website);
-        
+
         let dynamicScore = 50;
         if (hasSocials) dynamicScore += 15;
         if (totalVolume > 0.01) dynamicScore += 10;
@@ -637,8 +640,10 @@ export default function Home() {
                       <span className={selectedToken.safetyChecks.mev.safe ? 'text-emerald-400 font-bold' : 'text-yellow-400 font-bold'}>{selectedToken.safetyChecks.mev.label}</span>
                     </li>
                     <li className="flex justify-between items-center p-3 bg-zinc-950 rounded-lg border border-zinc-800">
-                      <span className="text-zinc-500">Code Audit</span>
-                      <span className={selectedToken.safetyChecks.honeypot.safe ? 'text-emerald-400 font-bold' : 'text-red-400 font-bold'}>{selectedToken.safetyChecks.honeypot.label}</span>
+                      <span className="text-zinc-500">Creator Wallet</span>
+                      <span className={selectedToken.safetyChecks.creatorBag.safe ? 'text-emerald-400 font-bold' : 'text-red-400 font-bold'}>
+                        {selectedToken.safetyChecks.creatorBag.label}
+                      </span>
                     </li>
                   </ul>
                 </div>
