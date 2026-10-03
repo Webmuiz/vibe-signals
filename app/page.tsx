@@ -329,7 +329,7 @@ export default function Home() {
               ticker: launch.symbol || "TKN",
               contractAddress: launch.tokenAddress,
               ammAddress: launch.curveAddress,
-              devAddress: launch.creatorAddress || query,
+              devAddress: launch.launcherAddress || launch.creatorAddress || query,
               timeSinceLaunchMins: timeLiveMins,
               bondingCurveProgress: curveProgress,
               ethDeposited: `${currentEth.toFixed(4)} / ${targetEth.toFixed(1)}`,
@@ -338,7 +338,7 @@ export default function Home() {
               diamondHandsHoldersPct: 50,
               totalSupply: 1000000000,
               score: vibeScore,
-              devProfile: getDevProfile(launch.creatorAddress || query),
+              devProfile: getDevProfile(launch.launcherAddress || launch.creatorAddress || query),
               safetyChecks: getSafetyChecks(launch.tokenAddress || query),
               momentum: { buyPct: buyRatio, sellPct: sellRatio, volumeEth: totalVolume.toFixed(4) },
               volumeEth: totalVolume.toFixed(4),
@@ -445,6 +445,7 @@ export default function Home() {
 
         setSelectedToken((prev: any) => ({
           ...prev,
+          devAddress: launch?.launcherAddress || launch?.creatorAddress || prev.devAddress,
           score: dynamicScore,
           hasSocials: hasSocials,
           socialLinks: socials,
