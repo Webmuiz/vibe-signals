@@ -159,6 +159,7 @@ export default function Home() {
   const [slippage, setSlippage] = useState<number>(15);
   const [txHash, setTxHash] = useState<string | null>(null);
   const [tradeTab, setTradeTab] = useState<'buy' | 'sell'>('buy');
+  const [topHolders, setTopHolders] = useState<{address: string, pct: number}[]>([]);
 
   // Fetch Native ETH Balance
   const { data: ethBalance } = useBalance({ address });
@@ -482,6 +483,29 @@ export default function Home() {
       })
       .catch(console.error);
 
+    if (selectedToken?.contractAddress) {
+      fetch(`https://testnet.robinhood.com/api/v2/tokens/${selectedToken.contractAddress}/holders`)
+        .then(res => res.json())
+        .then(data => {
+          if (data?.items) {
+            const cleanHolders = data.items
+              .filter((h: any) => 
+                h.address?.hash?.toLowerCase() !== (selectedToken.ammAddress || "").toLowerCase() &&
+                h.address?.hash?.toLowerCase() !== "0x000000000000000000000000000000000000dead" &&
+                h.address?.hash?.toLowerCase() !== "0x0000000000000000000000000000000000000000"
+              )
+              .slice(0, 5)
+              .map((h: any) => ({
+                address: h.address.hash,
+                // Vibe tokens have 1B supply. Convert wei to standard format and calculate percentage:
+                pct: (Number(formatEther(BigInt(h.value))) / 1_000_000_000) * 100
+              }));
+            setTopHolders(cleanHolders);
+          }
+        })
+        .catch(err => console.error("Holders fetch failed:", err));
+    }
+
     return () => { isMounted = false; };
   }, [selectedToken?.contractAddress]);
 
@@ -550,7 +574,8 @@ export default function Home() {
     }
   };
 
-  const isCabalRisk = selectedToken ? ((selectedToken.momentum?.sellPct ?? 0) >= 65 || selectedToken.safetyChecks?.creatorBag?.safe === false) : false;
+  const top5Concentration = topHolders.reduce((acc, h) => acc + h.pct, 0);
+  const isCabalRisk = selectedToken ? (top5Concentration > 25 || (selectedToken.momentum?.sellPct ?? 0) >= 65 || selectedToken.safetyChecks?.creatorBag?.safe === false) : false;
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 font-mono selection:bg-emerald-500/30">
@@ -665,19 +690,19 @@ export default function Home() {
                       </div>
 
                       <div className={`absolute top-[30%] left-[25%] -translate-x-1/2 -translate-y-1/2 w-8 h-8 rounded-full border-2 flex items-center justify-center bg-zinc-900 ${isCabalRisk ? 'border-red-500 shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-zinc-600'}`}>
-                        <span className="text-[8px] text-zinc-400">#1</span>
+                        <span className="text-[8px] text-zinc-400">{topHolders[0] ? `${topHolders[0].pct.toFixed(1)}%` : '#1'}</span>
                       </div>
                       <div className={`absolute top-[70%] left-[25%] -translate-x-1/2 -translate-y-1/2 w-10 h-10 rounded-full border-2 flex items-center justify-center bg-zinc-900 ${isCabalRisk ? 'border-red-500 shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-zinc-600'}`}>
-                        <span className="text-[8px] text-zinc-400">#2</span>
+                        <span className="text-[8px] text-zinc-400">{topHolders[1] ? `${topHolders[1].pct.toFixed(1)}%` : '#2'}</span>
                       </div>
                       <div className={`absolute top-[85%] left-[50%] -translate-x-1/2 -translate-y-1/2 w-7 h-7 rounded-full border-2 flex items-center justify-center bg-zinc-900 ${isCabalRisk ? 'border-red-500 shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-zinc-600'}`}>
-                        <span className="text-[8px] text-zinc-400">#3</span>
+                        <span className="text-[8px] text-zinc-400">{topHolders[2] ? `${topHolders[2].pct.toFixed(1)}%` : '#3'}</span>
                       </div>
                       <div className={`absolute top-[70%] left-[75%] -translate-x-1/2 -translate-y-1/2 w-9 h-9 rounded-full border-2 flex items-center justify-center bg-zinc-900 ${isCabalRisk ? 'border-red-500 shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-zinc-600'}`}>
-                        <span className="text-[8px] text-zinc-400">#4</span>
+                        <span className="text-[8px] text-zinc-400">{topHolders[3] ? `${topHolders[3].pct.toFixed(1)}%` : '#4'}</span>
                       </div>
                       <div className="absolute top-[30%] left-[75%] -translate-x-1/2 -translate-y-1/2 w-8 h-8 rounded-full border-2 border-zinc-600 flex items-center justify-center bg-zinc-900">
-                        <span className="text-[8px] text-zinc-400">#5</span>
+                        <span className="text-[8px] text-zinc-400">{topHolders[4] ? `${topHolders[4].pct.toFixed(1)}%` : '#5'}</span>
                       </div>
                     </div>
 
@@ -694,7 +719,7 @@ export default function Home() {
                     <div className="p-4 bg-zinc-950 rounded-lg border border-zinc-800">
                       <span className="text-zinc-500 block mb-1">Top 10 Supply</span>
                       <span className={`${isCabalRisk ? 'text-red-400' : 'text-emerald-400'} font-bold`}>
-                        {isCabalRisk ? '48.5%' : '12.4%'}
+                        {top5Concentration > 0 ? `${top5Concentration.toFixed(1)}%` : '0.0%'}
                       </span>
                     </div>
                     <div className="p-4 bg-zinc-950 rounded-lg border border-zinc-800">
