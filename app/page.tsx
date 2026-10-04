@@ -200,7 +200,7 @@ export default function Home() {
     args: address ? [address] : undefined,
   });
 
-  const hasAccess = balanceData && BigInt(balanceData as any) >= BigInt("10000") * (BigInt("10") ** BigInt("18"));
+  const hasAccess = balanceData && BigInt(balanceData as any) >= BigInt("200000") * (BigInt("10") ** BigInt("18"));
 
   const fetchDatabase = async () => {
     try {
@@ -1048,7 +1048,7 @@ export default function Home() {
                               <span className="text-sm font-bold text-zinc-300">Connect Wallet to Unlock</span>
                             ) : (
                               <div className="text-center p-2">
-                                <span className="text-xs font-bold text-emerald-400 block mb-1">Requires 10,000 $SIGNAL</span>
+                                <span className="text-xs font-bold text-emerald-400 block mb-1">Requires 200,000 $SIGNAL</span>
                                 <a href={`https://testnet.vibevibe.fun/token/${SIGNAL_TOKEN}`} target="_blank" rel="noreferrer" className="text-[10px] underline text-zinc-400 hover:text-white pointer-events-auto relative z-20">Acquire Token</a>
                               </div>
                             )}
