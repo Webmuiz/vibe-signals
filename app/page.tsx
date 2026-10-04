@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useEffect } from "react";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
-import { useAccount, useSendTransaction, useReadContract } from "wagmi";
+import { useAccount, useSendTransaction, useBalance, useReadContract } from "wagmi";
 import { isAddress, parseEther, createPublicClient, http, formatEther, encodeAbiParameters, parseAbiParameters } from "viem";
 import { createClient } from "@supabase/supabase-js";
 
@@ -16,7 +16,8 @@ const SIGNAL_BALANCE_ABI = [
 
 const ERC20_ABI = [
   { name: "symbol", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "string" }] },
-  { name: "name", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "string" }] }
+  { name: "name", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "string" }] },
+  { name: "balanceOf", type: "function", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "uint256" }] }
 ] as const;
 
 const publicClient = createPublicClient({
@@ -157,6 +158,21 @@ export default function Home() {
   const [sellAmount, setSellAmount] = useState<string>("1000");
   const [slippage, setSlippage] = useState<number>(15);
   const [txHash, setTxHash] = useState<string | null>(null);
+  const [tradeTab, setTradeTab] = useState<'buy' | 'sell'>('buy');
+
+  // Fetch Native ETH Balance
+  const { data: ethBalance } = useBalance({ address });
+  const ethAvailable = ethBalance ? Number(ethBalance.formatted) : 0;
+
+  // Fetch Token Holding Balance
+  const { data: rawTokenBalance } = useReadContract({
+    address: selectedToken?.contractAddress as `0x${string}`,
+    abi: ERC20_ABI,
+    functionName: 'balanceOf',
+    args: address ? [address] : undefined,
+    query: { enabled: !!address && !!selectedToken }
+  });
+  const tokenBalance = rawTokenBalance ? Number(formatEther(rawTokenBalance as bigint)) : 0;
 
   const { data: balanceData } = useReadContract({
     address: SIGNAL_TOKEN,
@@ -719,75 +735,91 @@ export default function Home() {
               </div>
 
               <div className="space-y-6">
-                <div className="bg-zinc-900 border border-emerald-500/40 rounded-xl p-6 shadow-[0_0_25px_rgba(16,185,129,0.08)]">
-                  <div className="flex justify-between items-center mb-4">
-                    <h3 className="text-md font-bold text-white flex items-center gap-2">
-                      ⚡ 1-Click Ape
-                    </h3>
-                    <div className="flex gap-1 text-[10px]">
-                      {[10, 20, 30].map(slip => (
-                        <button
-                          key={slip}
-                          onClick={() => setSlippage(slip)}
-                          className={`px-2 py-0.5 rounded border ${slippage === slip ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40' : 'bg-zinc-950 text-zinc-500 border-zinc-800'}`}
-                        >
-                          {slip}%
-                        </button>
-                      ))}
+                <div className="bg-[#0a0a0a] border border-zinc-800 rounded-xl overflow-hidden p-4 flex flex-col shadow-xl">
+                  {/* Header & Tabs */}
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex gap-2">
+                      <button 
+                        onClick={() => setTradeTab('buy')} 
+                        className={`px-5 py-1.5 text-sm font-bold rounded-md transition-all ${tradeTab === 'buy' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' : 'text-zinc-500 hover:text-zinc-300'}`}
+                      >
+                        Buy
+                      </button>
+                      <button 
+                        onClick={() => setTradeTab('sell')} 
+                        className={`px-5 py-1.5 text-sm font-bold rounded-md transition-all ${tradeTab === 'sell' ? 'bg-red-500/10 text-red-400 border border-red-500/30' : 'text-zinc-500 hover:text-zinc-300'}`}
+                      >
+                        Sell
+                      </button>
                     </div>
+                    <span className="text-zinc-400 text-xs font-mono bg-zinc-900/50 px-2 py-1 rounded">
+                      Bal: {tradeTab === 'buy' ? `${ethAvailable.toFixed(4)} ETH` : `${Math.floor(tokenBalance).toLocaleString()} ${selectedToken?.symbol || 'TKN'}`}
+                    </span>
                   </div>
 
-                  <div className="mb-4">
-                    <label className="text-xs text-zinc-400 block mb-2">Buy Amount (ETH)</label>
-                    <div className="grid grid-cols-3 gap-2 mb-2">
-                      {["0.001", "0.005", "0.01"].map(amt => (
-                        <button
-                          key={amt}
-                          onClick={() => setApeAmount(amt)}
-                          className={`py-1.5 rounded-lg text-xs font-bold border transition-colors ${apeAmount === amt ? 'bg-emerald-500 text-zinc-950 border-emerald-400' : 'bg-zinc-950 text-zinc-300 border-zinc-800 hover:border-zinc-700'}`}
-                        >
-                          {amt} ETH
-                        </button>
-                      ))}
-                    </div>
-                    <input
-                      type="text"
-                      value={apeAmount}
-                      onChange={(e) => setApeAmount(e.target.value)}
-                      placeholder="Custom ETH"
-                      className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500"
-                    />
+                  {/* Percentage Pills */}
+                  <div className="grid grid-cols-4 gap-2 mb-4">
+                    {[25, 50, 75, 100].map(pct => (
+                      <button
+                        key={pct}
+                        onClick={() => {
+                          if (tradeTab === 'buy') {
+                            // Leave 0.005 ETH for gas when maxing out
+                            const val = pct === 100 ? Math.max(0, ethAvailable - 0.005) : (ethAvailable * (pct / 100));
+                            setApeAmount(val.toFixed(4).replace(/\.?0+$/, ''));
+                          } else {
+                            const val = tokenBalance * (pct / 100);
+                            // Round down to avoid decimal dust reversion on sells
+                            setSellAmount(Math.floor(val).toString());
+                          }
+                        }}
+                        className="bg-zinc-800/40 hover:bg-zinc-700/60 text-zinc-400 text-[11px] py-1.5 rounded transition-colors border border-zinc-800 hover:border-zinc-600 font-semibold"
+                      >
+                        {pct === 100 ? 'MAX' : `${pct}%`}
+                      </button>
+                    ))}
                   </div>
 
-                  <button
-                    onClick={handleExecuteApe}
-                    disabled={isTxPending || !isConnected}
-                    className="w-full py-3 bg-emerald-500 hover:bg-emerald-400 disabled:bg-zinc-800 disabled:text-zinc-600 text-zinc-950 font-bold rounded-lg text-sm transition-all shadow-lg shadow-emerald-500/20 mb-3"
-                  >
-                    {!isConnected ? "Connect Wallet to Ape" : isTxPending ? "Aping In..." : `Quick Buy ${apeAmount} ETH`}
-                  </button>
-
-                  <div className="mb-3">
+                  {/* Input Field */}
+                  <div className="relative mb-4">
                     <input
-                      type="text"
-                      value={sellAmount}
-                      onChange={(e) => setSellAmount(e.target.value)}
-                      placeholder="Tokens to Sell (e.g. 1000)"
-                      className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-red-500 mb-2"
+                      type="number"
+                      value={tradeTab === 'buy' ? apeAmount : sellAmount}
+                      onChange={(e) => tradeTab === 'buy' ? setApeAmount(e.target.value) : setSellAmount(e.target.value)}
+                      placeholder="0.00"
+                      className="w-full bg-zinc-950 border border-zinc-800 focus:border-emerald-500/50 rounded-lg py-3 px-4 text-white text-xl font-mono outline-none transition-all placeholder:text-zinc-700"
                     />
-                    <button
-                      onClick={handleExecuteSell}
-                      disabled={isTxPending || !isConnected}
-                      className="w-full py-3 bg-red-500 hover:bg-red-400 disabled:bg-zinc-800 disabled:text-zinc-600 text-zinc-950 font-bold rounded-lg text-sm transition-all shadow-lg shadow-red-500/20"
+                    <span className="absolute right-4 top-1/2 -translate-y-1/2 text-zinc-500 font-bold text-sm">
+                      {tradeTab === 'buy' ? 'ETH' : (selectedToken?.symbol || 'TKN')}
+                    </span>
+                  </div>
+
+                  {/* Execute Action */}
+                  {tradeTab === 'buy' ? (
+                    <button 
+                      onClick={handleExecuteApe}
+                      disabled={isTxPending}
+                      className="w-full py-3 bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-black text-sm uppercase rounded-lg shadow-[0_0_15px_rgba(16,185,129,0.2)] transition-all disabled:opacity-50"
                     >
-                      {!isConnected ? "Connect Wallet to Sell" : isTxPending ? "Selling..." : `Quick Sell`}
+                      {isTxPending ? 'Executing...' : `Quick Buy ${selectedToken?.symbol || ''}`}
                     </button>
-                  </div>
+                  ) : (
+                    <button 
+                      onClick={handleExecuteSell}
+                      disabled={isTxPending}
+                      className="w-full py-3 bg-red-500 hover:bg-red-400 text-white font-black text-sm uppercase rounded-lg shadow-[0_0_15px_rgba(239,68,68,0.2)] transition-all disabled:opacity-50"
+                    >
+                      {isTxPending ? 'Executing...' : `Dump ${selectedToken?.symbol || ''}`}
+                    </button>
+                  )}
 
+                  {/* Success Toast */}
                   {hash && (
-                    <div className="mt-3 p-2 bg-emerald-500/10 border border-emerald-500/20 rounded text-[11px] text-emerald-400 text-center truncate flex flex-col items-center">
-                      <span>Tx Sent Successfully!</span>
-                      <a href={`https://testnet.robinhood.com/tx/${hash}`} target="_blank" rel="noreferrer" className="underline mt-1">View on Explorer</a>
+                    <div className="mt-3 p-2 bg-zinc-900/50 border border-zinc-800 rounded-lg text-xs text-zinc-400 text-center flex flex-col items-center">
+                      <span className="text-emerald-400 font-medium">Tx Sent Successfully!</span>
+                      <a href={`https://testnet.robinhood.com/tx/${hash}`} target="_blank" rel="noreferrer" className="underline hover:text-white mt-1 transition-colors">
+                        View on Explorer
+                      </a>
                     </div>
                   )}
                 </div>
