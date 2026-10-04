@@ -248,6 +248,7 @@ export default function Home() {
         id: (db.launch_id || db.launchId || "0").toString(),
         name: db.name || "Unknown",
         ticker: db.symbol || db.ticker || "TKN",
+        symbol: db.symbol,
         contractAddress,
         devAddress,
         ammAddress,
@@ -463,6 +464,7 @@ export default function Home() {
 
         setSelectedToken((prev: any) => ({
           ...prev,
+          symbol: launch?.symbol || prev?.symbol,
           devAddress: launch?.launcherAddress || launch?.creatorAddress || prev.devAddress,
           score: dynamicScore,
           hasSocials: hasSocials,
