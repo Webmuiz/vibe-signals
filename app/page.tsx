@@ -547,26 +547,22 @@ export default function Home() {
 
           const rate = totalLaunches > 0 ? Math.round((graduatedCount / totalLaunches) * 100) : 0;
 
-          // Calculate historical dumping using your local database state, fallback to current token
-          const devHistory = dbTokens.filter(t => (t.dev_address || t.devAddress || "").toLowerCase() === target);
-          const avgHolding = devHistory.length > 0 
-            ? devHistory.reduce((acc, t) => acc + (Number(t.creator_holding_pct) || Number(t.creatorHoldingPct) || 0), 0) / devHistory.length 
-            : (selectedToken?.creatorHoldingPct || 0);
-
-          const gradText = rate >= 40 ? "High Grad" : rate > 0 ? "Mid Grad" : "Low Grad";
-          const dumpText = avgHolding < 3 ? "Serial Dumper" : "Diamond Holder";
-          
-          let label = totalLaunches < 2 ? "Unproven / Unknown" : `${gradText.toUpperCase()} / ${dumpText.toUpperCase()}`;
-          
+          let label = "NEUTRAL / UNPROVEN";
           let color = "text-yellow-400 bg-yellow-400/10 border-yellow-400/30";
-          if (totalLaunches >= 2) {
-            if (rate >= 40 && avgHolding >= 3) {
+
+          if (totalLaunches > 0) {
+            if (rate >= 40) {
+              label = "HIGH GRADUATION RATE";
               color = "text-emerald-400 bg-emerald-400/10 border-emerald-400/30";
-            } else if (rate === 0 || avgHolding < 3) {
+            } else if (rate > 0 && rate < 40) {
+              label = "MID GRADUATION RATE";
+              color = "text-yellow-400 bg-yellow-400/10 border-yellow-400/30";
+            } else {
+              label = "LOW GRADUATION RATE";
               color = "text-red-400 bg-red-400/10 border-red-400/30";
             }
           }
-
+          
           setDevStats({ launches: totalLaunches, gradRate: rate, label, color });
         })
         .catch(err => console.error("Failed to fetch dev profile:", err));
@@ -912,7 +908,7 @@ export default function Home() {
                   {hash && (
                     <div className="mt-3 p-2 bg-zinc-900/50 border border-zinc-800 rounded-lg text-xs text-zinc-400 text-center flex flex-col items-center">
                       <span className="text-emerald-400 font-medium">Tx Sent Successfully!</span>
-                      <a href={`https://testnet.robinhood.com/tx/${hash}`} target="_blank" rel="noreferrer" className="underline hover:text-white mt-1 transition-colors">
+                      <a href={`https://explorer.testnet.chain.robinhood.com/tx/${hash}`} target="_blank" rel="noreferrer" className="underline hover:text-white mt-1 transition-colors">
                         View on Explorer
                       </a>
                     </div>
