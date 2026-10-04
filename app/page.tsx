@@ -177,6 +177,7 @@ export default function Home() {
   const [txHash, setTxHash] = useState<string | null>(null);
   const [tradeTab, setTradeTab] = useState<'buy' | 'sell'>('buy');
   const [topHolders, setTopHolders] = useState<{address: string, pct: number}[]>([]);
+  const [devStats, setDevStats] = useState<{ launches: number; gradRate: number; label: string; color: string; } | null>(null);
 
   // Fetch Native ETH Balance
   const { data: ethBalance } = useBalance({ address });
@@ -523,6 +524,41 @@ export default function Home() {
         .catch(err => console.error("Holders fetch failed:", err));
     }
 
+    const creatorAddr = selectedToken?.devAddress;
+    if (creatorAddr && creatorAddr.startsWith("0x")) {
+      fetch(`/api/proxyDev?address=${creatorAddr}`)
+        .then(res => res.json())
+        .then(json => {
+          const allItems = json?.data?.items || [];
+          
+          // STRICT FILTER: Only keep tokens this exact wallet launched
+          const createdTokens = allItems.filter((item: any) => 
+            item.launcherAddress?.toLowerCase() === creatorAddr.toLowerCase()
+          );
+          
+          const totalLaunches = createdTokens.length;
+          const graduatedCount = createdTokens.filter((item: any) => 
+            item.lifecycle === "GRADUATED" || item.graduated === true
+          ).length;
+
+          const rate = totalLaunches > 0 ? Math.round((graduatedCount / totalLaunches) * 100) : 0;
+
+          let label = "Neutral / Unproven Dev";
+          let color = "text-yellow-400 bg-yellow-400/10 border-yellow-400/30";
+
+          if (totalLaunches >= 2 && rate >= 40) {
+            label = "Chad Dev / Proven Builder";
+            color = "text-emerald-400 bg-emerald-400/10 border-emerald-400/30";
+          } else if (totalLaunches >= 3 && rate === 0) {
+            label = "Serial Rugger / High Dump Risk";
+            color = "text-red-400 bg-red-400/10 border-red-400/30";
+          }
+
+          setDevStats({ launches: totalLaunches, gradRate: rate, label, color });
+        })
+        .catch(err => console.error("Failed to fetch dev profile:", err));
+    }
+
     return () => { isMounted = false; };
   }, [selectedToken?.contractAddress]);
 
@@ -751,8 +787,8 @@ export default function Home() {
                 <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
                   <div className="flex justify-between items-start mb-4">
                     <h3 className="text-lg font-bold text-white">Developer Profiler</h3>
-                    <span className={`text-xs uppercase font-bold px-3 py-1 rounded-md border ${selectedToken.devProfile.color}`}>
-                      {selectedToken.devProfile.label}
+                    <span className={`text-xs uppercase font-bold px-3 py-1 rounded-md border ${devStats?.color || selectedToken.devProfile.color}`}>
+                      {devStats?.label || selectedToken.devProfile.label}
                     </span>
                   </div>
                   <div className="flex items-center gap-2 mb-6">
@@ -768,11 +804,11 @@ export default function Home() {
                   <div className="grid grid-cols-2 gap-4 text-sm">
                     <div className="p-4 bg-zinc-950 rounded-lg border border-zinc-800">
                       <span className="text-zinc-500 block mb-1">Previous Launches</span>
-                      <span className="text-white font-bold">{selectedToken.devProfile.launches} Tokens</span>
+                      <span className="text-white font-bold">{devStats ? `${devStats.launches} Tokens` : `${selectedToken.devProfile.launches} Tokens`}</span>
                     </div>
                     <div className="p-4 bg-zinc-950 rounded-lg border border-zinc-800">
                       <span className="text-zinc-500 block mb-1">Graduation Rate</span>
-                      <span className={selectedToken.devProfile.gradRate > 50 ? 'text-emerald-400 font-bold' : 'text-red-400 font-bold'}>{selectedToken.devProfile.gradRate}%</span>
+                      <span className={(devStats ? devStats.gradRate : selectedToken.devProfile.gradRate) > 50 ? 'text-emerald-400 font-bold' : 'text-red-400 font-bold'}>{devStats ? `${devStats.gradRate}%` : `${selectedToken.devProfile.gradRate}%`}</span>
                     </div>
                   </div>
                 </div>
