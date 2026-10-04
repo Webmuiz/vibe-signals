@@ -472,12 +472,13 @@ export default function Home() {
       const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600); // 1 hour deadline
 
       const argsData = encodeAbiParameters(
-        parseAbiParameters('address, address, uint256, uint256, uint256, address[], address[]'),
+        parseAbiParameters('address, address, uint256, uint256, uint256, uint256, address[], address[]'),
         [
           selectedToken.ammAddress as `0x${string}`, // market AMM
           "0x0000000000000000000000000000000000000000", // tokenIn (ETH)
           amountInWei, // amountIn
-          0n, // minOut (0 for ape slippage)
+          256n, // protocol fee/type flag (0x100)
+          1n, // minOut (Set to 1n to bypass InvalidAmount require check)
           deadline, // deadline
           [], // empty path1
           []  // empty path2
