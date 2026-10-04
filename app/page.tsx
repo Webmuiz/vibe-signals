@@ -529,11 +529,7 @@ export default function Home() {
       fetch(`/api/proxyDev?address=${creatorAddr}`)
         .then(res => res.json())
         .then(json => {
-          console.log("Dev Profile API Response:", json);
-          if (!json?.data?.items) {
-            console.warn("Dev profile items missing from response:", json);
-            return;
-          }
+          if (!json?.data?.items) return;
 
           const allItems = json.data.items;
           const target = creatorAddr.toLowerCase();
@@ -811,8 +807,10 @@ export default function Home() {
                   </div>
                   <div className="grid grid-cols-2 gap-4 text-sm">
                     <div className="p-4 bg-zinc-950 rounded-lg border border-zinc-800">
-                      <span className="text-zinc-500 block mb-1">Previous Launches</span>
-                      <span className="text-white font-bold">{devStats ? `${devStats.launches} Tokens` : `${selectedToken.devProfile.launches} Tokens`}</span>
+                      <span className="text-zinc-500 block mb-1">Total Launches</span>
+                      <span className="text-white font-bold">
+                        {devStats ? `${devStats.launches} Tokens` : `${selectedToken.devProfile.launches} Tokens`}
+                      </span>
                     </div>
                     <div className="p-4 bg-zinc-950 rounded-lg border border-zinc-800">
                       <span className="text-zinc-500 block mb-1">Graduation Rate</span>
