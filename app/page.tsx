@@ -547,15 +547,24 @@ export default function Home() {
 
           const rate = totalLaunches > 0 ? Math.round((graduatedCount / totalLaunches) * 100) : 0;
 
-          let label = "Neutral / Unproven Dev";
-          let color = "text-yellow-400 bg-yellow-400/10 border-yellow-400/30";
+          // Calculate historical dumping using your local database state, fallback to current token
+          const devHistory = dbTokens.filter(t => (t.dev_address || t.devAddress || "").toLowerCase() === target);
+          const avgHolding = devHistory.length > 0 
+            ? devHistory.reduce((acc, t) => acc + (Number(t.creator_holding_pct) || Number(t.creatorHoldingPct) || 0), 0) / devHistory.length 
+            : (selectedToken?.creatorHoldingPct || 0);
 
-          if (totalLaunches >= 2 && rate >= 40) {
-            label = "Chad Dev / Proven Builder";
-            color = "text-emerald-400 bg-emerald-400/10 border-emerald-400/30";
-          } else if (totalLaunches >= 3 && rate === 0) {
-            label = "Serial Rugger / High Dump Risk";
-            color = "text-red-400 bg-red-400/10 border-red-400/30";
+          const gradText = rate >= 40 ? "High Grad" : rate > 0 ? "Mid Grad" : "Low Grad";
+          const dumpText = avgHolding < 3 ? "Serial Dumper" : "Diamond Holder";
+          
+          let label = totalLaunches < 2 ? "Unproven / Unknown" : `${gradText.toUpperCase()} / ${dumpText.toUpperCase()}`;
+          
+          let color = "text-yellow-400 bg-yellow-400/10 border-yellow-400/30";
+          if (totalLaunches >= 2) {
+            if (rate >= 40 && avgHolding >= 3) {
+              color = "text-emerald-400 bg-emerald-400/10 border-emerald-400/30";
+            } else if (rate === 0 || avgHolding < 3) {
+              color = "text-red-400 bg-red-400/10 border-red-400/30";
+            }
           }
 
           setDevStats({ launches: totalLaunches, gradRate: rate, label, color });
@@ -765,7 +774,7 @@ export default function Home() {
 
                     <div className="absolute top-3 left-4 bg-zinc-950/80 backdrop-blur px-2 py-1 rounded border border-zinc-800 text-[10px]">
                       {isCabalRisk ? (
-                        <span className="text-red-400 font-bold flex items-center gap-1">⚠️ Cabal Detected (Shared Exchange Funding)</span>
+                        <span className="text-red-400 font-bold flex items-center gap-1">⚠️ High Concentration (&gt;25% Supply)</span>
                       ) : (
                         <span className="text-emerald-400 font-bold flex items-center gap-1">✅ Clean Distribution (No Shared Source)</span>
                       )}
