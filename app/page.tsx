@@ -529,16 +529,24 @@ export default function Home() {
       fetch(`/api/proxyDev?address=${creatorAddr}`)
         .then(res => res.json())
         .then(json => {
-          const allItems = json?.data?.items || [];
-          
-          // STRICT FILTER: Only keep tokens this exact wallet launched
-          const createdTokens = allItems.filter((item: any) => 
-            item.launcherAddress?.toLowerCase() === creatorAddr.toLowerCase()
-          );
-          
+          console.log("Dev Profile API Response:", json);
+          if (!json?.data?.items) {
+            console.warn("Dev profile items missing from response:", json);
+            return;
+          }
+
+          const allItems = json.data.items;
+          const target = creatorAddr.toLowerCase();
+
+          // Filter strictly to tokens this wallet created/launched
+          const createdTokens = allItems.filter((item: any) => {
+            const launcher = (item.launcherAddress || item.creatorAddress || "").toLowerCase();
+            return launcher === target;
+          });
+
           const totalLaunches = createdTokens.length;
           const graduatedCount = createdTokens.filter((item: any) => 
-            item.lifecycle === "GRADUATED" || item.graduated === true
+            item.lifecycle === "GRADUATED" || item.graduated === true || item.curve?.lifecycle === "GRADUATED"
           ).length;
 
           const rate = totalLaunches > 0 ? Math.round((graduatedCount / totalLaunches) * 100) : 0;
