@@ -37,15 +37,24 @@ const ROUTER_ADDRESS = "0x89944BC9D3b20764BeA771CFAf9711a8Fb839e72";
 const CREATION_TOPIC = "0xa7e8032bfd07a9fbcde50eabe91eb2901faee6dbddd9cced579491d9b07ef5c8";
 
 // --- DB HELPER FUNCTION ---
-async function updateMomentumInDatabase(tokenAddress: string, isBuy: boolean, ethVolume: number) {
+async function updateMomentumInDatabase(tokenAddress: string, isBuy: boolean, ethVolume: number, txBlockNumber: number, buyerAddress: string) {
     // 1. Fetch current momentum data for this token
     const { data: token } = await supabase
         .from('launches')
-        .select('volume_eth, buy_count, sell_count')
+        .select('volume_eth, buy_count, sell_count, launch_block, block_zero_buyers, dev_address')
         .eq('token_address', tokenAddress.toLowerCase())
         .single();
 
     if (!token) return;
+
+    let newBlockZeroBuyers = token.block_zero_buyers || 0;
+    if (isBuy && token.launch_block && txBlockNumber === token.launch_block) {
+        // Filter out the developer's pre-buy
+        if (buyerAddress.toLowerCase() !== (token.dev_address || "").toLowerCase()) {
+            newBlockZeroBuyers += 1;
+            console.log(`🎯 SNIPER DETECTED: Block 0 buy by ${buyerAddress} on ${tokenAddress}`);
+        }
+    }
 
     // 2. Add the new trade to the rolling total
     const newBuyCount = isBuy ? (token.buy_count || 0) + 1 : (token.buy_count || 0);
@@ -65,7 +74,8 @@ async function updateMomentumInDatabase(tokenAddress: string, isBuy: boolean, et
             buy_count: newBuyCount,
             sell_count: newSellCount,
             buy_pct: buyPct,
-            sell_pct: sellPct
+            sell_pct: sellPct,
+            block_zero_buyers: newBlockZeroBuyers
         })
         .eq('token_address', tokenAddress.toLowerCase());
 }
@@ -145,13 +155,14 @@ async function runIndexer() {
         onLogs: async (logs) => {
             for (const log of logs) {
                 try {
-                    const { token, bnbIn } = log.args;
-                    if (!token || !bnbIn) continue;
-
+                    const { token, bnbIn, buyer } = log.args;
+                    if (!token || !bnbIn || !buyer) continue;
+                    
+                    const txBlockNumber = Number(log.blockNumber);
                     const ethVolume = Number(formatEther(bnbIn as bigint));
                     console.log(`🟢 BUY DETECTED: ${ethVolume.toFixed(4)} ETH on token ${token}`);
-
-                    await updateMomentumInDatabase(token.toLowerCase(), true, ethVolume);
+                    
+                    await updateMomentumInDatabase(token.toLowerCase(), true, ethVolume, txBlockNumber, buyer as string);
                 } catch (logErr) {
                     console.error('Error processing log event:', logErr);
                 }

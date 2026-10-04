@@ -61,6 +61,7 @@ interface DBToken {
   hasSocials?: boolean;
   creator_holding_pct?: number;
   creatorHoldingPct?: number;
+  block_zero_buyers?: number;
 }
 
 function getDevProfile(devAddress: string) {
@@ -211,7 +212,7 @@ export default function Home() {
         seed += contractAddress.charCodeAt(j);
       }
 
-      const block0 = 0; // Default to 0 until block 0 logs are verified
+      const block0 = Number(db.block_zero_buyers ?? 0);
       const diamond = (seed % 60) + 10;
 
       let bondingCurveProgress = db.curve_progress ?? db.curveProgress ?? db.bondingCurveProgress ?? 0;
