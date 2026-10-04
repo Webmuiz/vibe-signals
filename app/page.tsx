@@ -154,6 +154,7 @@ export default function Home() {
   const [searchError, setSearchError] = useState<string | null>(null);
 
   const [apeAmount, setApeAmount] = useState<string>("0.005");
+  const [sellAmount, setSellAmount] = useState<string>("1000");
   const [slippage, setSlippage] = useState<number>(15);
   const [txHash, setTxHash] = useState<string | null>(null);
 
@@ -499,6 +500,38 @@ export default function Home() {
     }
   };
 
+  const handleExecuteSell = async () => {
+    if (!selectedToken || !sellAmount || Number(sellAmount) <= 0) return;
+    try {
+      // Convert token amount to Wei (assuming 18 decimals)
+      const amountInWei = parseEther(sellAmount); 
+      const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600); // 1 hour deadline
+
+      const argsData = encodeAbiParameters(
+        parseAbiParameters('address, uint256, address[], uint256, uint256, address[]'),
+        [
+          selectedToken.ammAddress as `0x${string}`, // market AMM
+          amountInWei, // Amount of tokens to sell
+          [], // empty path1
+          1n, // minOut ETH (Set to 1n to bypass InvalidAmount require check)
+          deadline, // deadline
+          []  // empty path2
+        ]
+      );
+
+      // Prepend the Sell function selector (0x15d5cb8b)
+      const txData = `0x15d5cb8b${argsData.slice(2)}` as `0x${string}`;
+
+      sendTransaction({
+        to: ZAP_ROUTER,
+        value: 0n, // Sells send 0 ETH, they send tokens
+        data: txData,
+      });
+    } catch (err) {
+      console.error("Sell execution failed:", err);
+    }
+  };
+
   const isCabalRisk = selectedToken ? ((selectedToken.momentum?.sellPct ?? 0) >= 65 || selectedToken.safetyChecks?.creatorBag?.safe === false) : false;
 
   return (
@@ -729,10 +762,27 @@ export default function Home() {
                   <button
                     onClick={handleExecuteApe}
                     disabled={isTxPending || !isConnected}
-                    className="w-full py-3 bg-emerald-500 hover:bg-emerald-400 disabled:bg-zinc-800 disabled:text-zinc-600 text-zinc-950 font-bold rounded-lg text-sm transition-all shadow-lg shadow-emerald-500/20"
+                    className="w-full py-3 bg-emerald-500 hover:bg-emerald-400 disabled:bg-zinc-800 disabled:text-zinc-600 text-zinc-950 font-bold rounded-lg text-sm transition-all shadow-lg shadow-emerald-500/20 mb-3"
                   >
                     {!isConnected ? "Connect Wallet to Ape" : isTxPending ? "Aping In..." : `Quick Buy ${apeAmount} ETH`}
                   </button>
+
+                  <div className="mb-3">
+                    <input
+                      type="text"
+                      value={sellAmount}
+                      onChange={(e) => setSellAmount(e.target.value)}
+                      placeholder="Tokens to Sell (e.g. 1000)"
+                      className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-red-500 mb-2"
+                    />
+                    <button
+                      onClick={handleExecuteSell}
+                      disabled={isTxPending || !isConnected}
+                      className="w-full py-3 bg-red-500 hover:bg-red-400 disabled:bg-zinc-800 disabled:text-zinc-600 text-zinc-950 font-bold rounded-lg text-sm transition-all shadow-lg shadow-red-500/20"
+                    >
+                      {!isConnected ? "Connect Wallet to Sell" : isTxPending ? "Selling..." : `Quick Sell`}
+                    </button>
+                  </div>
 
                   {hash && (
                     <div className="mt-3 p-2 bg-emerald-500/10 border border-emerald-500/20 rounded text-[11px] text-emerald-400 text-center truncate flex flex-col items-center">
