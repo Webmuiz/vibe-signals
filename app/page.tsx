@@ -65,12 +65,29 @@ interface DBToken {
   block_zero_buyers?: number;
 }
 
-function getDevProfile(devAddress: string) {
-  let seed = 0; for (let i = 0; i < devAddress.length; i++) seed += devAddress.charCodeAt(i);
-  const tier = seed % 100;
-  if (tier > 70) return { label: "Chad Dev / Proven Builder", color: "text-emerald-400 bg-emerald-400/10 border-emerald-400/30", launches: (seed % 10) + 3, gradRate: 80 + (seed % 20) };
-  else if (tier > 30) return { label: "Neutral / Unproven Dev", color: "text-yellow-400 bg-yellow-400/10 border-yellow-400/30", launches: (seed % 3) + 1, gradRate: 10 + (seed % 40) };
-  else return { label: "Serial Rugger / High Dump Risk", color: "text-red-400 bg-red-400/10 border-red-400/30", launches: (seed % 15) + 4, gradRate: 0 };
+function getDevProfile(devAddress: string, allTokens: DBToken[]) {
+  if (!devAddress || !allTokens) return { label: "Neutral / Unproven Dev", color: "text-yellow-400 bg-yellow-400/10 border-yellow-400/30", launches: 1, gradRate: 0 };
+  
+  const devLaunches = allTokens.filter(t => (t.dev_address || t.devAddress || "").toLowerCase() === devAddress.toLowerCase());
+  const launches = devLaunches.length;
+  
+  if (launches === 0) return { label: "Neutral / Unproven Dev", color: "text-yellow-400 bg-yellow-400/10 border-yellow-400/30", launches: 1, gradRate: 0 };
+  
+  const graduated = devLaunches.filter(t => (t.curve_progress || t.curveProgress || 0) >= 100).length;
+  const gradRate = Math.round((graduated / launches) * 100);
+  
+  let label = "Neutral / Unproven Dev";
+  let color = "text-yellow-400 bg-yellow-400/10 border-yellow-400/30";
+  
+  if (launches >= 2 && gradRate >= 40) {
+    label = "Chad Dev / Proven Builder";
+    color = "text-emerald-400 bg-emerald-400/10 border-emerald-400/30";
+  } else if (launches >= 2 && gradRate < 15) {
+    label = "Serial Rugger / High Dump Risk";
+    color = "text-red-400 bg-red-400/10 border-red-400/30";
+  }
+  
+  return { label, color, launches, gradRate };
 }
 
 function getSafetyChecks(tokenAddress: string) {
@@ -272,7 +289,7 @@ export default function Home() {
           creatorHoldingPct
         ),
         hasSocials: hasSocials,
-        devProfile: getDevProfile(devAddress),
+        devProfile: getDevProfile(devAddress, dbTokens),
         safetyChecks: getSafetyChecks(contractAddress),
         momentum: {
           buyPct,
@@ -358,7 +375,7 @@ export default function Home() {
               diamondHandsHoldersPct: 50,
               totalSupply: 1000000000,
               score: vibeScore,
-              devProfile: getDevProfile(launch.launcherAddress || launch.creatorAddress || query),
+              devProfile: getDevProfile(launch.launcherAddress || launch.creatorAddress || query, dbTokens),
               safetyChecks: getSafetyChecks(launch.tokenAddress || query),
               momentum: { buyPct: buyRatio, sellPct: sellRatio, volumeEth: totalVolume.toFixed(4) },
               volumeEth: totalVolume.toFixed(4),
@@ -484,7 +501,7 @@ export default function Home() {
       .catch(console.error);
 
     if (selectedToken?.contractAddress) {
-      fetch(`https://testnet.robinhood.com/api/v2/tokens/${selectedToken.contractAddress}/holders`)
+      fetch(`https://explorer.testnet.chain.robinhood.com/api/v2/tokens/${selectedToken.contractAddress}/holders`)
         .then(res => res.json())
         .then(data => {
           if (data?.items) {
@@ -717,7 +734,7 @@ export default function Home() {
 
                   <div className="grid grid-cols-2 gap-4 text-sm">
                     <div className="p-4 bg-zinc-950 rounded-lg border border-zinc-800">
-                      <span className="text-zinc-500 block mb-1">Top 10 Supply</span>
+                      <span className="text-zinc-500 block mb-1">Top 5 Supply</span>
                       <span className={`${isCabalRisk ? 'text-red-400' : 'text-emerald-400'} font-bold`}>
                         {top5Concentration > 0 ? `${top5Concentration.toFixed(1)}%` : '0.0%'}
                       </span>
