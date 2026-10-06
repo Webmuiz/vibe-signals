@@ -422,43 +422,35 @@ export default function Home() {
         const feeEvents = json.data?.feeEvents || [];
         const launch = json.data?.launch;
         
-        // 1. Calculate Total Volume from feeEvents (Keep this intact for total recent volume)
-        let totalVolume = 0;
-        feeEvents.forEach((ev: any) => {
-          const principalUnits = ev.pairPrincipalUnits 
-            ? Number(ev.pairPrincipalUnits) 
-            : (Number(ev.pairFeeUnits || 0) * 10000) / Number(launch?.taxBps || 100);
-          totalVolume += principalUnits / 1e18;
-        });
+        const stats = json.data?.marketStats;
+        let finalVolumeEth = "0.0000";
+        let finalBuyPct = 50;
+        let finalSellPct = 50;
 
-        // 2. Calculate Buy/Sell Ratio using Zaps (True ETH Volume routing)
-        let buyEth = 0;
-        let sellEth = 0;
-        const zaps = json.data?.zaps || [];
-        
-        zaps.forEach((z: any) => {
-          if (z.inputAddress === '0x0000000000000000000000000000000000000000') {
-            // BUY: ETH is the input
-            buyEth += Number(z.amountInUnits || 0) / 1e18;
-          } else if (z.outputAddress === '0x0000000000000000000000000000000000000000') {
-            // SELL: ETH is the output
-            sellEth += Number(z.amountOutUnits || 0) / 1e18;
+        if (stats) {
+          const buyVol = Number(stats.buyVolume24hPairUnits || 0) / 1e18;
+          const sellVol = Number(stats.sellVolume24hPairUnits || 0) / 1e18;
+          const totalVol = buyVol + sellVol;
+          
+          if (totalVol > 0) {
+            finalVolumeEth = totalVol.toFixed(4);
+            finalBuyPct = Math.round((buyVol / totalVol) * 100);
+            finalSellPct = 100 - finalBuyPct;
+          } else {
+            finalVolumeEth = selectedToken.momentum?.volumeEth || selectedToken.volumeEth || "0.0000";
+            finalBuyPct = selectedToken.momentum?.buyPct ?? 50;
+            finalSellPct = selectedToken.momentum?.sellPct ?? 50;
           }
-        });
-
-        const totalZapEth = buyEth + sellEth;
-        const buyPct = totalZapEth > 0 ? Math.round((buyEth / totalZapEth) * 100) : 50;
-        const sellPct = totalZapEth > 0 ? 100 - buyPct : 50;
+        } else {
+          finalVolumeEth = selectedToken.momentum?.volumeEth || selectedToken.volumeEth || "0.0000";
+          finalBuyPct = selectedToken.momentum?.buyPct ?? 50;
+          finalSellPct = selectedToken.momentum?.sellPct ?? 50;
+        }
 
         const socials = launch?.content?.socials || {};
         const hasSocials = !!(socials.x || socials.telegram || socials.website);
 
         const poolAddr = (launch?.graduation?.poolId || launch?.poolAddress || launch?.pool?.address || "").toLowerCase();
-
-        const hasApiVolume = totalVolume > 0;
-        const finalVolumeEth = hasApiVolume ? totalVolume.toFixed(4) : (selectedToken.momentum?.volumeEth || selectedToken.volumeEth || "0.0000");
-        const finalBuyPct = hasApiVolume ? buyPct : (selectedToken.momentum?.buyPct ?? 50);
-        const finalSellPct = hasApiVolume ? sellPct : (selectedToken.momentum?.sellPct ?? 50);
 
         // 1. Use launcherAddress instead of creatorAddress
         const creatorAddress = (launch?.launcherAddress || selectedToken?.devAddress || "").toLowerCase();
@@ -508,28 +500,6 @@ export default function Home() {
 
         setSelectedToken((prev: any) => {
           const isGraduated = launch?.lifecycle === "GRADUATED" || launch?.graduated === true || launch?.curve?.lifecycle === "GRADUATED" || prev?.bondingCurveProgress >= 100;
-          
-          let finalVolEth = totalVolume;
-          let finalBuy = buyPct;
-          let finalSell = sellPct;
-
-          if (totalVolume === 0) {
-            const marketVol = launch?.market ? Number(launch.market.volume24hPairUnits || 0) / 1e18 : 0;
-            if (marketVol > 0) {
-              finalVolEth = marketVol;
-              const buys = Number(launch?.market?.buyCount24h || 0);
-              const sells = Number(launch?.market?.sellCount24h || 0);
-              const totalTrades = buys + sells;
-              finalBuy = totalTrades > 0 ? Math.round((buys / totalTrades) * 100) : 50;
-              finalSell = totalTrades > 0 ? 100 - finalBuy : 50;
-            } else {
-              finalVolEth = Number(prev?.momentum?.volumeEth || prev?.volumeEth || 0);
-              finalBuy = prev?.momentum?.buyPct || prev?.buyRatio || 50;
-              finalSell = prev?.momentum?.sellPct || prev?.sellRatio || 50;
-            }
-          }
-
-          const finalVolString = finalVolEth.toFixed(4);
 
           return {
             ...prev,
@@ -540,8 +510,8 @@ export default function Home() {
             hasSocials: hasSocials,
             socialLinks: socials,
             poolAddress: poolAddr || prev?.poolAddress,
-            momentum: { buyPct: finalBuy, sellPct: finalSell, volumeEth: finalVolString },
-            volumeEth: finalVolString,
+            momentum: { buyPct: finalBuyPct, sellPct: finalSellPct, volumeEth: finalVolumeEth },
+            volumeEth: finalVolumeEth,
             safetyChecks: {
               ...prev?.safetyChecks,
               mev: { label: feeEvents.length <= 5 ? "Low Risk (< 5%)" : "Normal", safe: true },
@@ -579,7 +549,21 @@ export default function Home() {
                 // Vibe tokens have 1B supply. Convert wei to standard format and calculate percentage:
                 pct: (Number(formatEther(BigInt(h.value))) / 1_000_000_000) * 100
               }));
+            
+            const top5Pct = cleanHolders.reduce((acc: number, h: any) => acc + h.pct, 0);
+            const isCabalRisk = top5Pct > 25;
+
             setTopHolders(cleanHolders);
+
+            if (isCabalRisk) {
+              setSelectedToken((prev: any) => {
+                if (!prev) return prev;
+                return {
+                  ...prev,
+                  score: Math.max(0, prev.score - 25)
+                };
+              });
+            }
           }
         })
         .catch(err => console.error("Holders fetch failed:", err));
@@ -770,8 +754,8 @@ export default function Home() {
 
                   <div>
                     <div className="flex justify-between text-xs mb-2">
-                      <span className="text-zinc-400 uppercase tracking-wider font-bold">Last 20 Trades Momentum</span>
-                      <span className="text-zinc-500">Recent Vol: {selectedToken.momentum?.volumeEth || '0.0000'} ETH</span>
+                      <span className="text-zinc-400 uppercase tracking-wider font-bold">24H MOMENTUM</span>
+                      <span className="text-zinc-500">24H Volume: {selectedToken.momentum?.volumeEth || selectedToken.volumeEth || '0.0000'} ETH</span>
                     </div>
                     <div className="flex justify-between text-xs mb-2">
                       <span className="text-emerald-400 font-bold">{selectedToken.momentum?.buyPct ?? 50}% Buys</span>

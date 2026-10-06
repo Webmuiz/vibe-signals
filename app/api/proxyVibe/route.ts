@@ -23,6 +23,20 @@ export async function GET(request: Request) {
         }
 
         const data = await res.json();
+        
+        const marketRes = await fetch(`https://testnet.vibevibe.fun/api/v1/chains/46630/v6/launches/${address}/market?limit=2`, {
+            cache: 'no-store',
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'application/json'
+            }
+        });
+        
+        const marketData = marketRes.ok ? await marketRes.json() : null;
+        if (data && data.data) {
+            data.data.marketStats = marketData?.data?.stats;
+        }
+
         return NextResponse.json(data);
     } catch (error) {
         console.error("Proxy VibeVibe API error:", error);
