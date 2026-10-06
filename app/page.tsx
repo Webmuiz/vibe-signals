@@ -327,16 +327,16 @@ export default function Home() {
           const res = await fetch(`/api/proxyVibe?address=${query}`);
           if (res.ok) {
             const json = await res.json();
-            const launch = json.data?.launch;
+            const launch = json.data?.launch || (json.data?.tokenAddress ? json.data : null);
             if (!launch) throw new Error('Token launch data missing from API response');
 
             const createdMs = new Date(launch.createdAt).getTime();
             const timeLiveMins = Math.max(0, Math.floor((Date.now() - createdMs) / 60000));
 
-            const isGraduated = launch.lifecycle === "GRADUATED" || launch.graduated === true || launch.curve?.lifecycle === "GRADUATED";
-            const currentEth = Number(launch.curve?.pairReserveUnits || 0) / 1e18;
-            const targetEth = Number(launch.targetPairUnits || 4000000000000000000) / 1e18;
-            let curveProgress = isGraduated ? 100 : Math.min(100, Math.max(0, (currentEth / targetEth) * 100));
+            const isGraduated = launch.lifecycle === "GRADUATED" || launch.graduated === true || launch.curve?.lifecycle === "GRADUATED" || (launch.curve?.progressBps ?? 0) >= 10000;
+            const currentEth = Number(launch.curve?.pairReserveUnits || launch.curve?.netRaisedWei || 0) / 1e18;
+            const targetEth = Number(launch.targetPairUnits || launch.curve?.netTargetWei || 5000000000000000000) / 1e18;
+            let curveProgress = isGraduated ? 100 : (launch.curve?.progressBps ? launch.curve.progressBps / 100 : Math.min(100, Math.max(0, (currentEth / targetEth) * 100)));
             if (!isGraduated && curveProgress > 0 && curveProgress < 0.1) {
               curveProgress = 0.1;
             }
@@ -356,7 +356,10 @@ export default function Home() {
                 sellVolume += eth;
               }
             });
-            const totalVolume = buyVolume + sellVolume;
+            let totalVolume = buyVolume + sellVolume;
+            if (totalVolume === 0 && launch.analytics?.volume24hWei) {
+              totalVolume = Number(launch.analytics.volume24hWei) / 1e18;
+            }
             const buyRatio = totalVolume > 0 ? Math.round((buyVolume / totalVolume) * 100) : 50;
             const sellRatio = totalVolume > 0 ? 100 - buyRatio : 50;
 
@@ -422,10 +425,13 @@ export default function Home() {
         const json = await res.json();
         if (!isMounted) return;
         const feeEvents = json.data?.feeEvents || [];
-        const launch = json.data?.launch;
+        const launch = json.data?.launch || (json.data?.tokenAddress ? json.data : null);
         
         const ethPriceUsd = json.data?.ethPriceUsd || 2600;
-        const currentPriceEth = json.data?.marketTrades?.[0] ? Number(json.data.marketTrades[0].executionPricePairUnitsPerToken) / 1e18 : 0;
+        let currentPriceEth = json.data?.marketTrades?.[0] ? Number(json.data.marketTrades[0].executionPricePairUnitsPerToken) / 1e18 : 0;
+        if (currentPriceEth === 0 && launch?.analytics?.lastPriceWeiPerToken) {
+          currentPriceEth = Number(launch.analytics.lastPriceWeiPerToken) / 1e18;
+        }
         const marketCapEth = currentPriceEth * 1_000_000_000;
         const marketCapUsd = marketCapEth > 0 ? (marketCapEth * ethPriceUsd).toLocaleString('en-US', { style: 'currency', currency: 'USD' }) : "$0.00";
 
@@ -448,6 +454,8 @@ export default function Home() {
             finalBuyPct = selectedToken.momentum?.buyPct ?? 50;
             finalSellPct = selectedToken.momentum?.sellPct ?? 50;
           }
+        } else if (launch?.analytics?.volume24hWei) {
+          finalVolumeEth = (Number(launch.analytics.volume24hWei) / 1e18).toFixed(4);
         } else {
           finalVolumeEth = selectedToken.momentum?.volumeEth || selectedToken.volumeEth || "0.0000";
           finalBuyPct = selectedToken.momentum?.buyPct ?? 50;
