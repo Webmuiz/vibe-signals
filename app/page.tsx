@@ -425,14 +425,18 @@ export default function Home() {
         let sellVolume = 0;
         let totalVolume = 0;
 
+        const launch = json.data?.launch;
+
         // 1. Calculate Total Volume from feeEvents (handles both Curve and DEX)
         feeEvents.forEach((ev: any) => {
-          // VibeVibe uses pairPrincipalUnits for curve trades, and pairFeeUnits/tokenFeeUnits for pool swaps.
-          // To get a rough ETH volume equivalent for DEX swaps, we can sum the available ETH-side units.
-          const eth = Number(ev.pairPrincipalUnits || ev.pairFeeUnits || 0) / 1e18;
+          // If pairPrincipalUnits is null (DEX swaps), reverse-calculate the trade volume from the fee using the token's tax rate (default 100 bps = 1%)
+          const principalUnits = ev.pairPrincipalUnits 
+            ? Number(ev.pairPrincipalUnits) 
+            : (Number(ev.pairFeeUnits || 0) * 10000) / Number(launch?.taxBps || 100);
+          
+          const eth = principalUnits / 1e18;
           totalVolume += eth;
 
-          // If side is explicit, categorize it
           if (ev.side === 'BUY' || ev.source === 'CURVE_BUY' || ev.source === 'INITIAL_PURCHASE') {
             buyVolume += eth;
           } else if (ev.side === 'SELL' || ev.source === 'CURVE_SELL') {
@@ -462,7 +466,6 @@ export default function Home() {
         const buyPct = totalForRatio > 0 ? Math.round((buyVolume / totalForRatio) * 100) : 50;
         const sellPct = totalForRatio > 0 ? 100 - buyPct : 50;
 
-        const launch = json.data?.launch;
         const socials = launch?.content?.socials || {};
         const hasSocials = !!(socials.x || socials.telegram || socials.website);
 
@@ -783,8 +786,8 @@ export default function Home() {
 
                   <div>
                     <div className="flex justify-between text-xs mb-2">
-                      <span className="text-zinc-400 uppercase tracking-wider font-bold">Taker Momentum</span>
-                      <span className="text-zinc-500">Vol: {selectedToken.momentum?.volumeEth || '0.0000'} ETH</span>
+                      <span className="text-zinc-400 uppercase tracking-wider font-bold">Recent Taker Momentum</span>
+                      <span className="text-zinc-500">Recent Vol: {selectedToken.momentum?.volumeEth || '0.0000'} ETH</span>
                     </div>
                     <div className="flex justify-between text-xs mb-2">
                       <span className="text-emerald-400 font-bold">{selectedToken.momentum?.buyPct ?? 50}% Buys</span>
