@@ -34,7 +34,7 @@ export async function GET(request: Request) {
       data.data.marketStats = marketData?.data?.stats || null;
       data.data.marketTrades = marketData?.data?.trades || [];
     }
-   
+
     return NextResponse.json(data);
   } catch (err) {
     return NextResponse.json({ error: 'Server error' }, { status: 500 });
