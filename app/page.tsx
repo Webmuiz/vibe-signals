@@ -449,17 +449,18 @@ export default function Home() {
             finalVolumeEth = totalVol.toFixed(4);
             finalBuyPct = Math.round((buyVol / totalVol) * 100);
             finalSellPct = 100 - finalBuyPct;
-          } else {
-            finalVolumeEth = selectedToken.momentum?.volumeEth || selectedToken.volumeEth || "0.0000";
-            finalBuyPct = selectedToken.momentum?.buyPct ?? 50;
-            finalSellPct = selectedToken.momentum?.sellPct ?? 50;
           }
-        } else if (launch?.analytics?.volume24hWei) {
-          finalVolumeEth = (Number(launch.analytics.volume24hWei) / 1e18).toFixed(4);
-        } else {
-          finalVolumeEth = selectedToken.momentum?.volumeEth || selectedToken.volumeEth || "0.0000";
-          finalBuyPct = selectedToken.momentum?.buyPct ?? 50;
-          finalSellPct = selectedToken.momentum?.sellPct ?? 50;
+        } else if (launch?.analytics) {
+          if (launch.analytics.volume24hWei) {
+            finalVolumeEth = (Number(launch.analytics.volume24hWei) / 1e18).toFixed(4);
+          }
+          const buys = Number(launch.analytics.buyCount1h || 0);
+          const sells = Number(launch.analytics.sellCount1h || 0);
+          const totalTrades = buys + sells;
+          if (totalTrades > 0) {
+            finalBuyPct = Math.round((buys / totalTrades) * 100);
+            finalSellPct = 100 - finalBuyPct;
+          }
         }
 
         const socials = launch?.content?.socials || {};
