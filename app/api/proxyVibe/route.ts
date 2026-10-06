@@ -14,31 +14,42 @@ export async function GET(request: Request) {
             'Accept': 'application/json'
         };
 
-        const [launchRes, marketRes, binanceRes] = await Promise.all([
-            fetch(`https://testnet.vibevibe.fun/api/v1/chains/46630/v6/launches/${address}`, { headers, cache: 'no-store' }),
-            fetch(`https://testnet.vibevibe.fun/api/v1/chains/46630/v6/launches/${address}/market?limit=2`, { headers, cache: 'no-store' }),
+        let data = null;
+        let marketData = null;
+        const versions = ['v6', 'v5', 'v4', 'v3'];
+     
+        for (const v of versions) {
+          const [launchRes, marketRes, binanceRes] = await Promise.all([
+            fetch(`https://testnet.vibevibe.fun/api/v1/chains/46630/${v}/launches/${address}`, { headers, cache: 'no-store' }),
+            fetch(`https://testnet.vibevibe.fun/api/v1/chains/46630/${v}/launches/${address}/market?limit=2`, { headers, cache: 'no-store' }),
             fetch('https://api.binance.com/api/v3/ticker/price?symbol=ETHUSDT', { cache: 'no-store' })
-        ]);
-
-        if (!launchRes.ok) {
-            return NextResponse.json({ error: 'Failed to fetch token from VibeVibe API' }, { status: launchRes.status });
+          ]);
+     
+          if (launchRes.ok) {
+            data = await launchRes.json();
+            marketData = marketRes.ok ? await marketRes.json() : null;
+            
+            let ethPriceUsd = 2600;
+            if (binanceRes.ok) {
+              const binanceData = await binanceRes.json();
+              ethPriceUsd = Number(binanceData.price || 2600);
+            }
+     
+            if (data && data.data) {
+              data.data.marketStats = marketData?.data?.stats || null;
+              data.data.marketTrades = marketData?.data?.trades || [];
+              data.data.ethPriceUsd = ethPriceUsd;
+              data.data.apiVersion = v; // Optional: track which version succeeded
+            }
+            
+            break; // Found the token, exit the loop
+          }
         }
-
-        const data = await launchRes.json();
-        const marketData = marketRes.ok ? await marketRes.json() : null;
-        
-        let ethPriceUsd = 2600;
-        if (binanceRes.ok) {
-            const binanceData = await binanceRes.json();
-            ethPriceUsd = Number(binanceData.price || 2600);
+     
+        if (!data) {
+          return NextResponse.json({ error: 'Token not found across any API version' }, { status: 404 });
         }
-
-        if (data && data.data) {
-            data.data.marketStats = marketData?.data?.stats || null;
-            data.data.marketTrades = marketData?.data?.trades || [];
-            data.data.ethPriceUsd = ethPriceUsd;
-        }
-
+     
         return NextResponse.json(data);
     } catch (error) {
         console.error("Proxy VibeVibe API error:", error);
