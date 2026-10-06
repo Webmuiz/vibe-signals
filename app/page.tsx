@@ -492,16 +492,23 @@ export default function Home() {
 
         setSelectedToken((prev: any) => {
           const isGraduated = launch?.lifecycle === "GRADUATED" || launch?.graduated === true || launch?.curve?.lifecycle === "GRADUATED" || prev?.bondingCurveProgress >= 100;
+          
+          const hasNewVol = totalVolume > 0;
+          const finalVol = hasNewVol ? totalVolume.toFixed(4) : (prev?.momentum?.volumeEth || prev?.volumeEth || "0.0000");
+          const finalBuy = hasNewVol ? buyPct : (prev?.momentum?.buyPct || prev?.buyRatio || 50);
+          const finalSell = hasNewVol ? sellPct : (prev?.momentum?.sellPct || prev?.sellRatio || 50);
+
           return {
             ...prev,
             bondingCurveProgress: isGraduated ? 100 : prev?.bondingCurveProgress,
             symbol: launch?.symbol || prev?.symbol,
-            devAddress: launch?.launcherAddress || launch?.creatorAddress || prev.devAddress,
+            devAddress: launch?.launcherAddress || launch?.creatorAddress || prev?.devAddress,
             score: dynamicScore,
             hasSocials: hasSocials,
             socialLinks: socials,
             poolAddress: poolAddr || prev?.poolAddress,
-            momentum: { buyPct: finalBuyPct, sellPct: finalSellPct, volumeEth: finalVolumeEth },
+            momentum: { buyPct: finalBuy, sellPct: finalSell, volumeEth: finalVol },
+            volumeEth: finalVol,
             safetyChecks: {
               ...prev?.safetyChecks,
               mev: { label: feeEvents.length <= 5 ? "Low Risk (< 5%)" : "Normal", safe: true },
@@ -524,12 +531,13 @@ export default function Home() {
               .filter((h: any) => {
                 const addr = h.address?.hash?.toLowerCase();
                 const amm = (selectedToken.ammAddress || "").toLowerCase();
-                const pool = (selectedToken.poolAddress || "").toLowerCase();
+                const isContract = h.address?.is_contract === true || h.address?.is_smart_contract === true;
+                
                 return (
                   addr !== amm &&
-                  addr !== pool &&
                   addr !== "0x000000000000000000000000000000000000dead" &&
-                  addr !== "0x0000000000000000000000000000000000000000"
+                  addr !== "0x0000000000000000000000000000000000000000" &&
+                  !isContract
                 );
               })
               .slice(0, 5)
