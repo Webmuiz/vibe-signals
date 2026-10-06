@@ -696,7 +696,7 @@ export default function Home() {
         devBadgeText = "HIGH RISK (0%)";
         devBadgeColor = "text-red-400 border-red-500/30 bg-red-500/10";
       } else if (graduationRate < 15) {
-        devBadgeText = "LOW RATE";
+        devBadgeText = "AVG DEV / LOW GRAD";
         devBadgeColor = "text-orange-400 border-orange-500/30 bg-orange-500/10";
       } else if (graduationRate < 30) {
         devBadgeText = "SOLID DEV";
