@@ -329,6 +329,7 @@ export default function Home() {
           if (res.ok) {
             const json = await res.json();
             const launch = json.data?.launch || (json.data?.tokenAddress ? json.data : null);
+            const isLegacy = json.apiVersion === "1" || (!json.data?.launch && !!json.data?.tokenAddress);
             if (!launch) throw new Error('Token launch data missing from API response');
 
             const createdMs = new Date(launch.createdAt).getTime();
@@ -369,6 +370,7 @@ export default function Home() {
             const vibeScore = calculateVibeScore(0, timeLiveMins, curveProgress, 50, totalVolume, buyRatio, hasSocials);
 
             const mappedToken = {
+              isLegacy: isLegacy,
               id: launch.id || "0",
               name: launch.name || "Unknown",
               ticker: launch.symbol || "TKN",
@@ -504,6 +506,7 @@ export default function Home() {
 
           return {
             ...prev,
+            isLegacy: prev?.isLegacy || json.apiVersion === "1" || (!json.data?.launch && !!json.data?.tokenAddress),
             bondingCurveProgress: isGraduated ? 100 : prev?.bondingCurveProgress,
             symbol: launch?.symbol || prev?.symbol,
             devAddress: launch?.launcherAddress || launch?.creatorAddress || prev?.devAddress,
@@ -630,65 +633,50 @@ export default function Home() {
     if (!selectedToken || !apeAmount || Number(apeAmount) <= 0) return;
     try {
       const amountInWei = parseEther(apeAmount);
-      const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600); // 1 hour deadline
+      const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600);
+      
+      let toAddress = ZAP_ROUTER;
+      let txData;
 
-      const argsData = encodeAbiParameters(
-        parseAbiParameters('address, address, uint256, uint256, uint256, uint256, address[], address[]'),
-        [
-          selectedToken.ammAddress as `0x${string}`, // market AMM
-          "0x0000000000000000000000000000000000000000", // tokenIn (ETH)
-          amountInWei, // amountIn
-          256n, // protocol fee/type flag (0x100)
-          1n, // minOut (Set to 1n to bypass InvalidAmount require check)
-          deadline, // deadline
-          [], // empty path1
-          []  // empty path2
-        ]
-      );
-
-      // Prepend the function selector
-      const txData = `0x7681fb10${argsData.slice(2)}` as `0x${string}`;
-
-      sendTransaction({
-        to: ZAP_ROUTER,
-        value: amountInWei,
-        data: txData,
-      });
-    } catch (err) {
-      console.error("Ape execution failed:", err);
-    }
+      if (selectedToken.isLegacy) {
+        toAddress = selectedToken.ammAddress as `0x${string}`;
+        const argsData = encodeAbiParameters(parseAbiParameters('uint256, uint256'), [1n, deadline]);
+        txData = `0xd6febde8${argsData.slice(2)}` as `0x${string}`;
+      } else {
+        toAddress = ZAP_ROUTER;
+        const argsData = encodeAbiParameters(
+          parseAbiParameters('address, address, uint256, uint256, uint256, uint256, address[], address[]'),
+          [selectedToken.ammAddress as `0x${string}`, "0x0000000000000000000000000000000000000000", amountInWei, 256n, 1n, deadline, [], []]
+        );
+        txData = `0x7681fb10${argsData.slice(2)}` as `0x${string}`;
+      }
+      sendTransaction({ to: toAddress, value: amountInWei, data: txData });
+    } catch (err) { console.error(err); }
   };
 
   const handleExecuteSell = async () => {
     if (!selectedToken || !sellAmount || Number(sellAmount) <= 0) return;
     try {
-      // Convert token amount to Wei (assuming 18 decimals)
       const amountInWei = parseEther(sellAmount); 
-      const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600); // 1 hour deadline
+      const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600);
+      
+      let toAddress = ZAP_ROUTER;
+      let txData;
 
-      const argsData = encodeAbiParameters(
-        parseAbiParameters('address, uint256, address[], uint256, uint256, address[]'),
-        [
-          selectedToken.ammAddress as `0x${string}`, // market AMM
-          amountInWei, // Amount of tokens to sell
-          [], // empty path1
-          1n, // minOut ETH (Set to 1n to bypass InvalidAmount require check)
-          deadline, // deadline
-          []  // empty path2
-        ]
-      );
-
-      // Prepend the Sell function selector (0x15d5cb8b)
-      const txData = `0x15d5cb8b${argsData.slice(2)}` as `0x${string}`;
-
-      sendTransaction({
-        to: ZAP_ROUTER,
-        value: 0n, // Sells send 0 ETH, they send tokens
-        data: txData,
-      });
-    } catch (err) {
-      console.error("Sell execution failed:", err);
-    }
+      if (selectedToken.isLegacy) {
+        toAddress = selectedToken.ammAddress as `0x${string}`;
+        const argsData = encodeAbiParameters(parseAbiParameters('uint256, uint256, uint256'), [amountInWei, 1n, deadline]);
+        txData = `0xd3c9727c${argsData.slice(2)}` as `0x${string}`;
+      } else {
+        toAddress = ZAP_ROUTER;
+        const argsData = encodeAbiParameters(
+          parseAbiParameters('address, uint256, address[], uint256, uint256, address[]'),
+          [selectedToken.ammAddress as `0x${string}`, amountInWei, [], 1n, deadline, []]
+        );
+        txData = `0x15d5cb8b${argsData.slice(2)}` as `0x${string}`;
+      }
+      sendTransaction({ to: toAddress, value: 0n, data: txData });
+    } catch (err) { console.error(err); }
   };
 
   const top5Pct = topHolders.reduce((acc, h) => acc + h.pct, 0);
