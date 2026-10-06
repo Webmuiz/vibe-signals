@@ -684,6 +684,30 @@ export default function Home() {
   const creatorHoldingPct = devHolder ? devHolder.pct : 0;
   const isCabalRisk = selectedToken ? (top5Pct > 25 || (selectedToken.momentum?.sellPct ?? 0) >= 65 || selectedToken.safetyChecks?.creatorBag?.safe === false) : false;
 
+  let devBadgeText = "NEUTRAL / UNPROVEN";
+  let devBadgeColor = "text-zinc-500 border-zinc-700 bg-zinc-900";
+
+  if (selectedToken) {
+    const totalLaunches = devStats ? devStats.launches : selectedToken.devProfile.launches;
+    const graduationRate = devStats ? devStats.gradRate : selectedToken.devProfile.gradRate;
+
+    if (totalLaunches > 0) {
+      if (graduationRate === 0) {
+        devBadgeText = "HIGH RISK (0%)";
+        devBadgeColor = "text-red-400 border-red-500/30 bg-red-500/10";
+      } else if (graduationRate < 15) {
+        devBadgeText = "LOW RATE";
+        devBadgeColor = "text-orange-400 border-orange-500/30 bg-orange-500/10";
+      } else if (graduationRate < 30) {
+        devBadgeText = "SOLID DEV";
+        devBadgeColor = "text-yellow-400 border-yellow-500/30 bg-yellow-500/10";
+      } else {
+        devBadgeText = "ELITE / CABAL";
+        devBadgeColor = "text-emerald-400 border-emerald-500/30 bg-emerald-500/10";
+      }
+    }
+  }
+
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 font-mono selection:bg-emerald-500/30">
       <nav className="flex justify-between items-center p-4 border-b border-zinc-800 bg-zinc-900/50 sticky top-0 z-50 backdrop-blur-md">
@@ -853,9 +877,9 @@ export default function Home() {
                 <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
                   <div className="flex justify-between items-start mb-4">
                     <h3 className="text-lg font-bold text-white">Developer Profiler</h3>
-                    <span className={`text-xs uppercase font-bold px-3 py-1 rounded-md border ${devStats?.color || selectedToken.devProfile.color}`}>
-                      {devStats?.label || selectedToken.devProfile.label}
-                    </span>
+                    <div className={`px-2 py-1 text-[10px] font-bold tracking-wider uppercase border rounded ${devBadgeColor}`}>
+                      {devBadgeText}
+                    </div>
                   </div>
                   <div className="flex items-center gap-2 mb-6">
                     <a
