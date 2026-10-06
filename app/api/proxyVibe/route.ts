@@ -16,12 +16,12 @@ export async function GET(request: Request) {
 
         let data = null;
         let marketData = null;
-        const versions = ['v6', 'v5', 'v4', 'v3'];
+        const paths = ['v6/launches', 'v5/launches', 'launches'];
      
-        for (const v of versions) {
+        for (const path of paths) {
           const [launchRes, marketRes, binanceRes] = await Promise.all([
-            fetch(`https://testnet.vibevibe.fun/api/v1/chains/46630/${v}/launches/${address}`, { headers, cache: 'no-store' }),
-            fetch(`https://testnet.vibevibe.fun/api/v1/chains/46630/${v}/launches/${address}/market?limit=2`, { headers, cache: 'no-store' }),
+            fetch(`https://testnet.vibevibe.fun/api/v1/chains/46630/${path}/${address}`, { headers, cache: 'no-store' }),
+            fetch(`https://testnet.vibevibe.fun/api/v1/chains/46630/${path}/${address}/market?limit=2`, { headers, cache: 'no-store' }),
             fetch('https://api.binance.com/api/v3/ticker/price?symbol=ETHUSDT', { cache: 'no-store' })
           ]);
      
@@ -39,7 +39,7 @@ export async function GET(request: Request) {
               data.data.marketStats = marketData?.data?.stats || null;
               data.data.marketTrades = marketData?.data?.trades || [];
               data.data.ethPriceUsd = ethPriceUsd;
-              data.data.apiVersion = v; // Optional: track which version succeeded
+              data.data.apiVersion = path; // Optional: track which version succeeded
             }
             
             break; // Found the token, exit the loop
