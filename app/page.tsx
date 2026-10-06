@@ -417,7 +417,7 @@ export default function Home() {
 
     fetch(`/api/proxyVibe?address=${selectedToken.contractAddress}`)
       .then(res => res.json())
-      .then(json => {
+      .then(async json => {
         if (!isMounted) return;
         const feeEvents = json.data?.feeEvents || [];
         const launch = json.data?.launch;
@@ -425,7 +425,20 @@ export default function Home() {
         const marketTrades = json.data?.marketTrades || [];
         const latestTrade = marketTrades[0];
         const currentPriceEth = latestTrade ? Number(latestTrade.executionPricePairUnitsPerToken) / 1e18 : 0;
-        const marketCapEth = currentPriceEth > 0 ? (currentPriceEth * 1_000_000_000).toFixed(2) : "0.00";
+        const marketCapEth = currentPriceEth * 1_000_000_000;
+
+        let ethPriceUsd = 2600; // fallback
+        try {
+          const binanceRes = await fetch('https://api.binance.com/api/v3/ticker/price?symbol=ETHUSDT');
+          if (binanceRes.ok) {
+            const binanceData = await binanceRes.json();
+            ethPriceUsd = Number(binanceData.price);
+          }
+        } catch (e) {
+          console.warn("Binance fetch failed");
+        }
+
+        const marketCapUsd = marketCapEth > 0 ? (marketCapEth * ethPriceUsd).toLocaleString('en-US', { style: 'currency', currency: 'USD' }) : "$0.00";
 
         const stats = json.data?.marketStats;
         let finalVolumeEth = "0.0000";
@@ -460,21 +473,6 @@ export default function Home() {
         // 1. Use launcherAddress instead of creatorAddress
         const creatorAddress = (launch?.launcherAddress || selectedToken?.devAddress || "").toLowerCase();
 
-        // 2. Map through the correct keys for Zaps and Token amounts
-        const creatorTokensBought = feeEvents
-          .filter((ev: any) => {
-            const buyer = (ev.actorAddress || "").toLowerCase();
-            const recipient = (ev.recipientAddress || "").toLowerCase();
-            const isBuy = ev.side === 'BUY' || ev.source === 'CURVE_BUY' || ev.source === 'INITIAL_PURCHASE';
-
-            // If a Zap was used, the user is the recipient. Otherwise they are the actor.
-            return (buyer === creatorAddress || recipient === creatorAddress) && isBuy;
-          })
-          .reduce((acc: number, ev: any) => acc + (Number(ev.netTokenUnits || 0) / 1e18), 0);
-
-        const creatorHoldingPct = Math.min(100, (creatorTokensBought / 1_000_000_000) * 100);
-        const isCreatorSafe = creatorHoldingPct <= 5;
-
         // 3. Sync the accurate data to Supabase
         if (selectedToken?.contractAddress) {
           supabase
@@ -483,8 +481,7 @@ export default function Home() {
               has_socials: hasSocials,
               volume_eth: Number(finalVolumeEth),
               buy_pct: finalBuyPct,
-              sell_pct: finalSellPct,
-              creator_holding_pct: Number(creatorHoldingPct.toFixed(2))
+              sell_pct: finalSellPct
             })
             .ilike('token_address', selectedToken.contractAddress)
             .then(({ error, data }) => {
@@ -500,7 +497,7 @@ export default function Home() {
           Number(finalVolumeEth),
           finalBuyPct,
           hasSocials,
-          creatorHoldingPct
+          0
         );
 
         setSelectedToken((prev: any) => {
@@ -515,16 +512,13 @@ export default function Home() {
             hasSocials: hasSocials,
             socialLinks: socials,
             poolAddress: poolAddr || prev?.poolAddress,
-            marketCapEth: marketCapEth !== "0.00" ? marketCapEth : prev?.marketCapEth,
+            marketCapUsd: marketCapUsd !== "$0.00" ? marketCapUsd : prev?.marketCapUsd,
             momentum: { buyPct: finalBuyPct, sellPct: finalSellPct, volumeEth: finalVolumeEth },
             volumeEth: finalVolumeEth,
             safetyChecks: {
               ...prev?.safetyChecks,
               mev: { label: feeEvents.length <= 5 ? "Low Risk (< 5%)" : "Normal", safe: true },
-              creatorBag: {
-                label: `${isCreatorSafe ? 'Safe' : 'High Risk'} (${creatorHoldingPct.toFixed(1)}% Supply)`,
-                safe: isCreatorSafe
-              }
+              creatorBag: prev?.safetyChecks?.creatorBag || { label: "Checking...", safe: true }
             }
           };
         });
@@ -756,7 +750,7 @@ export default function Home() {
                     <div className="flex justify-between text-xs mb-2">
                       <span className="text-zinc-400">{selectedToken.bondingCurveProgress >= 100 ? 'Status' : `Bonding Curve Progress (${selectedToken.ethDeposited} ${selectedToken.pairSymbol})`}</span>
                       <div className="flex gap-3">
-                        <span className="text-zinc-400 font-mono">MC: {selectedToken.marketCapEth || "0.00"} ETH</span>
+                        <span className="text-zinc-400 font-mono">MC: {selectedToken.marketCapUsd || "$0.00"}</span>
                         <span className={selectedToken.bondingCurveProgress >= 100 ? "text-amber-400 font-bold" : "text-emerald-400 font-bold"}>
                           {selectedToken.bondingCurveProgress >= 100 ? 'Graduated 🚀' : `${selectedToken.bondingCurveProgress.toFixed(1)}%`}
                         </span>

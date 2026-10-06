@@ -34,7 +34,8 @@ export async function GET(request: Request) {
         
         const marketData = marketRes.ok ? await marketRes.json() : null;
         if (data && data.data) {
-            data.data.marketStats = marketData?.data?.stats;
+            data.data.marketStats = marketData?.data?.stats || null;
+            data.data.marketTrades = marketData?.data?.trades || [];
         }
 
         return NextResponse.json(data);
