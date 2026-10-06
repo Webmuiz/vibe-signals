@@ -170,6 +170,7 @@ export default function Home() {
   const [onChainToken, setOnChainToken] = useState<any | null>(null);
   const [isSearchingChain, setIsSearchingChain] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
+  const [isSyncingLive, setIsSyncingLive] = useState(false);
 
   const [apeAmount, setApeAmount] = useState<string>("0.005");
   const [sellAmount, setSellAmount] = useState<string>("1000");
@@ -414,30 +415,20 @@ export default function Home() {
   useEffect(() => {
     if (!selectedToken?.contractAddress) return;
     let isMounted = true;
+    setIsSyncingLive(true);
 
-    fetch(`/api/proxyVibe?address=${selectedToken.contractAddress}`)
-      .then(res => res.json())
-      .then(async json => {
+    const fetchVibe = fetch(`/api/proxyVibe?address=${selectedToken.contractAddress}`).then(res => res.json());
+    const fetchBinance = fetch('https://api.binance.com/api/v3/ticker/price?symbol=ETHUSDT').then(res => res.ok ? res.json() : { price: 2600 }).catch(() => ({ price: 2600 }));
+
+    Promise.all([fetchVibe, fetchBinance])
+      .then(async ([json, binanceData]) => {
         if (!isMounted) return;
         const feeEvents = json.data?.feeEvents || [];
         const launch = json.data?.launch;
         
-        const marketTrades = json.data?.marketTrades || [];
-        const latestTrade = marketTrades[0];
-        const currentPriceEth = latestTrade ? Number(latestTrade.executionPricePairUnitsPerToken) / 1e18 : 0;
+        const ethPriceUsd = Number(binanceData.price);
+        const currentPriceEth = json.data?.marketTrades?.[0] ? Number(json.data.marketTrades[0].executionPricePairUnitsPerToken) / 1e18 : 0;
         const marketCapEth = currentPriceEth * 1_000_000_000;
-
-        let ethPriceUsd = 2600; // fallback
-        try {
-          const binanceRes = await fetch('https://api.binance.com/api/v3/ticker/price?symbol=ETHUSDT');
-          if (binanceRes.ok) {
-            const binanceData = await binanceRes.json();
-            ethPriceUsd = Number(binanceData.price);
-          }
-        } catch (e) {
-          console.warn("Binance fetch failed");
-        }
-
         const marketCapUsd = marketCapEth > 0 ? (marketCapEth * ethPriceUsd).toLocaleString('en-US', { style: 'currency', currency: 'USD' }) : "$0.00";
 
         const stats = json.data?.marketStats;
@@ -523,7 +514,8 @@ export default function Home() {
           };
         });
       })
-      .catch(console.error);
+      .catch(console.error)
+      .finally(() => setIsSyncingLive(false));
 
     if (selectedToken?.contractAddress) {
       fetch(`https://explorer.testnet.chain.robinhood.com/api/v2/tokens/${selectedToken.contractAddress}/holders`)
@@ -741,16 +733,17 @@ export default function Home() {
                       <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping"></span>
                       Live Telemetry
                     </h3>
-                    <span className="text-xs text-zinc-400 font-bold border border-zinc-700 px-2 py-1 rounded bg-zinc-950">
-                      LIVE: {formatTimeLive(selectedToken.timeSinceLaunchMins)}
-                    </span>
+                    <div className="flex gap-2 items-center">
+                      {isSyncingLive && <span className="text-[10px] text-emerald-400 font-bold uppercase animate-pulse border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 rounded">Syncing...</span>}
+                      <span className="text-xs text-zinc-400 font-bold border border-zinc-700 px-2 py-1 rounded bg-zinc-950">LIVE: {formatTimeLive(selectedToken.timeSinceLaunchMins)}</span>
+                    </div>
                   </div>
 
                   <div className="mb-8">
                     <div className="flex justify-between text-xs mb-2">
                       <span className="text-zinc-400">{selectedToken.bondingCurveProgress >= 100 ? 'Status' : `Bonding Curve Progress (${selectedToken.ethDeposited} ${selectedToken.pairSymbol})`}</span>
                       <div className="flex gap-3">
-                        <span className="text-zinc-400 font-mono">MC: {selectedToken.marketCapUsd || "$0.00"}</span>
+                        <span className="text-zinc-400 font-mono">MC: {isSyncingLive ? <span className="animate-pulse">...</span> : (selectedToken.marketCapUsd || "$0.00")}</span>
                         <span className={selectedToken.bondingCurveProgress >= 100 ? "text-amber-400 font-bold" : "text-emerald-400 font-bold"}>
                           {selectedToken.bondingCurveProgress >= 100 ? 'Graduated 🚀' : `${selectedToken.bondingCurveProgress.toFixed(1)}%`}
                         </span>
@@ -770,7 +763,7 @@ export default function Home() {
                   <div>
                     <div className="flex justify-between text-xs mb-2">
                       <span className="text-zinc-400 uppercase tracking-wider font-bold">24H MOMENTUM</span>
-                      <span className="text-zinc-500">24H Volume: {selectedToken.momentum?.volumeEth || selectedToken.volumeEth || '0.0000'} ETH</span>
+                      <span className="text-zinc-500">24H Volume: {isSyncingLive ? <span className="animate-pulse">...</span> : (selectedToken.momentum?.volumeEth || selectedToken.volumeEth || '0.0000')} ETH</span>
                     </div>
                     <div className="flex justify-between text-xs mb-2">
                       <span className="text-emerald-400 font-bold">{selectedToken.momentum?.buyPct ?? 50}% Buys</span>

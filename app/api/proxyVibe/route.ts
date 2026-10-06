@@ -9,29 +9,21 @@ export async function GET(request: Request) {
     }
 
     try {
-        const targetUrl = `https://testnet.vibevibe.fun/api/v1/chains/46630/v6/launches/${address}`;
-        const res = await fetch(targetUrl, {
-            cache: 'no-store',
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'application/json'
-            }
-        });
+        const headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'application/json'
+        };
 
-        if (!res.ok) {
-            return NextResponse.json({ error: 'Failed to fetch token from VibeVibe API' }, { status: res.status });
+        const [launchRes, marketRes] = await Promise.all([
+            fetch(`https://testnet.vibevibe.fun/api/v1/chains/46630/v6/launches/${address}`, { headers, cache: 'no-store' }),
+            fetch(`https://testnet.vibevibe.fun/api/v1/chains/46630/v6/launches/${address}/market?limit=2`, { headers, cache: 'no-store' })
+        ]);
+
+        if (!launchRes.ok) {
+            return NextResponse.json({ error: 'Failed to fetch token from VibeVibe API' }, { status: launchRes.status });
         }
 
-        const data = await res.json();
-        
-        const marketRes = await fetch(`https://testnet.vibevibe.fun/api/v1/chains/46630/v6/launches/${address}/market?limit=2`, {
-            cache: 'no-store',
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'application/json'
-            }
-        });
-        
+        const data = await launchRes.json();
         const marketData = marketRes.ok ? await marketRes.json() : null;
         if (data && data.data) {
             data.data.marketStats = marketData?.data?.stats || null;
