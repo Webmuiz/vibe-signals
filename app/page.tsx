@@ -437,6 +437,13 @@ export default function Home() {
         const socials = launch?.content?.socials || {};
         const hasSocials = !!(socials.x || socials.telegram || socials.website);
 
+        const poolAddr = (launch?.graduation?.poolId || launch?.poolAddress || launch?.pool?.address || "").toLowerCase();
+
+        const hasApiVolume = totalVolume > 0;
+        const finalVolumeEth = hasApiVolume ? totalVolume.toFixed(4) : (selectedToken.momentum?.volumeEth || selectedToken.volumeEth || "0.0000");
+        const finalBuyPct = hasApiVolume ? buyPct : (selectedToken.momentum?.buyPct ?? 50);
+        const finalSellPct = hasApiVolume ? sellPct : (selectedToken.momentum?.sellPct ?? 50);
+
         // 1. Use launcherAddress instead of creatorAddress
         const creatorAddress = (launch?.launcherAddress || selectedToken?.devAddress || "").toLowerCase();
 
@@ -461,9 +468,9 @@ export default function Home() {
             .from('launches')
             .update({
               has_socials: hasSocials,
-              volume_eth: Number(totalVolume.toFixed(4)),
-              buy_pct: buyPct,
-              sell_pct: sellPct,
+              volume_eth: Number(finalVolumeEth),
+              buy_pct: finalBuyPct,
+              sell_pct: finalSellPct,
               creator_holding_pct: Number(creatorHoldingPct.toFixed(2))
             })
             .ilike('token_address', selectedToken.contractAddress)
@@ -477,8 +484,8 @@ export default function Home() {
           selectedToken.timeSinceLaunchMins,
           selectedToken.bondingCurveProgress,
           selectedToken.diamondHandsHoldersPct,
-          totalVolume,
-          buyPct,
+          Number(finalVolumeEth),
+          finalBuyPct,
           hasSocials,
           creatorHoldingPct
         );
@@ -493,7 +500,8 @@ export default function Home() {
             score: dynamicScore,
             hasSocials: hasSocials,
             socialLinks: socials,
-            momentum: { buyPct, sellPct, volumeEth: totalVolume.toFixed(4) },
+            poolAddress: poolAddr || prev?.poolAddress,
+            momentum: { buyPct: finalBuyPct, sellPct: finalSellPct, volumeEth: finalVolumeEth },
             safetyChecks: {
               ...prev?.safetyChecks,
               mev: { label: feeEvents.length <= 5 ? "Low Risk (< 5%)" : "Normal", safe: true },
@@ -513,11 +521,17 @@ export default function Home() {
         .then(data => {
           if (data?.items) {
             const cleanHolders = data.items
-              .filter((h: any) => 
-                h.address?.hash?.toLowerCase() !== (selectedToken.ammAddress || "").toLowerCase() &&
-                h.address?.hash?.toLowerCase() !== "0x000000000000000000000000000000000000dead" &&
-                h.address?.hash?.toLowerCase() !== "0x0000000000000000000000000000000000000000"
-              )
+              .filter((h: any) => {
+                const addr = h.address?.hash?.toLowerCase();
+                const amm = (selectedToken.ammAddress || "").toLowerCase();
+                const pool = (selectedToken.poolAddress || "").toLowerCase();
+                return (
+                  addr !== amm &&
+                  addr !== pool &&
+                  addr !== "0x000000000000000000000000000000000000dead" &&
+                  addr !== "0x0000000000000000000000000000000000000000"
+                );
+              })
               .slice(0, 5)
               .map((h: any) => ({
                 address: h.address.hash,
@@ -715,7 +729,7 @@ export default function Home() {
 
                   <div>
                     <div className="flex justify-between text-xs mb-2">
-                      <span className="text-zinc-400 uppercase tracking-wider font-bold">5M Taker Momentum</span>
+                      <span className="text-zinc-400 uppercase tracking-wider font-bold">Taker Momentum</span>
                       <span className="text-zinc-500">Vol: {selectedToken.momentum?.volumeEth || '0.0000'} ETH</span>
                     </div>
                     <div className="flex justify-between text-xs mb-2">
