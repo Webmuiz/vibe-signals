@@ -251,8 +251,9 @@ export default function Home() {
       const block0 = Number(db.block_zero_buyers ?? 0);
       const diamond = (seed % 60) + 10;
 
-      let bondingCurveProgress = db.curve_progress ?? db.curveProgress ?? db.bondingCurveProgress ?? 0;
-      if (bondingCurveProgress > 0 && bondingCurveProgress < 0.1) {
+      const isGraduated = (db as any).lifecycle === "GRADUATED" || (db as any).graduated === true || Number(db.curve_progress ?? db.curveProgress ?? db.bondingCurveProgress ?? 0) >= 100;
+      let bondingCurveProgress = isGraduated ? 100 : Number(db.curve_progress ?? db.curveProgress ?? db.bondingCurveProgress ?? 0);
+      if (!isGraduated && bondingCurveProgress > 0 && bondingCurveProgress < 0.1) {
         bondingCurveProgress = 0.1;
       }
       const ethDeposited = db.liquidity_deposited ?? db.ethDeposited ?? 0;
@@ -331,10 +332,11 @@ export default function Home() {
             const createdMs = new Date(launch.createdAt).getTime();
             const timeLiveMins = Math.max(0, Math.floor((Date.now() - createdMs) / 60000));
 
+            const isGraduated = launch.lifecycle === "GRADUATED" || launch.graduated === true || launch.curve?.lifecycle === "GRADUATED";
             const currentEth = Number(launch.curve?.pairReserveUnits || 0) / 1e18;
             const targetEth = Number(launch.targetPairUnits || 4000000000000000000) / 1e18;
-            let curveProgress = Math.min(100, Math.max(0, (currentEth / targetEth) * 100));
-            if (curveProgress > 0 && curveProgress < 0.1) {
+            let curveProgress = isGraduated ? 100 : Math.min(100, Math.max(0, (currentEth / targetEth) * 100));
+            if (!isGraduated && curveProgress > 0 && curveProgress < 0.1) {
               curveProgress = 0.1;
             }
 
@@ -481,23 +483,27 @@ export default function Home() {
           creatorHoldingPct
         );
 
-        setSelectedToken((prev: any) => ({
-          ...prev,
-          symbol: launch?.symbol || prev?.symbol,
-          devAddress: launch?.launcherAddress || launch?.creatorAddress || prev.devAddress,
-          score: dynamicScore,
-          hasSocials: hasSocials,
-          socialLinks: socials,
-          momentum: { buyPct, sellPct, volumeEth: totalVolume.toFixed(4) },
-          safetyChecks: {
-            ...prev?.safetyChecks,
-            mev: { label: feeEvents.length <= 5 ? "Low Risk (< 5%)" : "Normal", safe: true },
-            creatorBag: {
-              label: `${isCreatorSafe ? 'Safe' : 'High Risk'} (${creatorHoldingPct.toFixed(1)}% Supply)`,
-              safe: isCreatorSafe
+        setSelectedToken((prev: any) => {
+          const isGraduated = launch?.lifecycle === "GRADUATED" || launch?.graduated === true || launch?.curve?.lifecycle === "GRADUATED" || prev?.bondingCurveProgress >= 100;
+          return {
+            ...prev,
+            bondingCurveProgress: isGraduated ? 100 : prev?.bondingCurveProgress,
+            symbol: launch?.symbol || prev?.symbol,
+            devAddress: launch?.launcherAddress || launch?.creatorAddress || prev.devAddress,
+            score: dynamicScore,
+            hasSocials: hasSocials,
+            socialLinks: socials,
+            momentum: { buyPct, sellPct, volumeEth: totalVolume.toFixed(4) },
+            safetyChecks: {
+              ...prev?.safetyChecks,
+              mev: { label: feeEvents.length <= 5 ? "Low Risk (< 5%)" : "Normal", safe: true },
+              creatorBag: {
+                label: `${isCreatorSafe ? 'Safe' : 'High Risk'} (${creatorHoldingPct.toFixed(1)}% Supply)`,
+                safe: isCreatorSafe
+              }
             }
-          }
-        }));
+          };
+        });
       })
       .catch(console.error);
 
