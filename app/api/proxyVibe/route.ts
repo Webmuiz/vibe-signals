@@ -14,9 +14,10 @@ export async function GET(request: Request) {
             'Accept': 'application/json'
         };
 
-        const [launchRes, marketRes] = await Promise.all([
+        const [launchRes, marketRes, binanceRes] = await Promise.all([
             fetch(`https://testnet.vibevibe.fun/api/v1/chains/46630/v6/launches/${address}`, { headers, cache: 'no-store' }),
-            fetch(`https://testnet.vibevibe.fun/api/v1/chains/46630/v6/launches/${address}/market?limit=2`, { headers, cache: 'no-store' })
+            fetch(`https://testnet.vibevibe.fun/api/v1/chains/46630/v6/launches/${address}/market?limit=2`, { headers, cache: 'no-store' }),
+            fetch('https://api.binance.com/api/v3/ticker/price?symbol=ETHUSDT', { cache: 'no-store' })
         ]);
 
         if (!launchRes.ok) {
@@ -25,9 +26,17 @@ export async function GET(request: Request) {
 
         const data = await launchRes.json();
         const marketData = marketRes.ok ? await marketRes.json() : null;
+        
+        let ethPriceUsd = 2600;
+        if (binanceRes.ok) {
+            const binanceData = await binanceRes.json();
+            ethPriceUsd = Number(binanceData.price || 2600);
+        }
+
         if (data && data.data) {
             data.data.marketStats = marketData?.data?.stats || null;
             data.data.marketTrades = marketData?.data?.trades || [];
+            data.data.ethPriceUsd = ethPriceUsd;
         }
 
         return NextResponse.json(data);

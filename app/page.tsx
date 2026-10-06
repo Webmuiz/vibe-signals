@@ -417,16 +417,14 @@ export default function Home() {
     let isMounted = true;
     setIsSyncingLive(true);
 
-    const fetchVibe = fetch(`/api/proxyVibe?address=${selectedToken.contractAddress}`).then(res => res.json());
-    const fetchBinance = fetch('https://api.binance.com/api/v3/ticker/price?symbol=ETHUSDT').then(res => res.ok ? res.json() : { price: 2600 }).catch(() => ({ price: 2600 }));
-
-    Promise.all([fetchVibe, fetchBinance])
-      .then(async ([json, binanceData]) => {
+    fetch(`/api/proxyVibe?address=${selectedToken.contractAddress}`)
+      .then(async res => {
+        const json = await res.json();
         if (!isMounted) return;
         const feeEvents = json.data?.feeEvents || [];
         const launch = json.data?.launch;
         
-        const ethPriceUsd = Number(binanceData.price);
+        const ethPriceUsd = json.data?.ethPriceUsd || 2600;
         const currentPriceEth = json.data?.marketTrades?.[0] ? Number(json.data.marketTrades[0].executionPricePairUnitsPerToken) / 1e18 : 0;
         const marketCapEth = currentPriceEth * 1_000_000_000;
         const marketCapUsd = marketCapEth > 0 ? (marketCapEth * ethPriceUsd).toLocaleString('en-US', { style: 'currency', currency: 'USD' }) : "$0.00";
