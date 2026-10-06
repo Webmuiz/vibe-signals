@@ -420,18 +420,47 @@ export default function Home() {
       .then(json => {
         if (!isMounted) return;
         const feeEvents = json.data?.feeEvents || [];
+        const zaps = json.data?.zaps || [];
         let buyVolume = 0;
         let sellVolume = 0;
+        let totalVolume = 0;
 
+        // 1. Calculate Total Volume from feeEvents (handles both Curve and DEX)
         feeEvents.forEach((ev: any) => {
-          const eth = Number(ev.pairPrincipalUnits || 0) / 1e18;
-          if (ev.side === 'BUY' || ev.source === 'CURVE_BUY' || ev.source === 'INITIAL_PURCHASE') buyVolume += eth;
-          else if (ev.side === 'SELL' || ev.source === 'CURVE_SELL') sellVolume += eth;
+          // VibeVibe uses pairPrincipalUnits for curve trades, and pairFeeUnits/tokenFeeUnits for pool swaps.
+          // To get a rough ETH volume equivalent for DEX swaps, we can sum the available ETH-side units.
+          const eth = Number(ev.pairPrincipalUnits || ev.pairFeeUnits || 0) / 1e18;
+          totalVolume += eth;
+
+          // If side is explicit, categorize it
+          if (ev.side === 'BUY' || ev.source === 'CURVE_BUY' || ev.source === 'INITIAL_PURCHASE') {
+            buyVolume += eth;
+          } else if (ev.side === 'SELL' || ev.source === 'CURVE_SELL') {
+            sellVolume += eth;
+          }
         });
 
-        const totalVolume = buyVolume + sellVolume;
-        const buyPct = totalVolume > 0 ? Math.round((buyVolume / totalVolume) * 100) : 50;
-        const sellPct = totalVolume > 0 ? 100 - buyPct : 50;
+        // 2. Fallback Buy/Sell momentum calculation using Zaps if POOL_SWAP obscured the sides
+        if (buyVolume === 0 && sellVolume === 0 && zaps.length > 0) {
+          let zapBuys = 0;
+          let zapSells = 0;
+          zaps.forEach((z: any) => {
+            if (z.kind === 'CURVE_BUY' || (z.kind === 'SWAP' && z.inputAddress === '0x0000000000000000000000000000000000000000')) {
+              zapBuys++;
+            } else if (z.kind === 'CURVE_SELL' || (z.kind === 'SWAP' && z.outputAddress === '0x0000000000000000000000000000000000000000')) {
+              zapSells++;
+            }
+          });
+          const totalZaps = zapBuys + zapSells;
+          if (totalZaps > 0) {
+            buyVolume = zapBuys; // Using counts as a proxy for ratio
+            sellVolume = zapSells;
+          }
+        }
+
+        const totalForRatio = buyVolume + sellVolume;
+        const buyPct = totalForRatio > 0 ? Math.round((buyVolume / totalForRatio) * 100) : 50;
+        const sellPct = totalForRatio > 0 ? 100 - buyPct : 50;
 
         const launch = json.data?.launch;
         const socials = launch?.content?.socials || {};
@@ -493,10 +522,27 @@ export default function Home() {
         setSelectedToken((prev: any) => {
           const isGraduated = launch?.lifecycle === "GRADUATED" || launch?.graduated === true || launch?.curve?.lifecycle === "GRADUATED" || prev?.bondingCurveProgress >= 100;
           
-          const hasNewVol = totalVolume > 0;
-          const finalVol = hasNewVol ? totalVolume.toFixed(4) : (prev?.momentum?.volumeEth || prev?.volumeEth || "0.0000");
-          const finalBuy = hasNewVol ? buyPct : (prev?.momentum?.buyPct || prev?.buyRatio || 50);
-          const finalSell = hasNewVol ? sellPct : (prev?.momentum?.sellPct || prev?.sellRatio || 50);
+          let finalVolEth = totalVolume;
+          let finalBuy = buyPct;
+          let finalSell = sellPct;
+
+          if (totalVolume === 0) {
+            const marketVol = launch?.market ? Number(launch.market.volume24hPairUnits || 0) / 1e18 : 0;
+            if (marketVol > 0) {
+              finalVolEth = marketVol;
+              const buys = Number(launch?.market?.buyCount24h || 0);
+              const sells = Number(launch?.market?.sellCount24h || 0);
+              const totalTrades = buys + sells;
+              finalBuy = totalTrades > 0 ? Math.round((buys / totalTrades) * 100) : 50;
+              finalSell = totalTrades > 0 ? 100 - finalBuy : 50;
+            } else {
+              finalVolEth = Number(prev?.momentum?.volumeEth || prev?.volumeEth || 0);
+              finalBuy = prev?.momentum?.buyPct || prev?.buyRatio || 50;
+              finalSell = prev?.momentum?.sellPct || prev?.sellRatio || 50;
+            }
+          }
+
+          const finalVolString = finalVolEth.toFixed(4);
 
           return {
             ...prev,
@@ -507,8 +553,8 @@ export default function Home() {
             hasSocials: hasSocials,
             socialLinks: socials,
             poolAddress: poolAddr || prev?.poolAddress,
-            momentum: { buyPct: finalBuy, sellPct: finalSell, volumeEth: finalVol },
-            volumeEth: finalVol,
+            momentum: { buyPct: finalBuy, sellPct: finalSell, volumeEth: finalVolString },
+            volumeEth: finalVolString,
             safetyChecks: {
               ...prev?.safetyChecks,
               mev: { label: feeEvents.length <= 5 ? "Low Risk (< 5%)" : "Normal", safe: true },
