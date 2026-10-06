@@ -420,51 +420,35 @@ export default function Home() {
       .then(json => {
         if (!isMounted) return;
         const feeEvents = json.data?.feeEvents || [];
-        const zaps = json.data?.zaps || [];
-        let buyVolume = 0;
-        let sellVolume = 0;
-        let totalVolume = 0;
-
         const launch = json.data?.launch;
-
-        // 1. Calculate Total Volume from feeEvents (handles both Curve and DEX)
+        
+        // 1. Calculate Total Volume from feeEvents (Keep this intact for total recent volume)
+        let totalVolume = 0;
         feeEvents.forEach((ev: any) => {
-          // If pairPrincipalUnits is null (DEX swaps), reverse-calculate the trade volume from the fee using the token's tax rate (default 100 bps = 1%)
           const principalUnits = ev.pairPrincipalUnits 
             ? Number(ev.pairPrincipalUnits) 
             : (Number(ev.pairFeeUnits || 0) * 10000) / Number(launch?.taxBps || 100);
-          
-          const eth = principalUnits / 1e18;
-          totalVolume += eth;
+          totalVolume += principalUnits / 1e18;
+        });
 
-          if (ev.side === 'BUY' || ev.source === 'CURVE_BUY' || ev.source === 'INITIAL_PURCHASE') {
-            buyVolume += eth;
-          } else if (ev.side === 'SELL' || ev.source === 'CURVE_SELL') {
-            sellVolume += eth;
+        // 2. Calculate Buy/Sell Ratio using Zaps (True ETH Volume routing)
+        let buyEth = 0;
+        let sellEth = 0;
+        const zaps = json.data?.zaps || [];
+        
+        zaps.forEach((z: any) => {
+          if (z.inputAddress === '0x0000000000000000000000000000000000000000') {
+            // BUY: ETH is the input
+            buyEth += Number(z.amountInUnits || 0) / 1e18;
+          } else if (z.outputAddress === '0x0000000000000000000000000000000000000000') {
+            // SELL: ETH is the output
+            sellEth += Number(z.amountOutUnits || 0) / 1e18;
           }
         });
 
-        // 2. Fallback Buy/Sell momentum calculation using Zaps if POOL_SWAP obscured the sides
-        if (buyVolume === 0 && sellVolume === 0 && zaps.length > 0) {
-          let zapBuys = 0;
-          let zapSells = 0;
-          zaps.forEach((z: any) => {
-            if (z.kind === 'CURVE_BUY' || (z.kind === 'SWAP' && z.inputAddress === '0x0000000000000000000000000000000000000000')) {
-              zapBuys++;
-            } else if (z.kind === 'CURVE_SELL' || (z.kind === 'SWAP' && z.outputAddress === '0x0000000000000000000000000000000000000000')) {
-              zapSells++;
-            }
-          });
-          const totalZaps = zapBuys + zapSells;
-          if (totalZaps > 0) {
-            buyVolume = zapBuys; // Using counts as a proxy for ratio
-            sellVolume = zapSells;
-          }
-        }
-
-        const totalForRatio = buyVolume + sellVolume;
-        const buyPct = totalForRatio > 0 ? Math.round((buyVolume / totalForRatio) * 100) : 50;
-        const sellPct = totalForRatio > 0 ? 100 - buyPct : 50;
+        const totalZapEth = buyEth + sellEth;
+        const buyPct = totalZapEth > 0 ? Math.round((buyEth / totalZapEth) * 100) : 50;
+        const sellPct = totalZapEth > 0 ? 100 - buyPct : 50;
 
         const socials = launch?.content?.socials || {};
         const hasSocials = !!(socials.x || socials.telegram || socials.website);
@@ -786,7 +770,7 @@ export default function Home() {
 
                   <div>
                     <div className="flex justify-between text-xs mb-2">
-                      <span className="text-zinc-400 uppercase tracking-wider font-bold">Recent Taker Momentum</span>
+                      <span className="text-zinc-400 uppercase tracking-wider font-bold">Last 20 Trades Momentum</span>
                       <span className="text-zinc-500">Recent Vol: {selectedToken.momentum?.volumeEth || '0.0000'} ETH</span>
                     </div>
                     <div className="flex justify-between text-xs mb-2">
