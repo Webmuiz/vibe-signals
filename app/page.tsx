@@ -422,6 +422,11 @@ export default function Home() {
         const feeEvents = json.data?.feeEvents || [];
         const launch = json.data?.launch;
         
+        const marketTrades = json.data?.marketTrades || [];
+        const latestTrade = marketTrades[0];
+        const currentPriceEth = latestTrade ? Number(latestTrade.executionPricePairUnitsPerToken) / 1e18 : 0;
+        const marketCapEth = currentPriceEth > 0 ? (currentPriceEth * 1_000_000_000).toFixed(2) : "0.00";
+
         const stats = json.data?.marketStats;
         let finalVolumeEth = "0.0000";
         let finalBuyPct = 50;
@@ -510,6 +515,7 @@ export default function Home() {
             hasSocials: hasSocials,
             socialLinks: socials,
             poolAddress: poolAddr || prev?.poolAddress,
+            marketCapEth: marketCapEth !== "0.00" ? marketCapEth : prev?.marketCapEth,
             momentum: { buyPct: finalBuyPct, sellPct: finalSellPct, volumeEth: finalVolumeEth },
             volumeEth: finalVolumeEth,
             safetyChecks: {
@@ -553,17 +559,27 @@ export default function Home() {
             const top5Pct = cleanHolders.reduce((acc: number, h: any) => acc + h.pct, 0);
             const isCabalRisk = top5Pct > 25;
 
+            const devHolder = cleanHolders.find((h: any) => h.address.toLowerCase() === (selectedToken.devAddress || "").toLowerCase());
+            // Force 0 if undefined, preventing ghost data fallbacks
+            const creatorHoldingPct = devHolder ? devHolder.pct : 0; 
+            const isCreatorSafe = creatorHoldingPct <= 5;
+
             setTopHolders(cleanHolders);
 
-            if (isCabalRisk) {
-              setSelectedToken((prev: any) => {
-                if (!prev) return prev;
-                return {
-                  ...prev,
-                  score: Math.max(0, prev.score - 25)
-                };
-              });
-            }
+            setSelectedToken((prev: any) => {
+              if (!prev) return prev;
+              return {
+                ...prev,
+                score: isCabalRisk ? Math.max(0, prev.score - 25) : prev.score,
+                safetyChecks: {
+                  ...prev.safetyChecks,
+                  creatorBag: {
+                    label: `${isCreatorSafe ? 'Safe' : 'High Risk'} (${creatorHoldingPct.toFixed(1)}% Supply)`,
+                    safe: isCreatorSafe
+                  }
+                }
+              };
+            });
           }
         })
         .catch(err => console.error("Holders fetch failed:", err));
@@ -681,8 +697,10 @@ export default function Home() {
     }
   };
 
-  const top5Concentration = topHolders.reduce((acc, h) => acc + h.pct, 0);
-  const isCabalRisk = selectedToken ? (top5Concentration > 25 || (selectedToken.momentum?.sellPct ?? 0) >= 65 || selectedToken.safetyChecks?.creatorBag?.safe === false) : false;
+  const top5Pct = topHolders.reduce((acc, h) => acc + h.pct, 0);
+  const devHolder = topHolders.find((h: any) => h.address.toLowerCase() === (selectedToken?.devAddress || "").toLowerCase());
+  const creatorHoldingPct = devHolder ? devHolder.pct : 0;
+  const isCabalRisk = selectedToken ? (top5Pct > 25 || (selectedToken.momentum?.sellPct ?? 0) >= 65 || selectedToken.safetyChecks?.creatorBag?.safe === false) : false;
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 font-mono selection:bg-emerald-500/30">
@@ -737,9 +755,12 @@ export default function Home() {
                   <div className="mb-8">
                     <div className="flex justify-between text-xs mb-2">
                       <span className="text-zinc-400">{selectedToken.bondingCurveProgress >= 100 ? 'Status' : `Bonding Curve Progress (${selectedToken.ethDeposited} ${selectedToken.pairSymbol})`}</span>
-                      <span className={selectedToken.bondingCurveProgress >= 100 ? "text-amber-400 font-bold" : "text-emerald-400 font-bold"}>
-                        {selectedToken.bondingCurveProgress >= 100 ? 'Graduated 🚀' : `${selectedToken.bondingCurveProgress.toFixed(1)}%`}
-                      </span>
+                      <div className="flex gap-3">
+                        <span className="text-zinc-400 font-mono">MC: {selectedToken.marketCapEth || "0.00"} ETH</span>
+                        <span className={selectedToken.bondingCurveProgress >= 100 ? "text-amber-400 font-bold" : "text-emerald-400 font-bold"}>
+                          {selectedToken.bondingCurveProgress >= 100 ? 'Graduated 🚀' : `${selectedToken.bondingCurveProgress.toFixed(1)}%`}
+                        </span>
+                      </div>
                     </div>
                     <div className="w-full bg-zinc-950 rounded-full h-3 overflow-hidden border border-zinc-800">
                       <div
@@ -813,11 +834,19 @@ export default function Home() {
                       </div>
                     </div>
 
-                    <div className="absolute top-3 left-4 bg-zinc-950/80 backdrop-blur px-2 py-1 rounded border border-zinc-800 text-[10px]">
-                      {isCabalRisk ? (
-                        <span className="text-red-400 font-bold flex items-center gap-1">⚠️ High Concentration (&gt;25% Supply)</span>
+                    <div className="absolute top-3 left-4 bg-zinc-950/80 backdrop-blur rounded text-[10px] pointer-events-auto">
+                      {top5Pct > 25 ? (
+                        <div className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-medium bg-red-500/10 text-red-500 border border-red-500/20">
+                          ⚠️ High Concentration ({top5Pct.toFixed(1)}% Supply)
+                        </div>
+                      ) : creatorHoldingPct === 0 ? (
+                        <div className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-medium bg-yellow-500/10 text-yellow-500 border border-yellow-500/20">
+                          🚨 Supply Dumped (Insiders Exited)
+                        </div>
                       ) : (
-                        <span className="text-emerald-400 font-bold flex items-center gap-1">✅ Clean Distribution (No Shared Source)</span>
+                        <div className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-medium bg-green-500/10 text-green-500 border border-green-500/20">
+                          ✅ Distribution Cleared
+                        </div>
                       )}
                     </div>
                   </div>
@@ -826,7 +855,7 @@ export default function Home() {
                     <div className="p-4 bg-zinc-950 rounded-lg border border-zinc-800">
                       <span className="text-zinc-500 block mb-1">Top 5 Supply</span>
                       <span className={`${isCabalRisk ? 'text-red-400' : 'text-emerald-400'} font-bold`}>
-                        {top5Concentration > 0 ? `${top5Concentration.toFixed(1)}%` : '0.0%'}
+                        {top5Pct > 0 ? `${top5Pct.toFixed(1)}%` : '0.0%'}
                       </span>
                     </div>
                     <div className="p-4 bg-zinc-950 rounded-lg border border-zinc-800">
