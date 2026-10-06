@@ -8,7 +8,7 @@ export async function GET(request: Request) {
 
   try {
     const headers = { 'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0' };
-    
+
     // Fetch both the legacy creator list and the new v6 wallet list
     const [legacyRes, v6Res] = await Promise.allSettled([
       fetch(`https://testnet.vibevibe.fun/api/v1/chains/46630/launches?creatorAddress=${address}&limit=100`, { headers, cache: 'no-store' }),
