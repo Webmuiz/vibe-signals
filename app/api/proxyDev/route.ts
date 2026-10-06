@@ -7,21 +7,44 @@ export async function GET(request: Request) {
   if (!address) return NextResponse.json({ error: 'Missing address' }, { status: 400 });
 
   try {
-    const res = await fetch(
-      `https://testnet.vibevibe.fun/api/v1/chains/46630/launches?creatorAddress=${address}&limit=100`,
-      {
-        headers: {
-          'Accept': 'application/json',
-          'User-Agent': 'Mozilla/5.0'
-        },
-        cache: 'no-store'
-      }
-    );
+    const headers = { 'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0' };
     
-    if (!res.ok) return NextResponse.json({ error: 'Failed upstream fetch' }, { status: res.status });
+    // Fetch both the legacy creator list and the new v6 wallet list
+    const [legacyRes, v6Res] = await Promise.allSettled([
+      fetch(`https://testnet.vibevibe.fun/api/v1/chains/46630/launches?creatorAddress=${address}&limit=100`, { headers, cache: 'no-store' }),
+      fetch(`https://testnet.vibevibe.fun/api/v1/chains/46630/v6/wallets/${address}/launches?limit=100`, { headers, cache: 'no-store' })
+    ]);
 
-    const data = await res.json();
-    return NextResponse.json(data);
+    let combinedItems: any[] = [];
+
+    // Parse Legacy Items
+    if (legacyRes.status === 'fulfilled' && legacyRes.value.ok) {
+      const legacyData = await legacyRes.value.json();
+      if (legacyData?.data?.items) {
+        combinedItems = [...combinedItems, ...legacyData.data.items];
+      }
+    }
+
+    // Parse v6 Items
+    if (v6Res.status === 'fulfilled' && v6Res.value.ok) {
+      const v6Data = await v6Res.value.json();
+      if (v6Data?.data?.items) {
+        combinedItems = [...combinedItems, ...v6Data.data.items];
+      }
+    }
+
+    // Deduplicate by tokenAddress just in case VibeVibe returns overlap
+    const uniqueItems = Array.from(
+      new Map(combinedItems.map((item) => [item.tokenAddress.toLowerCase(), item])).values()
+    );
+
+    return NextResponse.json({
+      data: {
+        items: uniqueItems,
+        page: { totalCount: uniqueItems.length }
+      }
+    });
+
   } catch (err) {
     return NextResponse.json({ error: 'Server error' }, { status: 500 });
   }
