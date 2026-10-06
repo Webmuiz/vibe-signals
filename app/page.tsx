@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useEffect } from "react";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
-import { useAccount, useSendTransaction, useBalance, useReadContract } from "wagmi";
+import { useAccount, useSendTransaction, useBalance, useReadContract, useWaitForTransactionReceipt } from "wagmi";
 import { isAddress, parseEther, createPublicClient, http, formatEther, encodeAbiParameters, parseAbiParameters } from "viem";
 import { createClient } from "@supabase/supabase-js";
 
@@ -162,6 +162,7 @@ function formatTimeLive(totalMinutes: number) {
 export default function Home() {
   const { address, isConnected } = useAccount();
   const { sendTransaction, isPending: isTxPending, data: hash } = useSendTransaction();
+  const { data: receipt, isLoading: isTxWaiting, isSuccess: isTxSuccess } = useWaitForTransactionReceipt({ hash });
 
   const [activeFilter, setActiveFilter] = useState<"all" | "alpha" | "graduating" | "risk">("all");
   const [dbTokens, setDbTokens] = useState<DBToken[]>([]);
@@ -974,10 +975,29 @@ export default function Home() {
 
                   {/* Success Toast */}
                   {hash && (
-                    <div className="mt-3 p-2 bg-zinc-900/50 border border-zinc-800 rounded-lg text-xs text-zinc-400 text-center flex flex-col items-center">
-                      <span className="text-emerald-400 font-medium">Tx Sent Successfully!</span>
-                      <a href={`https://explorer.testnet.chain.robinhood.com/tx/${hash}`} target="_blank" rel="noreferrer" className="underline hover:text-white mt-1 transition-colors">
-                        View on Explorer
+                    <div className="mt-3 p-3 bg-zinc-950 border border-zinc-800 rounded-lg text-xs font-mono text-center flex flex-col items-center gap-1.5">
+                      {isTxWaiting && (
+                        <span className="text-yellow-400 font-bold flex items-center gap-2 animate-pulse">
+                          ⏳ Confirming on-chain...
+                        </span>
+                      )}
+                      {isTxSuccess && receipt?.status === 'success' && (
+                        <span className="text-emerald-400 font-bold">
+                          ✅ Execution Confirmed!
+                        </span>
+                      )}
+                      {receipt?.status === 'reverted' && (
+                        <span className="text-red-400 font-bold">
+                          ❌ Transaction Reverted (Incompatible Router or Slippage)
+                        </span>
+                      )}
+                      <a 
+                        href={`https://explorer.testnet.chain.robinhood.com/tx/${hash}`} 
+                        target="_blank" 
+                        rel="noreferrer" 
+                        className="underline text-zinc-400 hover:text-white transition-colors"
+                      >
+                        View on Explorer ↗
                       </a>
                     </div>
                   )}
