@@ -39,8 +39,13 @@ export async function GET(request: Request) {
     const recentLaunches = createdTokens.slice(0, 15);
     const deepScanPromises = recentLaunches.map(async (item) => {
        try {
-         // Hit the /market endpoint to get the actual trade history just like proxyVibe does
-         const marketRes = await fetch(`https://testnet.vibevibe.fun/api/v1/chains/46630/v6/launches/${item.tokenAddress}/market?limit=100`, { headers, cache: 'no-store' });
+         // Attempt v6 first
+         let marketRes = await fetch(`https://testnet.vibevibe.fun/api/v1/chains/46630/v6/launches/${item.tokenAddress}/market?limit=100`, { headers, cache: 'no-store' });
+         
+         // If not found in v6, fall back to legacy (for tokens like $TYSON)
+         if (!marketRes.ok) {
+            marketRes = await fetch(`https://testnet.vibevibe.fun/api/v1/chains/46630/launches/${item.tokenAddress}/market?limit=100`, { headers, cache: 'no-store' });
+         }
          
          if (marketRes.ok) {
             const marketData = await marketRes.json();
@@ -50,12 +55,15 @@ export async function GET(request: Request) {
             let dumpVolumeEth = 0;
             
             trades.forEach((ev: any) => {
-               // Checking common actor properties depending on VibeVibe's payload structure
-               const actor = (ev.actorAddress || ev.maker || ev.userAddress || ev.walletAddress || "").toLowerCase();
+               // Catch every possible actor naming convention across legacy/v6
+               const actor = (ev.actorAddress || ev.maker || ev.userAddress || ev.walletAddress || ev.who || ev.actor || "").toLowerCase();
+               const isSell = ev.side === 'SELL' || ev.isBuy === false || ev.type === 'SELL';
                
-               if (actor === targetDev && (ev.side === 'SELL' || ev.isBuy === false)) {
+               if (actor === targetDev && isSell) {
                   devDumpedEarly = true;
-                  dumpVolumeEth += Number(ev.ethAmount || ev.quoteAmount || ev.pairPrincipalUnits || 0) / 1e18;
+                  const dumpAmount = Number(ev.ethAmount || ev.quoteAmount || ev.pairPrincipalUnits || ev.eth || 0);
+                  // Ensure we don't divide by 1e18 if it's already a clean decimal from legacy API
+                  dumpVolumeEth += (dumpAmount > 1000) ? (dumpAmount / 1e18) : dumpAmount;
                }
             });
             return { ...item, dumperMetrics: { devDumpedEarly, dumpVolumeEth } };
