@@ -160,9 +160,10 @@ function formatTimeLive(totalMinutes: number) {
 }
 
 const getSymbolUsdRate = (symbol: string) => {
+  // VibeVibe Testnet Oracle Mock Rates (Derived from official UI)
   const rates: Record<string, number> = {
-    "ETH": 2600, "WETH": 2600, "NVDA": 120, "AAPL": 225, 
-    "SPCX": 20, "MSFT": 415, "TSLA": 250, "VIBE": 1
+    "ETH": 2600, "WETH": 2600, "NVDA": 465, "AAPL": 225, 
+    "SPCX": 20, "MSFT": 415, "TSLA": 250, "VIBE": 1, "STOCK": 1
   };
   return rates[symbol.toUpperCase()] || 0; 
 };
@@ -457,22 +458,41 @@ export default function Home() {
         const feeEvents = json.data?.feeEvents || [];
         const launch = json.data?.launch || (json.data?.tokenAddress ? json.data : null);
         
-        const ethPriceUsd = json.data?.ethPriceUsd || 2600;
-        let currentPriceUnits = json.data?.marketTrades?.[0] ? Number(json.data.marketTrades[0].executionPricePairUnitsPerToken) / 1e18 : 0;
-        if (currentPriceUnits === 0 && launch?.analytics?.lastPriceWeiPerToken) {
-          currentPriceUnits = Number(launch.analytics.lastPriceWeiPerToken) / 1e18;
+        // 1. DYNAMICALLY RESOLVE SYMBOL
+        let livePairSymbol = launch?.pairSymbol;
+        if (!livePairSymbol) {
+          if (launch?.pairIsNative || launch?.pairCurrencyAddress === "0x0000000000000000000000000000000000000000") {
+            livePairSymbol = "ETH";
+          } else if (launch?.pairCurrencyAddress) {
+            try {
+              livePairSymbol = await publicClient.readContract({ address: launch.pairCurrencyAddress as `0x${string}`, abi: ERC20_ABI, functionName: 'symbol' });
+            } catch { livePairSymbol = selectedToken?.pairSymbol || "TOKEN"; }
+          } else {
+            livePairSymbol = selectedToken?.pairSymbol || "ETH";
+          }
         }
+
+        // 2. RECALCULATE PROGRESS
+        const isGraduated = launch?.lifecycle === "GRADUATED" || launch?.graduated === true || launch?.curve?.lifecycle === "GRADUATED" || selectedToken?.bondingCurveProgress >= 100;
+        const currentPairUnits = Number(launch?.curve?.pairReserveUnits || launch?.curve?.netRaisedWei || 0) / 1e18;
+        const targetPairUnits = Number(launch?.targetPairUnits || launch?.curve?.netTargetWei || 5000000000000000000) / 1e18;
+        
+        let liveCurveProgress = isGraduated ? 100 : (launch?.curve?.progressBps ? launch.curve.progressBps / 100 : Math.min(100, Math.max(0, (currentPairUnits / targetPairUnits) * 100)));
+        if (!isGraduated && liveCurveProgress > 0 && liveCurveProgress < 0.1) liveCurveProgress = 0.1;
+        const liveDepositedStr = `${currentPairUnits.toFixed(4)} / ${targetPairUnits.toFixed(1)}`;
+
+        // 3. CORRECT MARKET CAP MATH
+        const usdRate = getSymbolUsdRate(livePairSymbol);
+        let currentPriceUnits = json.data?.marketTrades?.[0] ? Number(json.data.marketTrades[0].executionPricePairUnitsPerToken) / 1e18 : 0;
+        if (currentPriceUnits === 0 && launch?.analytics?.lastPriceWeiPerToken) currentPriceUnits = Number(launch.analytics.lastPriceWeiPerToken) / 1e18;
         
         const marketCapUnits = currentPriceUnits * 1_000_000_000;
-        const usdRate = getSymbolUsdRate(selectedToken?.pairSymbol || "ETH");
-        
         let displayMarketCap = "$0.00";
         if (marketCapUnits > 0) {
           if (usdRate > 0) {
             displayMarketCap = (marketCapUnits * usdRate).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
           } else {
-            // Fallback: If we don't know the USD price of the stock/token, show the native amount!
-            displayMarketCap = `${marketCapUnits.toLocaleString('en-US', { maximumFractionDigits: 2 })} ${selectedToken?.pairSymbol || 'TOKEN'}`;
+            displayMarketCap = `${marketCapUnits.toLocaleString('en-US', { maximumFractionDigits: 2 })} ${livePairSymbol}`;
           }
         }
 
@@ -485,16 +505,13 @@ export default function Home() {
           const buyVol = Number(stats.buyVolume24hPairUnits || 0) / 1e18;
           const sellVol = Number(stats.sellVolume24hPairUnits || 0) / 1e18;
           const totalVol = buyVol + sellVol;
-          
           if (totalVol > 0) {
             finalVolumeEth = totalVol.toFixed(4);
             finalBuyPct = Math.round((buyVol / totalVol) * 100);
             finalSellPct = 100 - finalBuyPct;
           }
         } else if (launch?.analytics) {
-          if (launch.analytics.volume24hWei) {
-            finalVolumeEth = (Number(launch.analytics.volume24hWei) / 1e18).toFixed(4);
-          }
+          if (launch.analytics.volume24hWei) finalVolumeEth = (Number(launch.analytics.volume24hWei) / 1e18).toFixed(4);
           const buys = Number(launch.analytics.buyCount1h || 0);
           const sells = Number(launch.analytics.sellCount1h || 0);
           const totalTrades = buys + sells;
@@ -506,53 +523,23 @@ export default function Home() {
 
         const socials = launch?.content?.socials || {};
         const hasSocials = !!(socials.x || socials.telegram || socials.website);
-
         const poolAddr = (launch?.graduation?.poolId || launch?.poolAddress || launch?.pool?.address || "").toLowerCase();
 
-        // 1. Use launcherAddress instead of creatorAddress
-        const creatorAddress = (launch?.launcherAddress || selectedToken?.devAddress || "").toLowerCase();
-
-        // 3. Sync the accurate data to Supabase
-        if (selectedToken?.contractAddress) {
-          supabase
-            .from('launches')
-            .update({
-              has_socials: hasSocials,
-              volume_eth: Number(finalVolumeEth),
-              buy_pct: finalBuyPct,
-              sell_pct: finalSellPct
-            })
-            .ilike('token_address', selectedToken.contractAddress)
-            .then(({ error, data }) => {
-              if (error) console.error("Supabase live sync error:", error);
-            });
-        }
-
-        const dynamicScore = calculateVibeScore(
-          selectedToken.blockZeroBuyers,
-          selectedToken.timeSinceLaunchMins,
-          selectedToken.bondingCurveProgress,
-          selectedToken.diamondHandsHoldersPct,
-          Number(finalVolumeEth),
-          finalBuyPct,
-          hasSocials,
-          0
-        );
-
+        // 4. APPLY TO STATE
         setSelectedToken((prev: any) => {
-          const isGraduated = launch?.lifecycle === "GRADUATED" || launch?.graduated === true || launch?.curve?.lifecycle === "GRADUATED" || prev?.bondingCurveProgress >= 100;
-
           return {
             ...prev,
             isLegacy: prev?.isLegacy || json.apiVersion === "1" || (!json.data?.launch && !!json.data?.tokenAddress),
-            bondingCurveProgress: isGraduated ? 100 : prev?.bondingCurveProgress,
+            bondingCurveProgress: liveCurveProgress,
+            ethDeposited: liveDepositedStr,
+            pairSymbol: livePairSymbol,
             symbol: launch?.symbol || prev?.symbol,
             devAddress: launch?.launcherAddress || launch?.creatorAddress || prev?.devAddress,
-            score: dynamicScore,
+            score: calculateVibeScore(prev?.blockZeroBuyers || 0, prev?.timeSinceLaunchMins || 0, liveCurveProgress, prev?.diamondHandsHoldersPct || 50, Number(finalVolumeEth), finalBuyPct, hasSocials, 0),
             hasSocials: hasSocials,
             socialLinks: socials,
             poolAddress: poolAddr || prev?.poolAddress,
-            marketCapUsd: displayMarketCap !== "$0.00" ? displayMarketCap : prev?.marketCapUsd,
+            marketCapUsd: displayMarketCap,
             momentum: { buyPct: finalBuyPct, sellPct: finalSellPct, volumeEth: finalVolumeEth },
             volumeEth: finalVolumeEth,
             safetyChecks: {
