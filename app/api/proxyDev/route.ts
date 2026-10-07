@@ -38,45 +38,45 @@ export async function GET(request: Request) {
     // 2. DEEP-SCAN ENGINE: Scan orderbooks of created tokens
     const recentLaunches = createdTokens.slice(0, 15);
     const deepScanPromises = recentLaunches.map(async (item) => {
-       try {
-         let feeEvents = [];
-         let trades = [];
-         
-         // Loop through all VibeVibe API paths just like proxyVibe
-         for (const path of ['v6/launches', 'v5/launches', 'launches']) {
-            const launchRes = await fetch(`https://testnet.vibevibe.fun/api/v1/chains/46630/${path}/${item.tokenAddress}`, { headers, cache: 'no-store' });
-            if (launchRes.ok) {
-               const detailData = await launchRes.json();
-               feeEvents = detailData?.data?.feeEvents || [];
-               
-               const marketRes = await fetch(`https://testnet.vibevibe.fun/api/v1/chains/46630/${path}/${item.tokenAddress}/market?limit=20`, { headers, cache: 'no-store' });
-               if (marketRes.ok) {
-                   const marketData = await marketRes.json();
-                   trades = marketData?.data?.trades || [];
-               }
-               break; // Exit loop once the correct API version path is found
+      try {
+        let feeEvents = [];
+        let trades = [];
+
+        // Loop through all VibeVibe API paths just like proxyVibe
+        for (const path of ['v6/launches', 'v5/launches', 'launches']) {
+          const launchRes = await fetch(`https://testnet.vibevibe.fun/api/v1/chains/46630/${path}/${item.tokenAddress}`, { headers, cache: 'no-store' });
+          if (launchRes.ok) {
+            const detailData = await launchRes.json();
+            feeEvents = detailData?.data?.feeEvents || [];
+
+            const marketRes = await fetch(`https://testnet.vibevibe.fun/api/v1/chains/46630/${path}/${item.tokenAddress}/market?limit=20`, { headers, cache: 'no-store' });
+            if (marketRes.ok) {
+              const marketData = await marketRes.json();
+              trades = marketData?.data?.trades || [];
             }
-         }
-         
-         let devDumpedEarly = false;
-         let dumpVolumeEth = 0;
-         
-         // Merge all possible event arrays to prevent stealth dumps
-         const allEvents = [...feeEvents, ...trades];
-         
-         allEvents.forEach((ev: any) => {
-            const actor = (ev.actorAddress || ev.maker || ev.userAddress || ev.walletAddress || ev.who || ev.actor || "").toLowerCase();
-            const isSell = ev.side === 'SELL' || ev.isBuy === false || ev.type === 'SELL' || ev.source === 'CURVE_SELL';
-            
-            if (actor === targetDev && isSell) {
-               devDumpedEarly = true;
-               const dumpAmount = Number(ev.ethAmount || ev.quoteAmount || ev.pairPrincipalUnits || ev.executionPricePairUnitsPerToken || ev.eth || 0);
-               dumpVolumeEth += (dumpAmount > 1000) ? (dumpAmount / 1e18) : dumpAmount;
-            }
-         });
-         
-         return { ...item, dumperMetrics: { devDumpedEarly, dumpVolumeEth } };
-       } catch { return { ...item, dumperMetrics: { devDumpedEarly: false, dumpVolumeEth: 0 } }; }
+            break; // Exit loop once the correct API version path is found
+          }
+        }
+
+        let devDumpedEarly = false;
+        let dumpVolumeEth = 0;
+
+        // Merge all possible event arrays to prevent stealth dumps
+        const allEvents = [...feeEvents, ...trades];
+
+        allEvents.forEach((ev: any) => {
+          const actor = (ev.actorAddress || ev.maker || ev.userAddress || ev.walletAddress || ev.who || ev.actor || "").toLowerCase();
+          const isSell = ev.side === 'SELL' || ev.isBuy === false || ev.type === 'SELL' || ev.source === 'CURVE_SELL';
+
+          if (actor === targetDev && isSell) {
+            devDumpedEarly = true;
+            const dumpAmount = Number(ev.ethAmount || ev.quoteAmount || ev.pairPrincipalUnits || ev.executionPricePairUnitsPerToken || ev.eth || 0);
+            dumpVolumeEth += (dumpAmount > 1000) ? (dumpAmount / 1e18) : dumpAmount;
+          }
+        });
+
+        return { ...item, dumperMetrics: { devDumpedEarly, dumpVolumeEth } };
+      } catch { return { ...item, dumperMetrics: { devDumpedEarly: false, dumpVolumeEth: 0 } }; }
     });
 
     const scannedLaunches = await Promise.all(deepScanPromises);
