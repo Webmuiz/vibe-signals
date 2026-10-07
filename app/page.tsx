@@ -638,48 +638,46 @@ export default function Home() {
         .catch(err => console.error("Holders fetch failed:", err));
     }
 
-    const creatorAddr = selectedToken?.devAddress;
-    if (creatorAddr && creatorAddr.startsWith("0x")) {
-      fetch(`/api/proxyDev?address=${creatorAddr}`)
-        .then(res => res.json())
-        .then(json => {
-          if (!json?.data?.items) return;
-
-          const allItems = json.data.items;
-          const target = creatorAddr.toLowerCase();
-
-          // Filter strictly to tokens this wallet created/launched
-          const createdTokens = allItems.filter((item: any) => {
-            const launcher = (item.launcherAddress || item.creatorAddress || "").toLowerCase();
-            return launcher === target;
-          });
-
-          const totalLaunches = createdTokens.length;
-          const graduatedCount = createdTokens.filter((item: any) =>
-            item.lifecycle === "GRADUATED" || item.graduated === true || item.curve?.lifecycle === "GRADUATED"
-          ).length;
-
-          const rate = totalLaunches > 0 ? Math.round((graduatedCount / totalLaunches) * 100) : 0;
-
-          let label = "NEUTRAL / UNPROVEN";
-          let color = "text-yellow-400 bg-yellow-400/10 border-yellow-400/30";
-
-          if (totalLaunches > 0) {
-            if (rate >= 40) {
-              label = "HIGH GRADUATION RATE";
-              color = "text-emerald-400 bg-emerald-400/10 border-emerald-400/30";
-            } else if (rate > 0 && rate < 40) {
-              label = "MID GRADUATION RATE";
-              color = "text-yellow-400 bg-yellow-400/10 border-yellow-400/30";
-            } else {
-              label = "LOW GRADUATION RATE";
-              color = "text-red-400 bg-red-400/10 border-red-400/30";
-            }
+    const creatorWallet = (selectedToken?.devAddress || "").toLowerCase();
+    if (creatorWallet && creatorWallet !== "0x" && creatorWallet !== "0x0000000000000000000000000000000000000000") {
+      fetch(`/api/proxyDev?address=${creatorWallet}`)
+        .then(devRes => devRes.json())
+        .then(devJson => {
+          const profiler = devJson?.data?.profiler;
+          if (!profiler) return;
+          
+          let devLabel = "NEUTRAL / UNPROVEN";
+          let devColor = "text-zinc-500 border-zinc-700 bg-zinc-900";
+          
+          if (profiler.isSerialDumper) {
+            devLabel = "🚨 SERIAL DUMPER / RUGGER";
+            devColor = "text-red-400 border-red-500/30 bg-red-500/10";
+          } else if (profiler.graduationRate >= 40 && profiler.totalLaunches >= 2) {
+            devLabel = "💎 DIAMOND DEV";
+            devColor = "text-emerald-400 border-emerald-500/30 bg-emerald-500/10";
+          } else if (profiler.totalLaunches > 0) {
+            devLabel = "SOLID BUILDER";
+            devColor = "text-yellow-400 border-yellow-500/30 bg-yellow-500/10";
           }
+          
+          setDevStats({ launches: profiler.totalLaunches, gradRate: profiler.graduationRate, label: devLabel, color: devColor });
 
-          setDevStats({ launches: totalLaunches, gradRate: rate, label, color });
-        })
-        .catch(err => console.error("Failed to fetch dev profile:", err));
+          setSelectedToken((prevToken: any) => {
+            if (!prevToken) return prevToken;
+            const newScore = profiler.isSerialDumper ? Math.max(1, prevToken.score - 40) : prevToken.score;
+            return {
+              ...prevToken,
+              score: newScore,
+              safetyChecks: {
+                ...prevToken.safetyChecks,
+                dumperRisk: {
+                  label: profiler.isSerialDumper ? `🚨 DUMPED ${profiler.totalPreGradDumps} PAST COINS` : `✅ Clean History (${profiler.totalLaunches} Launches)`,
+                  safe: !profiler.isSerialDumper
+                }
+              }
+            };
+          });
+        }).catch(err => console.error("Profiler failed:", err));
     }
 
     return () => { isMounted = false; };
@@ -1088,6 +1086,12 @@ export default function Home() {
                       <span className="text-zinc-500">Creator Wallet</span>
                       <span className={selectedToken.safetyChecks.creatorBag.safe ? 'text-emerald-400 font-bold' : 'text-red-400 font-bold'}>
                         {selectedToken.safetyChecks.creatorBag.label}
+                      </span>
+                    </li>
+                    <li className="flex justify-between items-center p-3 bg-zinc-950 rounded-lg border border-zinc-800">
+                      <span className="text-zinc-500">Developer Discipline</span>
+                      <span className={selectedToken.safetyChecks?.dumperRisk?.safe ? 'text-emerald-400 font-bold' : 'text-red-500 font-bold bg-red-500/10 px-2 py-0.5 rounded border border-red-500/30 animate-pulse'}>
+                        {selectedToken.safetyChecks?.dumperRisk?.label || "Scanning..."}
                       </span>
                     </li>
                   </ul>
