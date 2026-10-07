@@ -38,45 +38,37 @@ export async function GET(request: Request) {
     // 2. DEEP-SCAN ENGINE: Scan orderbooks of created tokens
     const recentLaunches = createdTokens.slice(0, 15);
     const deepScanPromises = recentLaunches.map(async (item) => {
-      try {
-        let feeEvents = [];
-        let trades = [];
+       try {
+         // Target the dev's specific wallet history to bypass global transaction pagination
+         let activityRes = await fetch(`https://testnet.vibevibe.fun/api/v1/chains/46630/launches/${item.tokenAddress}/activity?limit=100&actorAddress=${targetDev}`, { headers, cache: 'no-store' });
+         
+         // If legacy fails, fallback to v6 activity path
+         if (!activityRes.ok) {
+            activityRes = await fetch(`https://testnet.vibevibe.fun/api/v1/chains/46630/v6/launches/${item.tokenAddress}/activity?limit=100&actorAddress=${targetDev}`, { headers, cache: 'no-store' });
+         }
 
-        // Loop through all VibeVibe API paths just like proxyVibe
-        for (const path of ['v6/launches', 'v5/launches', 'launches']) {
-          const launchRes = await fetch(`https://testnet.vibevibe.fun/api/v1/chains/46630/${path}/${item.tokenAddress}`, { headers, cache: 'no-store' });
-          if (launchRes.ok) {
-            const detailData = await launchRes.json();
-            feeEvents = detailData?.data?.feeEvents || [];
-
-            const marketRes = await fetch(`https://testnet.vibevibe.fun/api/v1/chains/46630/${path}/${item.tokenAddress}/market?limit=20`, { headers, cache: 'no-store' });
-            if (marketRes.ok) {
-              const marketData = await marketRes.json();
-              trades = marketData?.data?.trades || [];
-            }
-            break; // Exit loop once the correct API version path is found
-          }
-        }
-
-        let devDumpedEarly = false;
-        let dumpVolumeEth = 0;
-
-        // Merge all possible event arrays to prevent stealth dumps
-        const allEvents = [...feeEvents, ...trades];
-
-        allEvents.forEach((ev: any) => {
-          const actor = (ev.actorAddress || ev.maker || ev.userAddress || ev.walletAddress || ev.who || ev.actor || "").toLowerCase();
-          const isSell = ev.side === 'SELL' || ev.isBuy === false || ev.type === 'SELL' || ev.source === 'CURVE_SELL';
-
-          if (actor === targetDev && isSell) {
-            devDumpedEarly = true;
-            const dumpAmount = Number(ev.ethAmount || ev.quoteAmount || ev.pairPrincipalUnits || ev.executionPricePairUnitsPerToken || ev.eth || 0);
-            dumpVolumeEth += (dumpAmount > 1000) ? (dumpAmount / 1e18) : dumpAmount;
-          }
-        });
-
-        return { ...item, dumperMetrics: { devDumpedEarly, dumpVolumeEth } };
-      } catch { return { ...item, dumperMetrics: { devDumpedEarly: false, dumpVolumeEth: 0 } }; }
+         if (activityRes.ok) {
+            const activityJson = await activityRes.json();
+            const events = activityJson?.data?.items || [];
+            
+            let devDumpedEarly = false;
+            let dumpVolumeEth = 0;
+            
+            events.forEach((ev: any) => {
+               // We already filtered by actorAddress in the URL, but we double-check here
+               const actor = (ev.actorAddress || "").toLowerCase();
+               const isSell = ev.side === 'SELL' || ev.type === 'SELL';
+               
+               if (actor === targetDev && isSell) {
+                  devDumpedEarly = true;
+                  const ethWei = Number(ev.amountOutBaseUnits || 0);
+                  dumpVolumeEth += ethWei / 1e18;
+               }
+            });
+            return { ...item, dumperMetrics: { devDumpedEarly, dumpVolumeEth } };
+         }
+         return { ...item, dumperMetrics: { devDumpedEarly: false, dumpVolumeEth: 0 } };
+       } catch { return { ...item, dumperMetrics: { devDumpedEarly: false, dumpVolumeEth: 0 } }; }
     });
 
     const scannedLaunches = await Promise.all(deepScanPromises);
