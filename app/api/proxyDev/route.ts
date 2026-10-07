@@ -10,7 +10,7 @@ export async function GET(request: Request) {
     const headers = { 'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0' };
     const targetDev = address.toLowerCase();
 
-    // 1. Fetch both legacy and v6 lists
+    // 1. Fetch all launches created by this wallet
     const [legacyRes, v6Res] = await Promise.allSettled([
       fetch(`https://testnet.vibevibe.fun/api/v1/chains/46630/launches?creatorAddress=${address}&limit=50`, { headers, cache: 'no-store' }),
       fetch(`https://testnet.vibevibe.fun/api/v1/chains/46630/v6/wallets/${address}/launches?limit=50`, { headers, cache: 'no-store' })
@@ -26,77 +26,74 @@ export async function GET(request: Request) {
       if (v6Data?.data?.items) combinedItems = [...combinedItems, ...v6Data.data.items];
     }
 
-    // Deduplicate by tokenAddress
+    // Deduplicate and isolate tokens created by this wallet
     const deduplicated = Array.from(new Map(combinedItems.map((item) => [item.tokenAddress.toLowerCase(), item])).values());
-
-    // Filter strictly to tokens this wallet actually CREATED
     const createdTokens = deduplicated.filter((item: any) => {
       const launcher = (item.launcherAddress || item.creatorAddress || "").toLowerCase();
       return launcher === targetDev;
     });
 
-    // 2. DEEP-SCAN ENGINE: Scan orderbooks of created tokens
-    const recentLaunches = createdTokens.slice(0, 15);
-    const deepScanPromises = recentLaunches.map(async (item) => {
-       try {
-         // Target the dev's specific wallet history to bypass global transaction pagination
-         let activityRes = await fetch(`https://testnet.vibevibe.fun/api/v1/chains/46630/launches/${item.tokenAddress}/activity?limit=100&actorAddress=${targetDev}`, { headers, cache: 'no-store' });
-         
-         // If legacy fails, fallback to v6 activity path
-         if (!activityRes.ok) {
-            activityRes = await fetch(`https://testnet.vibevibe.fun/api/v1/chains/46630/v6/launches/${item.tokenAddress}/activity?limit=100&actorAddress=${targetDev}`, { headers, cache: 'no-store' });
-         }
+    const createdTokenSet = new Set(createdTokens.map((t: any) => t.tokenAddress.toLowerCase()));
+    const graduatedTokenSet = new Set(
+      createdTokens
+        .filter((item: any) => item.lifecycle === "GRADUATED" || item.graduated === true || item.curve?.lifecycle === "GRADUATED")
+        .map((t: any) => t.tokenAddress.toLowerCase())
+    );
 
-         if (activityRes.ok) {
-            const activityJson = await activityRes.json();
-            const events = activityJson?.data?.items || [];
-            
-            let devDumpedEarly = false;
-            let dumpVolumeEth = 0;
-            
-            events.forEach((ev: any) => {
-               // We already filtered by actorAddress in the URL, but we double-check here
-               const actor = (ev.actorAddress || "").toLowerCase();
-               const isSell = ev.side === 'SELL' || ev.type === 'SELL';
-               
-               if (actor === targetDev && isSell) {
-                  devDumpedEarly = true;
-                  const ethWei = Number(ev.amountOutBaseUnits || 0);
-                  dumpVolumeEth += ethWei / 1e18;
-               }
-            });
-            return { ...item, dumperMetrics: { devDumpedEarly, dumpVolumeEth } };
-         }
-         return { ...item, dumperMetrics: { devDumpedEarly: false, dumpVolumeEth: 0 } };
-       } catch { return { ...item, dumperMetrics: { devDumpedEarly: false, dumpVolumeEth: 0 } }; }
-    });
+    // 2. Fetch the Developer's Personal Activity Ledger (Immune to token trade volume)
+    const [legacyActRes, v6ActRes] = await Promise.allSettled([
+      fetch(`https://testnet.vibevibe.fun/api/v1/chains/46630/wallets/${address}/activity?limit=100`, { headers, cache: 'no-store' }),
+      fetch(`https://testnet.vibevibe.fun/api/v1/chains/46630/v6/wallets/${address}/activity?limit=100`, { headers, cache: 'no-store' })
+    ]);
 
-    const scannedLaunches = await Promise.all(deepScanPromises);
+    let walletEvents: any[] = [];
+    if (legacyActRes.status === 'fulfilled' && legacyActRes.value.ok) {
+      const legacyAct = await legacyActRes.value.json();
+      if (legacyAct?.data?.items) walletEvents = [...walletEvents, ...legacyAct.data.items];
+    }
+    if (v6ActRes.status === 'fulfilled' && v6ActRes.value.ok) {
+      const v6Act = await v6ActRes.value.json();
+      if (v6Act?.data?.items) walletEvents = [...walletEvents, ...v6Act.data.items];
+    }
 
-    // 3. Aggregate Lifetime Metrics on created tokens only
-    let totalPreGradDumps = 0;
+    const uniqueWalletEvents = Array.from(
+      new Map(walletEvents.map((ev: any) => [ev.id || `${ev.txHash}-${ev.logIndex}`, ev])).values()
+    );
+
+    // 3. Mathematical Verification: Detect sells on self-deployed tokens prior to graduation
+    const dumpedTokenAddresses = new Set<string>();
     let totalDumpVolumeEth = 0;
 
-    scannedLaunches.forEach((launch) => {
-      if (launch.dumperMetrics?.devDumpedEarly) {
-        totalPreGradDumps += 1;
-        totalDumpVolumeEth += launch.dumperMetrics.dumpVolumeEth;
+    uniqueWalletEvents.forEach((ev: any) => {
+      const isSell = ev.side === 'SELL' || ev.type === 'SELL';
+      const tokenAddr = (ev.tokenAddress || "").toLowerCase();
+
+      // Only evaluate if this sell was executed on a token THEY deployed
+      if (isSell && createdTokenSet.has(tokenAddr)) {
+        const isPreGraduation = ev.route === 'CURVE' || !graduatedTokenSet.has(tokenAddr);
+        if (isPreGraduation) {
+          dumpedTokenAddresses.add(tokenAddr);
+          const ethWei = Number(ev.amountOutBaseUnits || ev.ethAmount || ev.pairPrincipalUnits || 0);
+          totalDumpVolumeEth += (ethWei > 1000) ? (ethWei / 1e18) : ethWei;
+        }
       }
     });
 
     const totalLaunches = createdTokens.length;
-    const graduatedCount = createdTokens.filter((item: any) => item.lifecycle === "GRADUATED" || item.graduated === true || item.curve?.lifecycle === "GRADUATED").length;
+    const graduatedCount = graduatedTokenSet.size;
+    const totalPreGradDumps = dumpedTokenAddresses.size;
 
     return NextResponse.json({
       data: {
-        items: [...scannedLaunches, ...createdTokens.slice(15)],
+        items: createdTokens,
         profiler: {
           totalLaunches,
           graduatedCount,
           graduationRate: totalLaunches > 0 ? Math.round((graduatedCount / totalLaunches) * 100) : 0,
           totalPreGradDumps,
           totalDumpVolumeEth,
-          isSerialDumper: totalPreGradDumps > 0
+          isSerialDumper: totalPreGradDumps > 0,
+          dumpedTokens: Array.from(dumpedTokenAddresses)
         },
         page: { totalCount: totalLaunches }
       }
