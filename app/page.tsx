@@ -541,6 +541,16 @@ export default function Home() {
           }
         }
 
+        const volumeUsdValue = Number(finalVolumeEth) * usdRate;
+        let displayVolumeUsd = "$0.00";
+        if (Number(finalVolumeEth) > 0) {
+          if (usdRate > 0) {
+            displayVolumeUsd = volumeUsdValue.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+          } else {
+            displayVolumeUsd = `${finalVolumeEth} ${livePairSymbol}`;
+          }
+        }
+
         const socials = launch?.content?.socials || {};
         const hasSocials = !!(socials.x || socials.telegram || socials.website);
         const poolAddr = (launch?.graduation?.poolId || launch?.poolAddress || launch?.pool?.address || "").toLowerCase();
@@ -560,8 +570,9 @@ export default function Home() {
             socialLinks: socials,
             poolAddress: poolAddr || prev?.poolAddress,
             marketCapUsd: displayMarketCap,
-            momentum: { buyPct: finalBuyPct, sellPct: finalSellPct, volumeEth: finalVolumeEth },
+            momentum: { buyPct: finalBuyPct, sellPct: finalSellPct, volumeEth: finalVolumeEth, volumeUsd: displayVolumeUsd },
             volumeEth: finalVolumeEth,
+            volumeUsd: displayVolumeUsd,
             safetyChecks: {
               ...prev?.safetyChecks,
               mev: { label: feeEvents.length <= 5 ? "Low Risk (< 5%)" : "Normal", safe: true },
@@ -828,7 +839,7 @@ export default function Home() {
                   <div>
                     <div className="flex justify-between text-xs mb-2">
                       <span className="text-zinc-400 uppercase tracking-wider font-bold">24H MOMENTUM</span>
-                      <span className="text-zinc-500">24H Volume: {isSyncingLive ? <span className="animate-pulse">...</span> : (selectedToken.momentum?.volumeEth || selectedToken.volumeEth || '0.0000')} {selectedToken.pairSymbol}</span>
+                      <span className="text-zinc-500">24H Volume: {isSyncingLive ? <span className="animate-pulse">...</span> : (selectedToken.momentum?.volumeUsd || selectedToken.volumeUsd || `${selectedToken.momentum?.volumeEth || selectedToken.volumeEth || '0.0000'} ${selectedToken.pairSymbol}`)}</span>
                     </div>
                     <div className="flex justify-between text-xs mb-2">
                       <span className="text-emerald-400 font-bold">{selectedToken.momentum?.buyPct ?? 50}% Buys</span>
