@@ -38,29 +38,30 @@ export async function GET(request: Request) {
     // 2. DEEP-SCAN ENGINE: Scan orderbooks of created tokens
     const recentLaunches = createdTokens.slice(0, 15);
     const deepScanPromises = recentLaunches.map(async (item) => {
-      try {
-        let launchDetailRes = await fetch(`https://testnet.vibevibe.fun/api/v1/chains/46630/v6/launches/${item.tokenAddress}`, { headers, cache: 'no-store' });
-        if (!launchDetailRes.ok) {
-          launchDetailRes = await fetch(`https://testnet.vibevibe.fun/api/v1/chains/46630/launches/${item.tokenAddress}`, { headers, cache: 'no-store' });
-        }
-
-        if (launchDetailRes.ok) {
-          const detailData = await launchDetailRes.json();
-          const feeEvents = detailData?.data?.feeEvents || [];
-          let devDumpedEarly = false;
-          let dumpVolumeEth = 0;
-
-          feeEvents.forEach((ev: any) => {
-            const actor = (ev.actorAddress || "").toLowerCase();
-            if (actor === targetDev && (ev.side === 'SELL' || ev.source === 'CURVE_SELL')) {
-              devDumpedEarly = true;
-              dumpVolumeEth += Number(ev.pairPrincipalUnits || 0) / 1e18;
-            }
-          });
-          return { ...item, dumperMetrics: { devDumpedEarly, dumpVolumeEth } };
-        }
-        return { ...item, dumperMetrics: { devDumpedEarly: false, dumpVolumeEth: 0 } };
-      } catch { return { ...item, dumperMetrics: { devDumpedEarly: false, dumpVolumeEth: 0 } }; }
+       try {
+         // Hit the /market endpoint to get the actual trade history just like proxyVibe does
+         const marketRes = await fetch(`https://testnet.vibevibe.fun/api/v1/chains/46630/v6/launches/${item.tokenAddress}/market?limit=100`, { headers, cache: 'no-store' });
+         
+         if (marketRes.ok) {
+            const marketData = await marketRes.json();
+            const trades = marketData?.data?.trades || [];
+            
+            let devDumpedEarly = false;
+            let dumpVolumeEth = 0;
+            
+            trades.forEach((ev: any) => {
+               // Checking common actor properties depending on VibeVibe's payload structure
+               const actor = (ev.actorAddress || ev.maker || ev.userAddress || ev.walletAddress || "").toLowerCase();
+               
+               if (actor === targetDev && (ev.side === 'SELL' || ev.isBuy === false)) {
+                  devDumpedEarly = true;
+                  dumpVolumeEth += Number(ev.ethAmount || ev.quoteAmount || ev.pairPrincipalUnits || 0) / 1e18;
+               }
+            });
+            return { ...item, dumperMetrics: { devDumpedEarly, dumpVolumeEth } };
+         }
+         return { ...item, dumperMetrics: { devDumpedEarly: false, dumpVolumeEth: 0 } };
+       } catch { return { ...item, dumperMetrics: { devDumpedEarly: false, dumpVolumeEth: 0 } }; }
     });
 
     const scannedLaunches = await Promise.all(deepScanPromises);
