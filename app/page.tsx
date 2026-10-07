@@ -159,6 +159,14 @@ function formatTimeLive(totalMinutes: number) {
   return `${hours}h ${mins}m`;
 }
 
+const getSymbolUsdRate = (symbol: string) => {
+  const rates: Record<string, number> = {
+    "ETH": 2600, "WETH": 2600, "NVDA": 120, "AAPL": 225, 
+    "SPCX": 20, "MSFT": 415, "TSLA": 250, "VIBE": 1
+  };
+  return rates[symbol.toUpperCase()] || 0; 
+};
+
 export default function Home() {
   const { address, isConnected } = useAccount();
   const { sendTransaction, isPending: isTxPending, data: hash } = useSendTransaction();
@@ -369,6 +377,25 @@ export default function Home() {
             const hasSocials = !!(socials.x || socials.telegram || socials.website);
             const vibeScore = calculateVibeScore(0, timeLiveMins, curveProgress, 50, totalVolume, buyRatio, hasSocials);
 
+            let resolvedSymbol = launch.pairSymbol;
+            if (!resolvedSymbol) {
+              if (launch.pairIsNative || launch.pairCurrencyAddress === "0x0000000000000000000000000000000000000000") {
+                resolvedSymbol = "ETH";
+              } else if (launch.pairCurrencyAddress) {
+                try {
+                  resolvedSymbol = await publicClient.readContract({
+                    address: launch.pairCurrencyAddress as `0x${string}`,
+                    abi: ERC20_ABI,
+                    functionName: 'symbol',
+                  });
+                } catch (err) {
+                  resolvedSymbol = "TOKEN";
+                }
+              } else {
+                resolvedSymbol = "ETH";
+              }
+            }
+
             const mappedToken = {
               isLegacy: isLegacy,
               id: launch.id || "0",
@@ -380,7 +407,7 @@ export default function Home() {
               timeSinceLaunchMins: timeLiveMins,
               bondingCurveProgress: curveProgress,
               ethDeposited: `${currentEth.toFixed(4)} / ${targetEth.toFixed(1)}`,
-              pairSymbol: "ETH",
+              pairSymbol: resolvedSymbol,
               blockZeroBuyers: 0,
               diamondHandsHoldersPct: 50,
               totalSupply: 1000000000,
@@ -431,12 +458,23 @@ export default function Home() {
         const launch = json.data?.launch || (json.data?.tokenAddress ? json.data : null);
         
         const ethPriceUsd = json.data?.ethPriceUsd || 2600;
-        let currentPriceEth = json.data?.marketTrades?.[0] ? Number(json.data.marketTrades[0].executionPricePairUnitsPerToken) / 1e18 : 0;
-        if (currentPriceEth === 0 && launch?.analytics?.lastPriceWeiPerToken) {
-          currentPriceEth = Number(launch.analytics.lastPriceWeiPerToken) / 1e18;
+        let currentPriceUnits = json.data?.marketTrades?.[0] ? Number(json.data.marketTrades[0].executionPricePairUnitsPerToken) / 1e18 : 0;
+        if (currentPriceUnits === 0 && launch?.analytics?.lastPriceWeiPerToken) {
+          currentPriceUnits = Number(launch.analytics.lastPriceWeiPerToken) / 1e18;
         }
-        const marketCapEth = currentPriceEth * 1_000_000_000;
-        const marketCapUsd = marketCapEth > 0 ? (marketCapEth * ethPriceUsd).toLocaleString('en-US', { style: 'currency', currency: 'USD' }) : "$0.00";
+        
+        const marketCapUnits = currentPriceUnits * 1_000_000_000;
+        const usdRate = getSymbolUsdRate(selectedToken?.pairSymbol || "ETH");
+        
+        let displayMarketCap = "$0.00";
+        if (marketCapUnits > 0) {
+          if (usdRate > 0) {
+            displayMarketCap = (marketCapUnits * usdRate).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+          } else {
+            // Fallback: If we don't know the USD price of the stock/token, show the native amount!
+            displayMarketCap = `${marketCapUnits.toLocaleString('en-US', { maximumFractionDigits: 2 })} ${selectedToken?.pairSymbol || 'TOKEN'}`;
+          }
+        }
 
         const stats = json.data?.marketStats;
         let finalVolumeEth = "0.0000";
@@ -514,7 +552,7 @@ export default function Home() {
             hasSocials: hasSocials,
             socialLinks: socials,
             poolAddress: poolAddr || prev?.poolAddress,
-            marketCapUsd: marketCapUsd !== "$0.00" ? marketCapUsd : prev?.marketCapUsd,
+            marketCapUsd: displayMarketCap !== "$0.00" ? displayMarketCap : prev?.marketCapUsd,
             momentum: { buyPct: finalBuyPct, sellPct: finalSellPct, volumeEth: finalVolumeEth },
             volumeEth: finalVolumeEth,
             safetyChecks: {
@@ -783,7 +821,7 @@ export default function Home() {
                   <div>
                     <div className="flex justify-between text-xs mb-2">
                       <span className="text-zinc-400 uppercase tracking-wider font-bold">24H MOMENTUM</span>
-                      <span className="text-zinc-500">24H Volume: {isSyncingLive ? <span className="animate-pulse">...</span> : (selectedToken.momentum?.volumeEth || selectedToken.volumeEth || '0.0000')} ETH</span>
+                      <span className="text-zinc-500">24H Volume: {isSyncingLive ? <span className="animate-pulse">...</span> : (selectedToken.momentum?.volumeEth || selectedToken.volumeEth || '0.0000')} {selectedToken.pairSymbol}</span>
                     </div>
                     <div className="flex justify-between text-xs mb-2">
                       <span className="text-emerald-400 font-bold">{selectedToken.momentum?.buyPct ?? 50}% Buys</span>
