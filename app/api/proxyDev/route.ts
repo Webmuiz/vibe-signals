@@ -38,35 +38,35 @@ export async function GET(request: Request) {
     // 2. DEEP-SCAN ENGINE: Scan orderbooks of created tokens
     const recentLaunches = createdTokens.slice(0, 15);
     const deepScanPromises = recentLaunches.map(async (item) => {
-       try {
-         let detailData = null;
-         
-         // Match proxyVibe's exact routing to support v5 tokens like $TYSON
-         for (const path of ['v6/launches', 'v5/launches', 'launches']) {
-            const res = await fetch(`https://testnet.vibevibe.fun/api/v1/chains/46630/${path}/${item.tokenAddress}`, { headers, cache: 'no-store' });
-            if (res.ok) {
-               detailData = await res.json();
-               break;
+      try {
+        let detailData = null;
+
+        // Match proxyVibe's exact routing to support v5 tokens like $TYSON
+        for (const path of ['v6/launches', 'v5/launches', 'launches']) {
+          const res = await fetch(`https://testnet.vibevibe.fun/api/v1/chains/46630/${path}/${item.tokenAddress}`, { headers, cache: 'no-store' });
+          if (res.ok) {
+            detailData = await res.json();
+            break;
+          }
+        }
+
+        if (detailData) {
+          const feeEvents = detailData?.data?.feeEvents || [];
+
+          let devDumpedEarly = false;
+          let dumpVolumeEth = 0;
+
+          feeEvents.forEach((ev: any) => {
+            const actor = (ev.actorAddress || "").toLowerCase();
+            if (actor === targetDev && (ev.side === 'SELL' || ev.source === 'CURVE_SELL')) {
+              devDumpedEarly = true;
+              dumpVolumeEth += Number(ev.pairPrincipalUnits || 0) / 1e18;
             }
-         }
-         
-         if (detailData) {
-            const feeEvents = detailData?.data?.feeEvents || [];
-            
-            let devDumpedEarly = false;
-            let dumpVolumeEth = 0;
-            
-            feeEvents.forEach((ev: any) => {
-               const actor = (ev.actorAddress || "").toLowerCase();
-               if (actor === targetDev && (ev.side === 'SELL' || ev.source === 'CURVE_SELL')) {
-                  devDumpedEarly = true;
-                  dumpVolumeEth += Number(ev.pairPrincipalUnits || 0) / 1e18;
-               }
-            });
-            return { ...item, dumperMetrics: { devDumpedEarly, dumpVolumeEth } };
-         }
-         return { ...item, dumperMetrics: { devDumpedEarly: false, dumpVolumeEth: 0 } };
-       } catch { return { ...item, dumperMetrics: { devDumpedEarly: false, dumpVolumeEth: 0 } }; }
+          });
+          return { ...item, dumperMetrics: { devDumpedEarly, dumpVolumeEth } };
+        }
+        return { ...item, dumperMetrics: { devDumpedEarly: false, dumpVolumeEth: 0 } };
+      } catch { return { ...item, dumperMetrics: { devDumpedEarly: false, dumpVolumeEth: 0 } }; }
     });
 
     const scannedLaunches = await Promise.all(deepScanPromises);
