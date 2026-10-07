@@ -67,18 +67,18 @@ interface DBToken {
 
 function getDevProfile(devAddress: string, allTokens: DBToken[]) {
   if (!devAddress || !allTokens) return { label: "Neutral / Unproven Dev", color: "text-yellow-400 bg-yellow-400/10 border-yellow-400/30", launches: 1, gradRate: 0 };
-  
+
   const devLaunches = allTokens.filter(t => (t.dev_address || t.devAddress || "").toLowerCase() === devAddress.toLowerCase());
   const launches = devLaunches.length;
-  
+
   if (launches === 0) return { label: "Neutral / Unproven Dev", color: "text-yellow-400 bg-yellow-400/10 border-yellow-400/30", launches: 1, gradRate: 0 };
-  
+
   const graduated = devLaunches.filter(t => (t.curve_progress || t.curveProgress || 0) >= 100).length;
   const gradRate = Math.round((graduated / launches) * 100);
-  
+
   let label = "Neutral / Unproven Dev";
   let color = "text-yellow-400 bg-yellow-400/10 border-yellow-400/30";
-  
+
   if (launches >= 2 && gradRate >= 40) {
     label = "Chad Dev / Proven Builder";
     color = "text-emerald-400 bg-emerald-400/10 border-emerald-400/30";
@@ -86,7 +86,7 @@ function getDevProfile(devAddress: string, allTokens: DBToken[]) {
     label = "Serial Rugger / High Dump Risk";
     color = "text-red-400 bg-red-400/10 border-red-400/30";
   }
-  
+
   return { label, color, launches, gradRate };
 }
 
@@ -162,10 +162,10 @@ function formatTimeLive(totalMinutes: number) {
 const getSymbolUsdRate = (symbol: string) => {
   // VibeVibe Testnet Oracle Mock Rates (Derived from official UI)
   const rates: Record<string, number> = {
-    "ETH": 2600, "WETH": 2600, "NVDA": 465, "AAPL": 225, 
+    "ETH": 2600, "WETH": 2600, "NVDA": 465, "AAPL": 225,
     "SPCX": 20, "MSFT": 415, "TSLA": 250, "VIBE": 1, "STOCK": 1
   };
-  return rates[symbol.toUpperCase()] || 0; 
+  return rates[symbol.toUpperCase()] || 0;
 };
 
 export default function Home() {
@@ -187,7 +187,7 @@ export default function Home() {
   const [slippage, setSlippage] = useState<number>(15);
   const [txHash, setTxHash] = useState<string | null>(null);
   const [tradeTab, setTradeTab] = useState<'buy' | 'sell'>('buy');
-  const [topHolders, setTopHolders] = useState<{address: string, pct: number}[]>([]);
+  const [topHolders, setTopHolders] = useState<{ address: string, pct: number }[]>([]);
   const [devStats, setDevStats] = useState<{ launches: number; gradRate: number; label: string; color: string; } | null>(null);
 
   // Fetch Native ETH Balance
@@ -457,6 +457,8 @@ export default function Home() {
         if (!isMounted) return;
         const feeEvents = json.data?.feeEvents || [];
         const launch = json.data?.launch || (json.data?.tokenAddress ? json.data : null);
+
+        const globalEthPrice = json.data?.ethPriceUsd || 2600;
         
         // 1. DYNAMICALLY RESOLVE SYMBOL
         let livePairSymbol = launch?.pairSymbol;
@@ -472,19 +474,27 @@ export default function Home() {
           }
         }
 
-        // 2. RECALCULATE PROGRESS
-        const isGraduated = launch?.lifecycle === "GRADUATED" || launch?.graduated === true || launch?.curve?.lifecycle === "GRADUATED" || selectedToken?.bondingCurveProgress >= 100;
-        const currentPairUnits = Number(launch?.curve?.pairReserveUnits || launch?.curve?.netRaisedWei || 0) / 1e18;
-        const targetPairUnits = Number(launch?.targetPairUnits || launch?.curve?.netTargetWei || 5000000000000000000) / 1e18;
-        
-        let liveCurveProgress = isGraduated ? 100 : (launch?.curve?.progressBps ? launch.curve.progressBps / 100 : Math.min(100, Math.max(0, (currentPairUnits / targetPairUnits) * 100)));
-        if (!isGraduated && liveCurveProgress > 0 && liveCurveProgress < 0.1) liveCurveProgress = 0.1;
-        const liveDepositedStr = `${currentPairUnits.toFixed(4)} / ${targetPairUnits.toFixed(1)}`;
+        // 2. FETCH MASTER ORACLE PRICE
+        let usdRate = globalEthPrice; 
+        const quoteAddr = (launch?.pairCurrencyAddress || "").toLowerCase();
+        if (quoteAddr && quoteAddr !== "0x0000000000000000000000000000000000000000") {
+          try {
+            const oracleRes = await fetch('https://testnet.vibevibe.fun/api/v1/chains/46630/v6/pair-prices');
+            const oracleJson = await oracleRes.json();
+            const pairData = oracleJson?.data?.items?.find((item: any) => item.pairAddress.toLowerCase() === quoteAddr);
+            if (pairData && pairData.priceEthWad) {
+              usdRate = (Number(pairData.priceEthWad) / 1e18) * globalEthPrice;
+            } else {
+              usdRate = 0; // Unknown asset
+            }
+          } catch { usdRate = 0; }
+        }
 
         // 3. CORRECT MARKET CAP MATH
-        const usdRate = getSymbolUsdRate(livePairSymbol);
         let currentPriceUnits = json.data?.marketTrades?.[0] ? Number(json.data.marketTrades[0].executionPricePairUnitsPerToken) / 1e18 : 0;
-        if (currentPriceUnits === 0 && launch?.analytics?.lastPriceWeiPerToken) currentPriceUnits = Number(launch.analytics.lastPriceWeiPerToken) / 1e18;
+        if (currentPriceUnits === 0 && launch?.analytics?.lastPriceWeiPerToken) {
+          currentPriceUnits = Number(launch.analytics.lastPriceWeiPerToken) / 1e18;
+        }
         
         const marketCapUnits = currentPriceUnits * 1_000_000_000;
         let displayMarketCap = "$0.00";
@@ -495,6 +505,14 @@ export default function Home() {
             displayMarketCap = `${marketCapUnits.toLocaleString('en-US', { maximumFractionDigits: 2 })} ${livePairSymbol}`;
           }
         }
+
+        // 4. RECALCULATE CURVE PROGRESS
+        const isGraduated = launch?.lifecycle === "GRADUATED" || launch?.graduated === true || launch?.curve?.lifecycle === "GRADUATED" || selectedToken?.bondingCurveProgress >= 100;
+        const currentPairUnits = Number(launch?.curve?.pairReserveUnits || launch?.curve?.netRaisedWei || 0) / 1e18;
+        const targetPairUnits = Number(launch?.targetPairUnits || launch?.curve?.netTargetWei || 5000000000000000000) / 1e18;
+        let liveCurveProgress = isGraduated ? 100 : (launch?.curve?.progressBps ? launch.curve.progressBps / 100 : Math.min(100, Math.max(0, (currentPairUnits / targetPairUnits) * 100)));
+        if (!isGraduated && liveCurveProgress > 0 && liveCurveProgress < 0.1) liveCurveProgress = 0.1;
+        const liveDepositedStr = `${currentPairUnits.toFixed(4)} / ${targetPairUnits.toFixed(1)}`;
 
         const stats = json.data?.marketStats;
         let finalVolumeEth = "0.0000";
@@ -563,7 +581,7 @@ export default function Home() {
                 const addr = h.address?.hash?.toLowerCase();
                 const amm = (selectedToken.ammAddress || "").toLowerCase();
                 const isContract = h.address?.is_contract === true || h.address?.is_smart_contract === true;
-                
+
                 return (
                   addr !== amm &&
                   addr !== "0x000000000000000000000000000000000000dead" &&
@@ -577,13 +595,13 @@ export default function Home() {
                 // Vibe tokens have 1B supply. Convert wei to standard format and calculate percentage:
                 pct: (Number(formatEther(BigInt(h.value))) / 1_000_000_000) * 100
               }));
-            
+
             const top5Pct = cleanHolders.reduce((acc: number, h: any) => acc + h.pct, 0);
             const isCabalRisk = top5Pct > 25;
 
             const devHolder = cleanHolders.find((h: any) => h.address.toLowerCase() === (selectedToken.devAddress || "").toLowerCase());
             // Force 0 if undefined, preventing ghost data fallbacks
-            const creatorHoldingPct = devHolder ? devHolder.pct : 0; 
+            const creatorHoldingPct = devHolder ? devHolder.pct : 0;
             const isCreatorSafe = creatorHoldingPct <= 5;
 
             setTopHolders(cleanHolders);
@@ -624,7 +642,7 @@ export default function Home() {
           });
 
           const totalLaunches = createdTokens.length;
-          const graduatedCount = createdTokens.filter((item: any) => 
+          const graduatedCount = createdTokens.filter((item: any) =>
             item.lifecycle === "GRADUATED" || item.graduated === true || item.curve?.lifecycle === "GRADUATED"
           ).length;
 
@@ -645,7 +663,7 @@ export default function Home() {
               color = "text-red-400 bg-red-400/10 border-red-400/30";
             }
           }
-          
+
           setDevStats({ launches: totalLaunches, gradRate: rate, label, color });
         })
         .catch(err => console.error("Failed to fetch dev profile:", err));
@@ -659,7 +677,7 @@ export default function Home() {
     try {
       const amountInWei = parseEther(apeAmount);
       const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600);
-      
+
       let toAddress = ZAP_ROUTER;
       let txData;
 
@@ -682,9 +700,9 @@ export default function Home() {
   const handleExecuteSell = async () => {
     if (!selectedToken || !sellAmount || Number(sellAmount) <= 0) return;
     try {
-      const amountInWei = parseEther(sellAmount); 
+      const amountInWei = parseEther(sellAmount);
       const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600);
-      
+
       let toAddress = ZAP_ROUTER;
       let txData;
 
@@ -823,7 +841,7 @@ export default function Home() {
 
                 <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
                   <h3 className="text-lg font-bold mb-4 text-white">Holder Clustering (Cabal Detector)</h3>
-                  
+
                   <div className="w-full bg-zinc-950 border border-zinc-800 rounded-lg mb-6 relative overflow-hidden h-56 group">
                     <svg className="absolute inset-0 w-full h-full z-0 pointer-events-none">
                       {isCabalRisk ? (
@@ -936,14 +954,14 @@ export default function Home() {
                   {/* Header & Tabs */}
                   <div className="flex items-center justify-between mb-4">
                     <div className="flex gap-2">
-                      <button 
-                        onClick={() => setTradeTab('buy')} 
+                      <button
+                        onClick={() => setTradeTab('buy')}
                         className={`px-5 py-1.5 text-sm font-bold rounded-md transition-all ${tradeTab === 'buy' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' : 'text-zinc-500 hover:text-zinc-300'}`}
                       >
                         Buy
                       </button>
-                      <button 
-                        onClick={() => setTradeTab('sell')} 
+                      <button
+                        onClick={() => setTradeTab('sell')}
                         className={`px-5 py-1.5 text-sm font-bold rounded-md transition-all ${tradeTab === 'sell' ? 'bg-red-500/10 text-red-400 border border-red-500/30' : 'text-zinc-500 hover:text-zinc-300'}`}
                       >
                         Sell
@@ -993,7 +1011,7 @@ export default function Home() {
 
                   {/* Execute Action */}
                   {tradeTab === 'buy' ? (
-                    <button 
+                    <button
                       onClick={handleExecuteApe}
                       disabled={isTxPending}
                       className="w-full py-3 bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-black text-sm uppercase rounded-lg shadow-[0_0_15px_rgba(16,185,129,0.2)] transition-all disabled:opacity-50"
@@ -1001,7 +1019,7 @@ export default function Home() {
                       {isTxPending ? 'Executing...' : `Quick Buy ${selectedToken?.symbol || ''}`}
                     </button>
                   ) : (
-                    <button 
+                    <button
                       onClick={handleExecuteSell}
                       disabled={isTxPending}
                       className="w-full py-3 bg-red-500 hover:bg-red-400 text-white font-black text-sm uppercase rounded-lg shadow-[0_0_15px_rgba(239,68,68,0.2)] transition-all disabled:opacity-50"
@@ -1028,10 +1046,10 @@ export default function Home() {
                           ❌ Transaction Reverted (Incompatible Router or Slippage)
                         </span>
                       )}
-                      <a 
-                        href={`https://explorer.testnet.chain.robinhood.com/tx/${hash}`} 
-                        target="_blank" 
-                        rel="noreferrer" 
+                      <a
+                        href={`https://explorer.testnet.chain.robinhood.com/tx/${hash}`}
+                        target="_blank"
+                        rel="noreferrer"
                         className="underline text-zinc-400 hover:text-white transition-colors"
                       >
                         View on Explorer ↗
