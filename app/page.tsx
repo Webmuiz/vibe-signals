@@ -652,6 +652,9 @@ export default function Home() {
           if (profiler.isSerialDumper) {
             devLabel = "🚨 SERIAL DUMPER / RUGGER";
             devColor = "text-red-400 border-red-500/30 bg-red-500/10";
+          } else if (profiler.hasLowGradRate) {
+            devLabel = "⚠️ DEAD LAUNCHER";
+            devColor = "text-orange-400 border-orange-500/30 bg-orange-500/10";
           } else if (profiler.graduationRate >= 40 && profiler.totalLaunches >= 2) {
             devLabel = "💎 DIAMOND DEV";
             devColor = "text-emerald-400 border-emerald-500/30 bg-emerald-500/10";
@@ -664,15 +667,17 @@ export default function Home() {
 
           setSelectedToken((prevToken: any) => {
             if (!prevToken) return prevToken;
-            const newScore = profiler.isSerialDumper ? Math.max(1, prevToken.score - 40) : prevToken.score;
+            const newScore = profiler.isSerialDumper ? Math.max(1, prevToken.score - 40) : (profiler.hasLowGradRate ? Math.max(1, prevToken.score - 15) : prevToken.score);
             return {
               ...prevToken,
               score: newScore,
               safetyChecks: {
                 ...prevToken.safetyChecks,
                 dumperRisk: {
-                  label: profiler.isSerialDumper ? `🚨 DUMPED ${profiler.totalPreGradDumps} PAST COINS` : `✅ Clean History (${profiler.totalLaunches} Launches)`,
-                  safe: !profiler.isSerialDumper
+                  label: profiler.isSerialDumper 
+                    ? `🚨 DUMPED ${profiler.totalPreGradDumps} PAST COINS` 
+                    : (profiler.hasLowGradRate ? `⚠️ Low Grad Rate (${profiler.graduationRate}%)` : `✅ Clean History (${profiler.totalLaunches} Launches)`),
+                  safe: !profiler.isSerialDumper && !profiler.hasLowGradRate
                 }
               }
             };
