@@ -190,17 +190,25 @@ export default function Home() {
   const [topHolders, setTopHolders] = useState<{ address: string, pct: number }[]>([]);
   const [devStats, setDevStats] = useState<{ launches: number; gradRate: number; label: string; color: string; } | null>(null);
 
-  // Fetch Native ETH Balance
-  const { data: ethBalance } = useBalance({ address });
+  // Fetch Native ETH Balance pinned to Robinhood Testnet
+  const { data: ethBalance } = useBalance({ 
+    address, 
+    chainId: 46630,
+    query: { refetchInterval: 4000 }
+  });
   const ethAvailable = ethBalance ? Number(ethBalance.formatted) : 0;
 
-  // Fetch Token Holding Balance
+  // Fetch Token Holding Balance pinned to Robinhood Testnet
   const { data: rawTokenBalance } = useReadContract({
     address: selectedToken?.contractAddress as `0x${string}`,
     abi: ERC20_ABI,
     functionName: 'balanceOf',
     args: address ? [address] : undefined,
-    query: { enabled: !!address && !!selectedToken }
+    chainId: 46630,
+    query: { 
+      enabled: !!address && !!selectedToken?.contractAddress,
+      refetchInterval: 4000
+    }
   });
   const tokenBalance = rawTokenBalance ? Number(formatEther(rawTokenBalance as bigint)) : 0;
 
@@ -646,42 +654,37 @@ export default function Home() {
           const profiler = devJson?.data?.profiler;
           if (!profiler) return;
           
-          let devLabel = "NEUTRAL / UNPROVEN";
+          setSelectedToken((prevToken: any) => {
+            if (!prevToken) return prevToken;
+            const penalty = profiler.isSerialDumper ? 40 : 0;
+            return {
+              ...prevToken,
+              score: Math.max(1, prevToken.score - penalty),
+              safetyChecks: {
+                ...prevToken.safetyChecks,
+                dumperRisk: {
+                  label: profiler.isSerialDumper 
+                    ? `🚨 DUMPED ${profiler.totalPreGradDumps} PAST COINS` 
+                    : `✅ Clean (${profiler.totalLaunches} Launches, 0 Dumps)`,
+                  safe: !profiler.isSerialDumper
+                }
+              }
+            };
+          });
+
+          let devLabel = "NEUTRAL";
           let devColor = "text-zinc-500 border-zinc-700 bg-zinc-900";
-          
           if (profiler.isSerialDumper) {
-            devLabel = "🚨 SERIAL DUMPER / RUGGER";
+            devLabel = "🚨 SERIAL DUMPER";
             devColor = "text-red-400 border-red-500/30 bg-red-500/10";
-          } else if (profiler.hasLowGradRate) {
-            devLabel = "⚠️ DEAD LAUNCHER";
-            devColor = "text-orange-400 border-orange-500/30 bg-orange-500/10";
-          } else if (profiler.graduationRate >= 40 && profiler.totalLaunches >= 2) {
+          } else if (profiler.graduationRate >= 30) {
             devLabel = "💎 DIAMOND DEV";
             devColor = "text-emerald-400 border-emerald-500/30 bg-emerald-500/10";
           } else if (profiler.totalLaunches > 0) {
             devLabel = "SOLID BUILDER";
             devColor = "text-yellow-400 border-yellow-500/30 bg-yellow-500/10";
           }
-          
           setDevStats({ launches: profiler.totalLaunches, gradRate: profiler.graduationRate, label: devLabel, color: devColor });
-
-          setSelectedToken((prevToken: any) => {
-            if (!prevToken) return prevToken;
-            const newScore = profiler.isSerialDumper ? Math.max(1, prevToken.score - 40) : (profiler.hasLowGradRate ? Math.max(1, prevToken.score - 15) : prevToken.score);
-            return {
-              ...prevToken,
-              score: newScore,
-              safetyChecks: {
-                ...prevToken.safetyChecks,
-                dumperRisk: {
-                  label: profiler.isSerialDumper 
-                    ? `🚨 DUMPED ${profiler.totalPreGradDumps} PAST COINS` 
-                    : (profiler.hasLowGradRate ? `⚠️ Low Grad Rate (${profiler.graduationRate}%)` : `✅ Clean History (${profiler.totalLaunches} Launches)`),
-                  safe: !profiler.isSerialDumper && !profiler.hasLowGradRate
-                }
-              }
-            };
-          });
         }).catch(err => console.error("Profiler failed:", err));
     }
 

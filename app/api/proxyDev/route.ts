@@ -49,7 +49,7 @@ export async function GET(request: Request) {
                const detailData = await launchRes.json();
                feeEvents = detailData?.data?.feeEvents || [];
                
-               const marketRes = await fetch(`https://testnet.vibevibe.fun/api/v1/chains/46630/${path}/${item.tokenAddress}/market?limit=100`, { headers, cache: 'no-store' });
+               const marketRes = await fetch(`https://testnet.vibevibe.fun/api/v1/chains/46630/${path}/${item.tokenAddress}/market?limit=20`, { headers, cache: 'no-store' });
                if (marketRes.ok) {
                    const marketData = await marketRes.json();
                    trades = marketData?.data?.trades || [];
@@ -104,8 +104,7 @@ export async function GET(request: Request) {
           graduationRate: totalLaunches > 0 ? Math.round((graduatedCount / totalLaunches) * 100) : 0,
           totalPreGradDumps,
           totalDumpVolumeEth,
-          isSerialDumper: totalPreGradDumps >= 1,
-          hasLowGradRate: totalLaunches >= 3 && (graduatedCount / totalLaunches) < 0.15
+          isSerialDumper: totalPreGradDumps > 0
         },
         page: { totalCount: totalLaunches }
       }
