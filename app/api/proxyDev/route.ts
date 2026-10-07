@@ -38,35 +38,45 @@ export async function GET(request: Request) {
     // 2. DEEP-SCAN ENGINE: Scan orderbooks of created tokens
     const recentLaunches = createdTokens.slice(0, 15);
     const deepScanPromises = recentLaunches.map(async (item) => {
-      try {
-        let detailData = null;
-
-        // Match proxyVibe's exact routing to support v5 tokens like $TYSON
-        for (const path of ['v6/launches', 'v5/launches', 'launches']) {
-          const res = await fetch(`https://testnet.vibevibe.fun/api/v1/chains/46630/${path}/${item.tokenAddress}`, { headers, cache: 'no-store' });
-          if (res.ok) {
-            detailData = await res.json();
-            break;
-          }
-        }
-
-        if (detailData) {
-          const feeEvents = detailData?.data?.feeEvents || [];
-
-          let devDumpedEarly = false;
-          let dumpVolumeEth = 0;
-
-          feeEvents.forEach((ev: any) => {
-            const actor = (ev.actorAddress || "").toLowerCase();
-            if (actor === targetDev && (ev.side === 'SELL' || ev.source === 'CURVE_SELL')) {
-              devDumpedEarly = true;
-              dumpVolumeEth += Number(ev.pairPrincipalUnits || 0) / 1e18;
+       try {
+         let feeEvents = [];
+         let trades = [];
+         
+         // Loop through all VibeVibe API paths just like proxyVibe
+         for (const path of ['v6/launches', 'v5/launches', 'launches']) {
+            const launchRes = await fetch(`https://testnet.vibevibe.fun/api/v1/chains/46630/${path}/${item.tokenAddress}`, { headers, cache: 'no-store' });
+            if (launchRes.ok) {
+               const detailData = await launchRes.json();
+               feeEvents = detailData?.data?.feeEvents || [];
+               
+               const marketRes = await fetch(`https://testnet.vibevibe.fun/api/v1/chains/46630/${path}/${item.tokenAddress}/market?limit=100`, { headers, cache: 'no-store' });
+               if (marketRes.ok) {
+                   const marketData = await marketRes.json();
+                   trades = marketData?.data?.trades || [];
+               }
+               break; // Exit loop once the correct API version path is found
             }
-          });
-          return { ...item, dumperMetrics: { devDumpedEarly, dumpVolumeEth } };
-        }
-        return { ...item, dumperMetrics: { devDumpedEarly: false, dumpVolumeEth: 0 } };
-      } catch { return { ...item, dumperMetrics: { devDumpedEarly: false, dumpVolumeEth: 0 } }; }
+         }
+         
+         let devDumpedEarly = false;
+         let dumpVolumeEth = 0;
+         
+         // Merge all possible event arrays to prevent stealth dumps
+         const allEvents = [...feeEvents, ...trades];
+         
+         allEvents.forEach((ev: any) => {
+            const actor = (ev.actorAddress || ev.maker || ev.userAddress || ev.walletAddress || ev.who || ev.actor || "").toLowerCase();
+            const isSell = ev.side === 'SELL' || ev.isBuy === false || ev.type === 'SELL' || ev.source === 'CURVE_SELL';
+            
+            if (actor === targetDev && isSell) {
+               devDumpedEarly = true;
+               const dumpAmount = Number(ev.ethAmount || ev.quoteAmount || ev.pairPrincipalUnits || ev.executionPricePairUnitsPerToken || ev.eth || 0);
+               dumpVolumeEth += (dumpAmount > 1000) ? (dumpAmount / 1e18) : dumpAmount;
+            }
+         });
+         
+         return { ...item, dumperMetrics: { devDumpedEarly, dumpVolumeEth } };
+       } catch { return { ...item, dumperMetrics: { devDumpedEarly: false, dumpVolumeEth: 0 } }; }
     });
 
     const scannedLaunches = await Promise.all(deepScanPromises);
@@ -94,7 +104,8 @@ export async function GET(request: Request) {
           graduationRate: totalLaunches > 0 ? Math.round((graduatedCount / totalLaunches) * 100) : 0,
           totalPreGradDumps,
           totalDumpVolumeEth,
-          isSerialDumper: totalPreGradDumps >= 1 || (totalLaunches >= 3 && (graduatedCount / totalLaunches) < 0.15)
+          isSerialDumper: totalPreGradDumps >= 1,
+          hasLowGradRate: totalLaunches >= 3 && (graduatedCount / totalLaunches) < 0.15
         },
         page: { totalCount: totalLaunches }
       }
