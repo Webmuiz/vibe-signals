@@ -474,20 +474,22 @@ export default function Home() {
           }
         }
 
-        // 2. FETCH MASTER ORACLE PRICE
-        let usdRate = globalEthPrice; 
+        // 2. FETCH MASTER ORACLE PRICE VIA PROXY
+        let usdRate = getSymbolUsdRate(livePairSymbol) || (livePairSymbol === "ETH" ? globalEthPrice : 0);
         const quoteAddr = (launch?.pairCurrencyAddress || "").toLowerCase();
         if (quoteAddr && quoteAddr !== "0x0000000000000000000000000000000000000000") {
           try {
-            const oracleRes = await fetch('https://testnet.vibevibe.fun/api/v1/chains/46630/v6/pair-prices');
-            const oracleJson = await oracleRes.json();
-            const pairData = oracleJson?.data?.items?.find((item: any) => item.pairAddress.toLowerCase() === quoteAddr);
-            if (pairData && pairData.priceEthWad) {
-              usdRate = (Number(pairData.priceEthWad) / 1e18) * globalEthPrice;
-            } else {
-              usdRate = 0; // Unknown asset
+            const oracleRes = await fetch('/api/proxyPrices');
+            if (oracleRes.ok) {
+              const oracleJson = await oracleRes.json();
+              const pairData = oracleJson?.data?.items?.find((item: any) => item.pairAddress.toLowerCase() === quoteAddr);
+              if (pairData && pairData.priceEthWad) {
+                usdRate = (Number(pairData.priceEthWad) / 1e18) * globalEthPrice;
+              }
             }
-          } catch { usdRate = 0; }
+          } catch {
+            // Keep usdRate from getSymbolUsdRate fallback
+          }
         }
 
         // 3. CORRECT MARKET CAP MATH
