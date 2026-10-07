@@ -1,54 +1,59 @@
 "use client";
 
+import React from "react";
+import { PrivyProvider } from "@privy-io/react-auth";
+import { WagmiProvider, createConfig } from "@privy-io/wagmi";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import {
-  RainbowKitProvider,
-  darkTheme,
-  getDefaultConfig,
-} from "@rainbow-me/rainbowkit";
-import { type ReactNode, useState } from "react";
 import { defineChain } from "viem";
-import { WagmiProvider, http } from "wagmi";
+import { http } from "wagmi";
 
-export const robinhoodChainTestnet = defineChain({
+const robinhoodTestnet = defineChain({
   id: 46630,
-  name: "Robinhood Chain Testnet",
-  nativeCurrency: {
-    name: "Ether",
-    symbol: "ETH",
-    decimals: 18,
-  },
+  name: "Robinhood Testnet",
+  nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
   rpcUrls: {
-    default: {
-      http: ["https://rpc.testnet.chain.robinhood.com"],
-    },
+    default: { http: ["https://rpc.testnet.chain.robinhood.com"] },
+    public: { http: ["https://rpc.testnet.chain.robinhood.com"] },
   },
-  testnet: true,
+  blockExplorers: {
+    default: { name: "Robinhood Explorer", url: "https://explorer.testnet.chain.robinhood.com" },
+  },
 });
 
-const config = getDefaultConfig({
-  appName: "Vibe Signals",
-  projectId:
-    process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID ?? "demo-walletconnect-id",
-  chains: [robinhoodChainTestnet],
+const wagmiConfig = createConfig({
+  chains: [robinhoodTestnet] as const,
   transports: {
-    [robinhoodChainTestnet.id]: http(
-      "https://rpc.testnet.chain.robinhood.com",
-    ),
+    [robinhoodTestnet.id]: http(),
   },
-  ssr: true,
 });
 
-export function Providers({ children }: { children: ReactNode }) {
-  const [queryClient] = useState(() => new QueryClient());
+const queryClient = new QueryClient();
 
+export function Providers({ children }: { children: React.ReactNode }) {
   return (
-    <WagmiProvider config={config}>
+    <PrivyProvider
+      appId={process.env.NEXT_PUBLIC_PRIVY_APP_ID || ""}
+      config={{
+        loginMethods: ["email", "wallet", "google", "twitter", "apple"],
+        appearance: {
+          theme: "dark",
+          accentColor: "#10B981",
+          logo: "https://vibevibe.fun/logo.png",
+        },
+        embeddedWallets: {
+          ethereum: {
+            createOnLogin: "users-without-wallets",
+          }
+        },
+        defaultChain: robinhoodTestnet,
+        supportedChains: [robinhoodTestnet],
+      }}
+    >
       <QueryClientProvider client={queryClient}>
-        <RainbowKitProvider theme={darkTheme()} initialChain={robinhoodChainTestnet}>
+        <WagmiProvider config={wagmiConfig}>
           {children}
-        </RainbowKitProvider>
+        </WagmiProvider>
       </QueryClientProvider>
-    </WagmiProvider>
+    </PrivyProvider>
   );
 }
