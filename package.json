@@ -13,6 +13,7 @@
     "@privy-io/react-auth": "^3.48.0",
     "@privy-io/wagmi": "^4.0.18",
     "@rainbow-me/rainbowkit": "^2.2.11",
+    "@stripe/stripe-js": "^10.0.0",
     "@supabase/supabase-js": "^2.117.2",
     "@tanstack/react-query": "^5.104.1",
     "@x402/core": "^2.28.0",

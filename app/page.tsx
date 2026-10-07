@@ -192,8 +192,8 @@ export default function Home() {
   const [devStats, setDevStats] = useState<{ launches: number; gradRate: number; label: string; color: string; } | null>(null);
 
   // Fetch Native ETH Balance pinned to Robinhood Testnet
-  const { data: ethBalance } = useBalance({ 
-    address, 
+  const { data: ethBalance } = useBalance({
+    address,
     chainId: 46630,
     query: { refetchInterval: 4000 }
   });
@@ -206,7 +206,7 @@ export default function Home() {
     functionName: 'balanceOf',
     args: address ? [address] : undefined,
     chainId: 46630,
-    query: { 
+    query: {
       enabled: !!address && !!selectedToken?.contractAddress,
       refetchInterval: 4000
     }
@@ -468,7 +468,7 @@ export default function Home() {
         const launch = json.data?.launch || (json.data?.tokenAddress ? json.data : null);
 
         const globalEthPrice = json.data?.ethPriceUsd || 2600;
-        
+
         // 1. DYNAMICALLY RESOLVE SYMBOL
         let livePairSymbol = launch?.pairSymbol;
         if (!livePairSymbol) {
@@ -506,7 +506,7 @@ export default function Home() {
         if (currentPriceUnits === 0 && launch?.analytics?.lastPriceWeiPerToken) {
           currentPriceUnits = Number(launch.analytics.lastPriceWeiPerToken) / 1e18;
         }
-        
+
         const marketCapUnits = currentPriceUnits * 1_000_000_000;
         let displayMarketCap = "$0.00";
         if (marketCapUnits > 0) {
@@ -654,7 +654,7 @@ export default function Home() {
         .then(devJson => {
           const profiler = devJson?.data?.profiler;
           if (!profiler) return;
-          
+
           setSelectedToken((prevToken: any) => {
             if (!prevToken) return prevToken;
             const penalty = profiler.isSerialDumper ? 40 : 0;
@@ -664,8 +664,8 @@ export default function Home() {
               safetyChecks: {
                 ...prevToken.safetyChecks,
                 dumperRisk: {
-                  label: profiler.isSerialDumper 
-                    ? `🚨 DUMPED ${profiler.totalPreGradDumps} PAST COINS` 
+                  label: profiler.isSerialDumper
+                    ? `🚨 DUMPED ${profiler.totalPreGradDumps} PAST COINS`
                     : `✅ Clean (${profiler.totalLaunches} Launches, 0 Dumps)`,
                   safe: !profiler.isSerialDumper
                 }
@@ -780,7 +780,7 @@ export default function Home() {
         </div>
         <div className="flex items-center gap-3">
           {(!ready || (!authenticated && !isConnected)) ? (
-            <button 
+            <button
               onClick={login}
               disabled={!ready}
               className="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold rounded-lg transition-colors text-sm disabled:opacity-50"
@@ -792,7 +792,7 @@ export default function Home() {
               <span className="text-sm font-mono text-emerald-400 bg-emerald-500/10 px-3 py-1.5 rounded-lg border border-emerald-500/30">
                 {address ? `${address.substring(0, 6)}...${address.substring(address.length - 4)}` : ""}
               </span>
-              <button 
+              <button
                 onClick={logout}
                 className="px-4 py-2 bg-zinc-800 hover:bg-red-500 hover:text-white text-zinc-400 font-bold rounded-lg transition-colors text-sm border border-zinc-700 hover:border-red-500"
               >
