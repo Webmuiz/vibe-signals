@@ -39,31 +39,28 @@ export async function GET(request: Request) {
     const recentLaunches = createdTokens.slice(0, 15);
     const deepScanPromises = recentLaunches.map(async (item) => {
        try {
-         // Attempt v6 first
-         let marketRes = await fetch(`https://testnet.vibevibe.fun/api/v1/chains/46630/v6/launches/${item.tokenAddress}/market?limit=100`, { headers, cache: 'no-store' });
+         let detailData = null;
          
-         // If not found in v6, fall back to legacy (for tokens like $TYSON)
-         if (!marketRes.ok) {
-            marketRes = await fetch(`https://testnet.vibevibe.fun/api/v1/chains/46630/launches/${item.tokenAddress}/market?limit=100`, { headers, cache: 'no-store' });
+         // Match proxyVibe's exact routing to support v5 tokens like $TYSON
+         for (const path of ['v6/launches', 'v5/launches', 'launches']) {
+            const res = await fetch(`https://testnet.vibevibe.fun/api/v1/chains/46630/${path}/${item.tokenAddress}`, { headers, cache: 'no-store' });
+            if (res.ok) {
+               detailData = await res.json();
+               break;
+            }
          }
          
-         if (marketRes.ok) {
-            const marketData = await marketRes.json();
-            const trades = marketData?.data?.trades || [];
+         if (detailData) {
+            const feeEvents = detailData?.data?.feeEvents || [];
             
             let devDumpedEarly = false;
             let dumpVolumeEth = 0;
             
-            trades.forEach((ev: any) => {
-               // Catch every possible actor naming convention across legacy/v6
-               const actor = (ev.actorAddress || ev.maker || ev.userAddress || ev.walletAddress || ev.who || ev.actor || "").toLowerCase();
-               const isSell = ev.side === 'SELL' || ev.isBuy === false || ev.type === 'SELL';
-               
-               if (actor === targetDev && isSell) {
+            feeEvents.forEach((ev: any) => {
+               const actor = (ev.actorAddress || "").toLowerCase();
+               if (actor === targetDev && (ev.side === 'SELL' || ev.source === 'CURVE_SELL')) {
                   devDumpedEarly = true;
-                  const dumpAmount = Number(ev.ethAmount || ev.quoteAmount || ev.pairPrincipalUnits || ev.eth || 0);
-                  // Ensure we don't divide by 1e18 if it's already a clean decimal from legacy API
-                  dumpVolumeEth += (dumpAmount > 1000) ? (dumpAmount / 1e18) : dumpAmount;
+                  dumpVolumeEth += Number(ev.pairPrincipalUnits || 0) / 1e18;
                }
             });
             return { ...item, dumperMetrics: { devDumpedEarly, dumpVolumeEth } };
