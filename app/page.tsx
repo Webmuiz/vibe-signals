@@ -170,15 +170,14 @@ const getSymbolUsdRate = (symbol: string) => {
 };
 
 function getUsdRateForPair(symbol: string | undefined, liveRates: Record<string, number>): number {
-  if (!symbol) return liveRates['ETH'] || 2600;
+  if (!symbol) return liveRates['ETH'] || 2416;
   const s = symbol.toUpperCase();
 
-  if (s.includes('USD')) return 1;
-  if (s === 'OPENAI') return liveRates['ETH'] || 2600;
-  if (s === 'VIBEVIBE' || s === 'VIBE' || s === 'MONKE') return 0.50;
-  if (s === 'ETH' || s === 'WETH') return liveRates['ETH'] || 2600;
+  if (s.includes('USD') && !s.includes('ETH')) return 1;
+  if (liveRates[s]) return liveRates[s];
+  if (s === 'ETH' || s === 'WETH') return liveRates['ETH'] || 2416;
 
-  return liveRates[s] || liveRates['ETH'] || 2600;
+  return liveRates['ETH'] || 2416;
 }
 
 function calculateTokenMetrics(
@@ -261,21 +260,11 @@ export default function Home() {
         const res = await fetch('/api/proxyPrices');
         if (!res.ok) return;
         const json = await res.json();
-        const items = json?.data?.items || [];
+        const oracleRates = json?.data?.rates || {};
         const ethPrice = Number(json?.data?.ethPriceUsd) || 2416;
 
-        const updated: Record<string, number> = { ETH: ethPrice, WETH: ethPrice };
-        if (json?.data?.items) {
-          json.data.items.forEach((item: any) => {
-            // Vibe API returns pairAddress, not symbol
-            if (item.pairAddress && item.priceEthWad) {
-              updated[item.pairAddress.toLowerCase()] = (Number(item.priceEthWad) / 1e18) * ethPrice;
-            }
-          });
-        }
-
-        if (isSubscribed) {
-          setLiveRates(prev => ({ ...prev, ...updated }));
+        if (isSubscribed && Object.keys(oracleRates).length > 0) {
+          setLiveRates(prev => ({ ...prev, ...oracleRates, ETH: ethPrice, WETH: ethPrice }));
         }
       } catch (err) {
         console.error("Failed to sync global oracle prices", err);
