@@ -269,9 +269,9 @@ export default function Home() {
         const updated: Record<string, number> = { ETH: ethPrice, WETH: ethPrice };
         if (json?.data?.items) {
           json.data.items.forEach((item: any) => {
-            if (item.symbol && item.priceEthWad) {
-              const sym = item.symbol.toUpperCase();
-              updated[sym] = (Number(item.priceEthWad) / 1e18) * ethPrice;
+            // Vibe API returns pairAddress, not symbol
+            if (item.pairAddress && item.priceEthWad) {
+              updated[item.pairAddress.toLowerCase()] = (Number(item.priceEthWad) / 1e18) * ethPrice;
             }
           });
         }
@@ -656,17 +656,24 @@ export default function Home() {
           if (!isGraduated && liveCurveProgress > 0 && liveCurveProgress < 0.1) liveCurveProgress = 0.1;
           const liveDepositedStr = isGraduated ? 'Graduated' : `${currentPairUnits.toFixed(4)} / ${targetPairUnits.toFixed(1)}`;
 
-          // 3. CORRECT MARKET CAP MATH
+          // 3. CORRECT MARKET CAP & USD VOLUME MATH
           const liveEthPrice = Number(json.data?.ethPriceUsd) || liveRates['ETH'] || 2416;
-          let usdRate = (livePairSymbol === 'ETH' || livePairSymbol === 'WETH')
-            ? liveEthPrice
-            : getUsdRateForPair(livePairSymbol, { ...liveRates, ETH: liveEthPrice, WETH: liveEthPrice });
+          
+          // Dynamically resolve USD rate using the contract pair address
+          const pairAddr = (launch?.pairCurrencyAddress || "").toLowerCase();
+          const isNative = !pairAddr || pairAddr === "0x0000000000000000000000000000000000000000";
+          
+          let usdRate = liveEthPrice;
+          if (!isNative) {
+             usdRate = liveRates[pairAddr] || getUsdRateForPair(livePairSymbol, { ...liveRates, ETH: liveEthPrice, WETH: liveEthPrice });
+          }
 
           const stats = json.data?.marketStats;
           const directPriceUsd = launch?.priceUsd || launch?.analytics?.priceUsd || launch?.curve?.priceUsd || stats?.priceUsd;
           let lastPriceWei = launch?.analytics?.lastPriceWeiPerToken || stats?.priceWeiPerToken || stats?.lastPriceWeiPerToken || 0;
           
-          if (isGraduated && (!lastPriceWei || Number(lastPriceWei) === 0) && json.data?.marketTrades?.[0]) {
+          // CRITICAL FIX: Allow UNGRADUATED tokens to use the latest trade execution price
+          if ((!lastPriceWei || Number(lastPriceWei) === 0) && json.data?.marketTrades?.[0]) {
             lastPriceWei = json.data.marketTrades[0].executionPricePairUnitsPerToken;
           }
 
