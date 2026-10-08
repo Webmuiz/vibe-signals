@@ -30,6 +30,7 @@ const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 interface DBToken {
+  cachedMarketCapFormatted?: string;
   launch_id?: number;
   launchId?: number;
   token_address?: string;
@@ -474,6 +475,7 @@ export default function Home() {
         diamondHandsHoldersPct: diamond,
         totalSupply: 1000000000,
         creatorHoldingPct,
+        cachedMarketCapFormatted: db.cachedMarketCapFormatted,
         score: calculateVibeScore(
           block0,
           timeSinceLaunchMins,
@@ -655,21 +657,25 @@ export default function Home() {
           }
         }
 
-        // 2. FORCE API PROGRESS (OVERRIDE STALE DB)
-        const isGraduated = launch?.lifecycle === "GRADUATED" || launch?.graduated === true || launch?.curve?.lifecycle === "GRADUATED";
+        // 2. RECALCULATE CURVE PROGRESS (Force 100% if graduated)
+        const isGraduated = launch?.lifecycle === "GRADUATED" || launch?.graduated === true || launch?.curve?.lifecycle === "GRADUATED" || selectedToken?.bondingCurveProgress >= 100;
         const currentPairUnits = Number(launch?.curve?.pairReserveUnits || launch?.curve?.netRaisedWei || 0) / 1e18;
         const targetPairUnits = Number(launch?.targetPairUnits || launch?.curve?.netTargetWei || 5000000000000000000) / 1e18;
-        
         let liveCurveProgress = isGraduated ? 100 : (launch?.curve?.progressBps != null ? launch.curve.progressBps / 100 : Math.min(100, Math.max(0, (currentPairUnits / targetPairUnits) * 100)));
         if (!isGraduated && liveCurveProgress > 0 && liveCurveProgress < 0.1) liveCurveProgress = 0.1;
         const liveDepositedStr = isGraduated ? 'Graduated' : `${currentPairUnits.toFixed(4)} / ${targetPairUnits.toFixed(1)}`;
 
-        // 3. CLEAN MARKET CAP & VOLUME MATH
-        const usdRate = getUsdRateForPair(livePairSymbol, liveRates);
+        // 3. CORRECT MARKET CAP MATH (Handle Post-Graduation DEX Prices)
+        let usdRate = getUsdRateForPair(livePairSymbol, liveRates);
         const stats = json.data?.marketStats;
-        
+
         const directPriceUsd = launch?.priceUsd || launch?.analytics?.priceUsd || launch?.curve?.priceUsd || stats?.priceUsd;
-        const lastPriceWei = launch?.analytics?.lastPriceWeiPerToken || stats?.priceWeiPerToken || stats?.lastPriceWeiPerToken || 0;
+        let lastPriceWei = launch?.analytics?.lastPriceWeiPerToken || stats?.priceWeiPerToken || stats?.lastPriceWeiPerToken || 0;
+        
+        // If graduated and curve price is missing, fallback to the latest DEX trade execution
+        if (isGraduated && (!lastPriceWei || Number(lastPriceWei) === 0) && json.data?.marketTrades?.[0]) {
+          lastPriceWei = json.data.marketTrades[0].executionPricePairUnitsPerToken;
+        }
 
         let marketCapUsd = 0;
         if (directPriceUsd && Number(directPriceUsd) > 0) {
@@ -681,8 +687,8 @@ export default function Home() {
           marketCapUsd = calculateTokenMetrics(liveCurveProgress, currentPairUnits, livePairSymbol, liveRates).marketCapRaw;
         }
 
-        let displayMarketCap = marketCapUsd > 0 
-          ? marketCapUsd.toLocaleString('en-US', { style: 'currency', currency: 'USD' }) 
+        let displayMarketCap = marketCapUsd > 0
+          ? marketCapUsd.toLocaleString('en-US', { style: 'currency', currency: 'USD' })
           : "$0.00";
 
         let finalVolumeEth = "0.0000";
@@ -712,8 +718,8 @@ export default function Home() {
         const volumeUsdValue = Number(finalVolumeEth) * usdRate;
         let displayVolumeUsd = "$0.00";
         if (Number(finalVolumeEth) > 0) {
-          displayVolumeUsd = usdRate > 0 
-            ? volumeUsdValue.toLocaleString('en-US', { style: 'currency', currency: 'USD' }) 
+          displayVolumeUsd = usdRate > 0
+            ? volumeUsdValue.toLocaleString('en-US', { style: 'currency', currency: 'USD' })
             : `${finalVolumeEth} ${livePairSymbol}`;
         }
 
@@ -722,30 +728,32 @@ export default function Home() {
         const poolAddr = (launch?.graduation?.poolId || launch?.poolAddress || launch?.pool?.address || "").toLowerCase();
 
         // 4. APPLY TO STATE & SYNC BACK TO DB CACHE
-        const finalTokenState = {
-          isLegacy: json.apiVersion === "1" || (!json.data?.launch && !!json.data?.tokenAddress),
-          bondingCurveProgress: liveCurveProgress,
-          ethDeposited: liveDepositedStr,
-          pairSymbol: livePairSymbol,
-          symbol: launch?.symbol,
-          devAddress: launch?.launcherAddress || launch?.creatorAddress,
-          score: calculateVibeScore(0, 0, liveCurveProgress, 50, Number(finalVolumeEth), finalBuyPct, hasSocials, 0),
-          hasSocials: hasSocials,
-          socialLinks: socials,
-          poolAddress: poolAddr,
-          marketCapUsd: displayMarketCap,
-          momentum: { buyPct: finalBuyPct, sellPct: finalSellPct, volumeEth: finalVolumeEth, volumeUsd: displayVolumeUsd },
-          volumeEth: finalVolumeEth,
-          volumeUsd: displayVolumeUsd,
-          safetyChecks: {
-            mev: { label: feeEvents.length <= 5 ? "Low Risk (< 5%)" : "Normal", safe: true },
-            creatorBag: { label: "Checking...", safe: true }
-          }
-        };
+        setSelectedToken((prev: any) => {
+          return {
+            ...prev,
+            isLegacy: prev?.isLegacy || json.apiVersion === "1" || (!json.data?.launch && !!json.data?.tokenAddress),
+            bondingCurveProgress: liveCurveProgress,
+            ethDeposited: liveDepositedStr,
+            pairSymbol: livePairSymbol,
+            symbol: launch?.symbol || prev?.symbol,
+            devAddress: launch?.launcherAddress || launch?.creatorAddress || prev?.devAddress,
+            score: calculateVibeScore(prev?.blockZeroBuyers || 0, prev?.timeSinceLaunchMins || 0, liveCurveProgress, prev?.diamondHandsHoldersPct || 50, Number(finalVolumeEth), finalBuyPct, hasSocials, 0),
+            hasSocials: hasSocials,
+            socialLinks: socials,
+            poolAddress: poolAddr || prev?.poolAddress,
+            marketCapUsd: displayMarketCap,
+            momentum: { buyPct: finalBuyPct, sellPct: finalSellPct, volumeEth: finalVolumeEth, volumeUsd: displayVolumeUsd },
+            volumeEth: finalVolumeEth,
+            volumeUsd: displayVolumeUsd,
+            safetyChecks: {
+              ...prev?.safetyChecks,
+              mev: { label: feeEvents.length <= 5 ? "Low Risk (< 5%)" : "Normal", safe: true },
+              creatorBag: prev?.safetyChecks?.creatorBag || { label: "Checking...", safe: true }
+            }
+          };
+        });
 
-        setSelectedToken((prev: any) => ({ ...prev, ...finalTokenState }));
-
-        // Force the radar cards to accept the API truth, stopping the WebSocket fight
+        // Push the API truth into the DB state so the WebSocket doesn't overwrite it
         setDbTokens((prevTokens) => 
           prevTokens.map((t) => 
             (t.tokenAddress || t.token_address)?.toLowerCase() === selectedToken.contractAddress.toLowerCase()
@@ -753,9 +761,7 @@ export default function Home() {
                   ...t,
                   curveProgress: liveCurveProgress,
                   curve_progress: liveCurveProgress,
-                  ethDeposited: Number(currentPairUnits),
-                  liquidity_deposited: Number(currentPairUnits),
-                  momentum: { buyPct: finalBuyPct, sellPct: finalSellPct, volumeEth: finalVolumeEth }
+                  cachedMarketCapFormatted: displayMarketCap
                 }
               : t
           )
@@ -1422,7 +1428,7 @@ export default function Home() {
                             <div>
                               <span className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider block mb-1">M.Cap (Est)</span>
                               <span className="text-sm font-bold text-zinc-300">
-                                {calculateTokenMetrics(token.bondingCurveProgress, token.ethDeposited, token.pairSymbol, liveRates).marketCapFormatted}
+                                {token.cachedMarketCapFormatted || calculateTokenMetrics(token.bondingCurveProgress, token.ethDeposited, token.pairSymbol, liveRates).marketCapFormatted}
                               </span>
                             </div>
                             <div>
