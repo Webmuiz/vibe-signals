@@ -879,7 +879,7 @@ export default function Home() {
         toAddress = ZAP_ROUTER;
         const argsData = encodeAbiParameters(
           parseAbiParameters('address, address, uint256, uint256, uint256, uint256, address[], address[]'),
-          [targetMarket as `0x${string}`, "0x0000000000000000000000000000000000000000", amountInWei, 256n, kindCode, deadline, [], []]
+          [targetMarket as `0x${string}`, "0x0000000000000000000000000000000000000000", amountInWei, 0n, kindCode, deadline, [], []]
         );
         txData = `0x7681fb10${argsData.slice(2)}` as `0x${string}`;
       }
@@ -890,6 +890,7 @@ export default function Home() {
   const handleExecuteSell = async () => {
     if (!selectedToken || !sellAmount || Number(sellAmount) <= 0) return;
     try {
+      // Meme tokens always use 18 decimals, regardless of the pair (like USDG)
       const amountInWei = parseEther(sellAmount);
       const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600);
       
