@@ -22,7 +22,7 @@ export async function GET(request: Request) {
       const [launchRes, marketRes, binanceRes] = await Promise.all([
         fetch(`https://testnet.vibevibe.fun/api/v1/chains/46630/${path}/${address}`, { headers, cache: 'no-store' }),
         fetch(`https://testnet.vibevibe.fun/api/v1/chains/46630/${path}/${address}/market?limit=2`, { headers, cache: 'no-store' }),
-        fetch('https://api.binance.com/api/v3/ticker/price?symbol=ETHUSDT', { cache: 'no-store' })
+        fetch('https://data.binance.com/api/v3/ticker/price?symbol=ETHUSDT', { cache: 'no-store' })
       ]);
 
       if (launchRes.ok) {

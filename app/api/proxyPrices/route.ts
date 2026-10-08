@@ -7,7 +7,7 @@ export async function GET() {
         headers: { 'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0' },
         cache: 'no-store'
       }),
-      fetch('https://api.binance.com/api/v3/ticker/price?symbol=ETHUSDT', { cache: 'no-store' })
+      fetch('https://data.binance.com/api/v3/ticker/price?symbol=ETHUSDT', { cache: 'no-store' })
     ]);
 
     if (!pairsRes.ok) return NextResponse.json({ error: 'Failed to fetch pair prices' }, { status: pairsRes.status });
