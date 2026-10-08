@@ -52,7 +52,7 @@ export async function GET() {
 
     let symbols: readonly any[] = [];
     try {
-      symbols = await publicClient.multicall({ contracts: symbolCalls });
+      symbols = await publicClient.multicall({ contracts: symbolCalls, allowFailure: true });
     } catch (e) {
       console.error('Multicall symbol resolution failed:', e);
     }

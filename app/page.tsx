@@ -3,7 +3,7 @@
 import { useState, useMemo, useEffect, useRef } from "react";
 import { usePrivy } from "@privy-io/react-auth";
 import { useAccount, useSendTransaction, useBalance, useReadContract, useWaitForTransactionReceipt } from "wagmi";
-import { isAddress, parseEther, createPublicClient, http, formatEther, encodeAbiParameters, parseAbiParameters } from "viem";
+import { isAddress, parseEther, parseUnits, createPublicClient, http, formatEther, encodeAbiParameters, parseAbiParameters } from "viem";
 import { createClient } from "@supabase/supabase-js";
 
 const SIGNAL_TOKEN = "0xD4D41412033a72a0D1cCd0Cb02b666Cf771880B1" as `0x${string}`;
@@ -652,7 +652,16 @@ export default function Home() {
 
           // 3. CORRECT MARKET CAP & USD VOLUME MATH
           const liveEthPrice = Number(json.data?.ethPriceUsd) || liveRates['ETH'] || 2416;
-          let usdRate = getUsdRateForPair(livePairSymbol, { ...liveRates, ETH: liveEthPrice, WETH: liveEthPrice });
+          
+          const pairAddr = (launch?.pairCurrencyAddress || "").toLowerCase();
+          const isNative = !pairAddr || pairAddr === "0x0000000000000000000000000000000000000000";
+          
+          let usdRate = liveEthPrice;
+          if (!isNative && pairAddr && liveRates[pairAddr]) {
+             usdRate = liveRates[pairAddr];
+          } else {
+             usdRate = getUsdRateForPair(livePairSymbol, { ...liveRates, ETH: liveEthPrice, WETH: liveEthPrice });
+          }
 
           const stats = json.data?.marketStats;
           let marketCapUsd = 0;
@@ -718,6 +727,7 @@ export default function Home() {
           // 4. APPLY DIRECTLY TO STATE
           setSelectedToken((prev: any) => ({
             ...prev,
+            decimals: pDecimals,
             isLegacy: prev?.isLegacy || json.apiVersion === "1" || (!json.data?.launch && !!json.data?.tokenAddress),
             bondingCurveProgress: liveCurveProgress,
             ethDeposited: liveDepositedStr,
@@ -848,24 +858,35 @@ export default function Home() {
     };
   }, [selectedToken?.contractAddress, refreshTrigger]);
 
+  const handleApprove = async () => {
+    if (!selectedToken) return;
+    try {
+      const approveData = encodeAbiParameters(parseAbiParameters('address, uint256'), [ZAP_ROUTER, 115792089237316195423570985008687907853269984665640564039457584007913129639935n]);
+      const txData = `0x095ea7b3${approveData.slice(2)}` as `0x${string}`;
+      sendTransaction({ to: selectedToken.contractAddress as `0x${string}`, value: 0n, data: txData });
+    } catch (err) { console.error(err); }
+  };
+
   const handleExecuteApe = async () => {
     if (!selectedToken || !apeAmount || Number(apeAmount) <= 0) return;
     try {
       const amountInWei = parseEther(apeAmount);
       const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600);
+      
+      const targetMarket = selectedToken.bondingCurveProgress >= 100 ? selectedToken.contractAddress : selectedToken.ammAddress;
 
       let toAddress = ZAP_ROUTER;
       let txData;
 
       if (selectedToken.isLegacy) {
-        toAddress = selectedToken.ammAddress as `0x${string}`;
+        toAddress = targetMarket as `0x${string}`;
         const argsData = encodeAbiParameters(parseAbiParameters('uint256, uint256'), [1n, deadline]);
         txData = `0xd6febde8${argsData.slice(2)}` as `0x${string}`;
       } else {
         toAddress = ZAP_ROUTER;
         const argsData = encodeAbiParameters(
           parseAbiParameters('address, address, uint256, uint256, uint256, uint256, address[], address[]'),
-          [selectedToken.ammAddress as `0x${string}`, "0x0000000000000000000000000000000000000000", amountInWei, 256n, 1n, deadline, [], []]
+          [targetMarket as `0x${string}`, "0x0000000000000000000000000000000000000000", amountInWei, 256n, 1n, deadline, [], []]
         );
         txData = `0x7681fb10${argsData.slice(2)}` as `0x${string}`;
       }
@@ -876,21 +897,23 @@ export default function Home() {
   const handleExecuteSell = async () => {
     if (!selectedToken || !sellAmount || Number(sellAmount) <= 0) return;
     try {
-      const amountInWei = parseEther(sellAmount);
+      const amountInWei = parseUnits(sellAmount, selectedToken.decimals || 18);
       const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600);
+      
+      const targetMarket = selectedToken.bondingCurveProgress >= 100 ? selectedToken.contractAddress : selectedToken.ammAddress;
 
       let toAddress = ZAP_ROUTER;
       let txData;
 
       if (selectedToken.isLegacy) {
-        toAddress = selectedToken.ammAddress as `0x${string}`;
+        toAddress = targetMarket as `0x${string}`;
         const argsData = encodeAbiParameters(parseAbiParameters('uint256, uint256, uint256'), [amountInWei, 1n, deadline]);
         txData = `0xd3c9727c${argsData.slice(2)}` as `0x${string}`;
       } else {
         toAddress = ZAP_ROUTER;
         const argsData = encodeAbiParameters(
           parseAbiParameters('address, uint256, address[], uint256, uint256, address[]'),
-          [selectedToken.ammAddress as `0x${string}`, amountInWei, [], 1n, deadline, []]
+          [targetMarket as `0x${string}`, amountInWei, [], 1n, deadline, []]
         );
         txData = `0x15d5cb8b${argsData.slice(2)}` as `0x${string}`;
       }
@@ -1217,13 +1240,22 @@ export default function Home() {
                       {isTxPending ? 'Executing...' : `Quick Buy ${selectedToken?.symbol || ''}`}
                     </button>
                   ) : (
-                    <button
-                      onClick={handleExecuteSell}
-                      disabled={isTxPending}
-                      className="w-full py-3 bg-red-500 hover:bg-red-400 text-white font-black text-sm uppercase rounded-lg shadow-[0_0_15px_rgba(239,68,68,0.2)] transition-all disabled:opacity-50"
-                    >
-                      {isTxPending ? 'Executing...' : `Dump ${selectedToken?.symbol || ''}`}
-                    </button>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={handleApprove}
+                        disabled={isTxPending}
+                        className="w-1/3 py-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-black text-sm uppercase rounded-lg border border-zinc-700 transition-all disabled:opacity-50"
+                      >
+                        1. Approve
+                      </button>
+                      <button
+                        onClick={handleExecuteSell}
+                        disabled={isTxPending}
+                        className="w-2/3 py-3 bg-red-500 hover:bg-red-400 text-white font-black text-sm uppercase rounded-lg shadow-[0_0_15px_rgba(239,68,68,0.2)] transition-all disabled:opacity-50"
+                      >
+                        {isTxPending ? 'Executing...' : `2. Dump ${selectedToken?.symbol || ''}`}
+                      </button>
+                    </div>
                   )}
 
                   {/* Success Toast */}
