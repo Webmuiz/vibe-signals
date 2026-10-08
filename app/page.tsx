@@ -169,14 +169,17 @@ const getSymbolUsdRate = (symbol: string) => {
 };
 
 function getUsdRateForPair(symbol: string | undefined, liveRates: Record<string, number>): number {
-  if (!symbol) return liveRates['ETH'] || 0;
+  if (!symbol) return liveRates['ETH'] || 2600;
   const s = symbol.toUpperCase();
-  
-  // Normalize VIBEVIBE to VIBE oracle rate
-  if (s === 'VIBEVIBE' || s === 'VIBE') return liveRates['VIBE'] || 0;
-  if (s === 'ETH' || s === 'WETH') return liveRates['ETH'] || 0;
-  
-  return liveRates[s] || 0;
+
+  if (s === 'VIBEVIBE' || s === 'VIBE') {
+    return liveRates['VIBEVIBE'] || liveRates['VIBE'] || 0.085;
+  }
+  if (s === 'ETH' || s === 'WETH') {
+    return liveRates['ETH'] || 2600;
+  }
+
+  return liveRates[s] || 1;
 }
 
 function calculateTokenMetrics(
@@ -199,22 +202,21 @@ function calculateTokenMetrics(
 
   const progress = Math.min(100, Math.max(0, Number(bondingCurveProgress || 0)));
   const sym = (pairSymbol || 'ETH').toUpperCase();
-  if (sym === 'ETH' || sym === 'WETH') {
-    const baseUsd = 4000;
-    const gradUsd = 50500;
-    const currentUsd = progress >= 100 
-      ? gradUsd 
-      : baseUsd + ((gradUsd - baseUsd) * Math.pow(progress / 100, 1.45));
 
-    return {
-      marketCapFormatted: currentUsd.toLocaleString('en-US', { style: 'currency', currency: 'USD' }),
-      marketCapRaw: currentUsd
-    };
+  let gradUsd = 50500;
+  let baseUsd = 4000;
+  if (sym === 'VIBEVIBE' || sym === 'VIBE') {
+    gradUsd = 220000; // Vibe-paired tokens have higher USD graduation targets
+    baseUsd = 15000;
   }
 
+  const currentUsd = progress >= 100
+    ? gradUsd
+    : baseUsd + ((gradUsd - baseUsd) * Math.pow(progress / 100, 1.45));
+
   return {
-    marketCapFormatted: '$0.00',
-    marketCapRaw: 0
+    marketCapFormatted: currentUsd.toLocaleString('en-US', { style: 'currency', currency: 'USD' }),
+    marketCapRaw: currentUsd
   };
 }
 
@@ -249,15 +251,8 @@ export default function Home() {
   }, [selectedToken?.contractAddress]);
 
   const [liveRates, setLiveRates] = useState<Record<string, number>>({
-    ETH: 2600,
-    WETH: 2600,
-    NVDA: 465,
-    AAPL: 225,
-    SPCX: 20,
-    MSFT: 415,
-    TSLA: 250,
-    VIBE: 1,
-    STOCK: 1
+    ETH: 2600, WETH: 2600, NVDA: 465, AAPL: 225, SPCX: 20, MSFT: 415, TSLA: 250,
+    VIBE: 0.085, VIBEVIBE: 0.085, STOCK: 1
   });
 
   useEffect(() => {
@@ -672,28 +667,28 @@ export default function Home() {
 
         // 3. CORRECT MARKET CAP MATH
         let usdRate = getUsdRateForPair(livePairSymbol, liveRates);
+        const stats = json.data?.marketStats;
+
+        // Find reliable spot price from anywhere in the payload
+        const directPriceUsd = launch?.priceUsd || launch?.analytics?.priceUsd || launch?.curve?.priceUsd || stats?.priceUsd;
+        const lastPriceWei = launch?.analytics?.lastPriceWeiPerToken || stats?.priceWeiPerToken || stats?.lastPriceWeiPerToken || 0;
+
         let marketCapUsd = 0;
-        const directPriceUsd = launch?.priceUsd || launch?.analytics?.priceUsd || launch?.curve?.priceUsd;
 
         if (directPriceUsd && Number(directPriceUsd) > 0) {
           marketCapUsd = Number(directPriceUsd) * 1_000_000_000;
-        } else if (launch?.analytics?.lastPriceWeiPerToken && Number(launch.analytics.lastPriceWeiPerToken) > 0) {
-          const pricePairUnits = Number(launch.analytics.lastPriceWeiPerToken) / 1e18;
+        } else if (Number(lastPriceWei) > 0) {
+          const pricePairUnits = Number(lastPriceWei) / 1e18;
           marketCapUsd = usdRate > 0 ? pricePairUnits * 1_000_000_000 * usdRate : 0;
         } else {
-          if ((livePairSymbol || 'ETH').toUpperCase() === 'ETH' || (livePairSymbol || 'ETH').toUpperCase() === 'WETH') {
-            const progress = Math.min(100, Math.max(0, Number(liveCurveProgress || 0)));
-            const baseUsd = 4000;
-            const gradUsd = 50500;
-            marketCapUsd = progress >= 100 ? gradUsd : baseUsd + ((gradUsd - baseUsd) * Math.pow(progress / 100, 1.45));
-          }
+          marketCapUsd = calculateTokenMetrics(liveCurveProgress, currentPairUnits, livePairSymbol, liveRates).marketCapRaw;
         }
 
-        let displayMarketCap = marketCapUsd > 0 
-          ? marketCapUsd.toLocaleString('en-US', { style: 'currency', currency: 'USD' }) 
+        let displayMarketCap = marketCapUsd > 0
+          ? marketCapUsd.toLocaleString('en-US', { style: 'currency', currency: 'USD' })
           : "$0.00";
 
-        const stats = json.data?.marketStats;
+
         let finalVolumeEth = "0.0000";
         let finalBuyPct = 50;
         let finalSellPct = 50;
