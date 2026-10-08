@@ -1235,22 +1235,13 @@ export default function Home() {
                       {isTxPending ? 'Executing...' : `Quick Buy ${selectedToken?.symbol || ''}`}
                     </button>
                   ) : (
-                    <div className="flex gap-2">
-                      <button
-                        onClick={handleApprove}
-                        disabled={isTxPending}
-                        className="w-1/3 py-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-black text-sm uppercase rounded-lg border border-zinc-700 transition-all disabled:opacity-50"
-                      >
-                        1. Approve
-                      </button>
-                      <button
-                        onClick={handleExecuteSell}
-                        disabled={isTxPending}
-                        className="w-2/3 py-3 bg-red-500 hover:bg-red-400 text-white font-black text-sm uppercase rounded-lg shadow-[0_0_15px_rgba(239,68,68,0.2)] transition-all disabled:opacity-50"
-                      >
-                        {isTxPending ? 'Executing...' : `2. Dump ${selectedToken?.symbol || ''}`}
-                      </button>
-                    </div>
+                    <button
+                      onClick={handleExecuteSell}
+                      disabled={isTxPending}
+                      className="w-full py-3 bg-red-500 hover:bg-red-400 text-white font-black text-sm uppercase rounded-lg shadow-[0_0_15px_rgba(239,68,68,0.2)] transition-all disabled:opacity-50"
+                    >
+                      {isTxPending ? 'Executing...' : `Dump ${selectedToken?.symbol || ''}`}
+                    </button>
                   )}
 
                   {/* Success Toast */}
