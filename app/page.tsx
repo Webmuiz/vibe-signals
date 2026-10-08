@@ -641,8 +641,6 @@ export default function Home() {
         const feeEvents = json.data?.feeEvents || [];
         const launch = json.data?.launch || (json.data?.tokenAddress ? json.data : null);
 
-        const globalEthPrice = json.data?.ethPriceUsd || 2600;
-
         // 1. DYNAMICALLY RESOLVE SYMBOL
         let livePairSymbol = launch?.pairSymbol;
         if (!livePairSymbol) {
@@ -657,24 +655,23 @@ export default function Home() {
           }
         }
 
-        // 2. RECALCULATE CURVE PROGRESS
-        const isGraduated = launch?.lifecycle === "GRADUATED" || launch?.graduated === true || launch?.curve?.lifecycle === "GRADUATED" || selectedToken?.bondingCurveProgress >= 100;
+        // 2. FORCE API PROGRESS (OVERRIDE STALE DB)
+        const isGraduated = launch?.lifecycle === "GRADUATED" || launch?.graduated === true || launch?.curve?.lifecycle === "GRADUATED";
         const currentPairUnits = Number(launch?.curve?.pairReserveUnits || launch?.curve?.netRaisedWei || 0) / 1e18;
         const targetPairUnits = Number(launch?.targetPairUnits || launch?.curve?.netTargetWei || 5000000000000000000) / 1e18;
+        
         let liveCurveProgress = isGraduated ? 100 : (launch?.curve?.progressBps != null ? launch.curve.progressBps / 100 : Math.min(100, Math.max(0, (currentPairUnits / targetPairUnits) * 100)));
         if (!isGraduated && liveCurveProgress > 0 && liveCurveProgress < 0.1) liveCurveProgress = 0.1;
-        const liveDepositedStr = `${currentPairUnits.toFixed(4)} / ${targetPairUnits.toFixed(1)}`;
+        const liveDepositedStr = isGraduated ? 'Graduated' : `${currentPairUnits.toFixed(4)} / ${targetPairUnits.toFixed(1)}`;
 
-        // 3. CORRECT MARKET CAP MATH
-        let usdRate = getUsdRateForPair(livePairSymbol, liveRates);
+        // 3. CLEAN MARKET CAP & VOLUME MATH
+        const usdRate = getUsdRateForPair(livePairSymbol, liveRates);
         const stats = json.data?.marketStats;
-
-        // Find reliable spot price from anywhere in the payload
+        
         const directPriceUsd = launch?.priceUsd || launch?.analytics?.priceUsd || launch?.curve?.priceUsd || stats?.priceUsd;
         const lastPriceWei = launch?.analytics?.lastPriceWeiPerToken || stats?.priceWeiPerToken || stats?.lastPriceWeiPerToken || 0;
 
         let marketCapUsd = 0;
-
         if (directPriceUsd && Number(directPriceUsd) > 0) {
           marketCapUsd = Number(directPriceUsd) * 1_000_000_000;
         } else if (Number(lastPriceWei) > 0) {
@@ -684,10 +681,9 @@ export default function Home() {
           marketCapUsd = calculateTokenMetrics(liveCurveProgress, currentPairUnits, livePairSymbol, liveRates).marketCapRaw;
         }
 
-        let displayMarketCap = marketCapUsd > 0
-          ? marketCapUsd.toLocaleString('en-US', { style: 'currency', currency: 'USD' })
+        let displayMarketCap = marketCapUsd > 0 
+          ? marketCapUsd.toLocaleString('en-US', { style: 'currency', currency: 'USD' }) 
           : "$0.00";
-
 
         let finalVolumeEth = "0.0000";
         let finalBuyPct = 50;
@@ -716,42 +712,54 @@ export default function Home() {
         const volumeUsdValue = Number(finalVolumeEth) * usdRate;
         let displayVolumeUsd = "$0.00";
         if (Number(finalVolumeEth) > 0) {
-          if (usdRate > 0) {
-            displayVolumeUsd = volumeUsdValue.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
-          } else {
-            displayVolumeUsd = `${finalVolumeEth} ${livePairSymbol}`;
-          }
+          displayVolumeUsd = usdRate > 0 
+            ? volumeUsdValue.toLocaleString('en-US', { style: 'currency', currency: 'USD' }) 
+            : `${finalVolumeEth} ${livePairSymbol}`;
         }
 
         const socials = launch?.content?.socials || {};
         const hasSocials = !!(socials.x || socials.telegram || socials.website);
         const poolAddr = (launch?.graduation?.poolId || launch?.poolAddress || launch?.pool?.address || "").toLowerCase();
 
-        // 4. APPLY TO STATE
-        setSelectedToken((prev: any) => {
-          return {
-            ...prev,
-            isLegacy: prev?.isLegacy || json.apiVersion === "1" || (!json.data?.launch && !!json.data?.tokenAddress),
-            bondingCurveProgress: liveCurveProgress,
-            ethDeposited: liveDepositedStr,
-            pairSymbol: livePairSymbol,
-            symbol: launch?.symbol || prev?.symbol,
-            devAddress: launch?.launcherAddress || launch?.creatorAddress || prev?.devAddress,
-            score: calculateVibeScore(prev?.blockZeroBuyers || 0, prev?.timeSinceLaunchMins || 0, liveCurveProgress, prev?.diamondHandsHoldersPct || 50, Number(finalVolumeEth), finalBuyPct, hasSocials, 0),
-            hasSocials: hasSocials,
-            socialLinks: socials,
-            poolAddress: poolAddr || prev?.poolAddress,
-            marketCapUsd: displayMarketCap,
-            momentum: { buyPct: finalBuyPct, sellPct: finalSellPct, volumeEth: finalVolumeEth, volumeUsd: displayVolumeUsd },
-            volumeEth: finalVolumeEth,
-            volumeUsd: displayVolumeUsd,
-            safetyChecks: {
-              ...prev?.safetyChecks,
-              mev: { label: feeEvents.length <= 5 ? "Low Risk (< 5%)" : "Normal", safe: true },
-              creatorBag: prev?.safetyChecks?.creatorBag || { label: "Checking...", safe: true }
-            }
-          };
-        });
+        // 4. APPLY TO STATE & SYNC BACK TO DB CACHE
+        const finalTokenState = {
+          isLegacy: json.apiVersion === "1" || (!json.data?.launch && !!json.data?.tokenAddress),
+          bondingCurveProgress: liveCurveProgress,
+          ethDeposited: liveDepositedStr,
+          pairSymbol: livePairSymbol,
+          symbol: launch?.symbol,
+          devAddress: launch?.launcherAddress || launch?.creatorAddress,
+          score: calculateVibeScore(0, 0, liveCurveProgress, 50, Number(finalVolumeEth), finalBuyPct, hasSocials, 0),
+          hasSocials: hasSocials,
+          socialLinks: socials,
+          poolAddress: poolAddr,
+          marketCapUsd: displayMarketCap,
+          momentum: { buyPct: finalBuyPct, sellPct: finalSellPct, volumeEth: finalVolumeEth, volumeUsd: displayVolumeUsd },
+          volumeEth: finalVolumeEth,
+          volumeUsd: displayVolumeUsd,
+          safetyChecks: {
+            mev: { label: feeEvents.length <= 5 ? "Low Risk (< 5%)" : "Normal", safe: true },
+            creatorBag: { label: "Checking...", safe: true }
+          }
+        };
+
+        setSelectedToken((prev: any) => ({ ...prev, ...finalTokenState }));
+
+        // Force the radar cards to accept the API truth, stopping the WebSocket fight
+        setDbTokens((prevTokens) => 
+          prevTokens.map((t) => 
+            (t.tokenAddress || t.token_address)?.toLowerCase() === selectedToken.contractAddress.toLowerCase()
+              ? {
+                  ...t,
+                  curveProgress: liveCurveProgress,
+                  curve_progress: liveCurveProgress,
+                  ethDeposited: Number(currentPairUnits),
+                  liquidity_deposited: Number(currentPairUnits),
+                  momentum: { buyPct: finalBuyPct, sellPct: finalSellPct, volumeEth: finalVolumeEth }
+                }
+              : t
+          )
+        );
       })
       .catch(console.error)
       .finally(() => setIsSyncingLive(false));
