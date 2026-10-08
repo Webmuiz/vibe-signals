@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { usePrivy } from "@privy-io/react-auth";
 import { useAccount, useSendTransaction, useBalance, useReadContract, useWaitForTransactionReceipt } from "wagmi";
 import { isAddress, parseEther, createPublicClient, http, formatEther, encodeAbiParameters, parseAbiParameters } from "viem";
@@ -191,6 +191,13 @@ export default function Home() {
   const [topHolders, setTopHolders] = useState<{ address: string, pct: number }[]>([]);
   const [devStats, setDevStats] = useState<{ launches: number; gradRate: number; label: string; color: string; } | null>(null);
 
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
+  const activeTokenRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    activeTokenRef.current = selectedToken?.contractAddress || null;
+  }, [selectedToken?.contractAddress]);
+
   // Fetch Native ETH Balance pinned to Robinhood Testnet
   const { data: ethBalance } = useBalance({
     address,
@@ -247,6 +254,60 @@ export default function Home() {
     fetchDatabase();
     const interval = setInterval(fetchDatabase, 3000); // Check for new tokens every 3 seconds
     return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    const channel = supabase
+      .channel('realtime-launches')
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'launches' },
+        (payload) => {
+          const newRecord = payload.new;
+          const formattedToken = {
+            launchId: newRecord.launch_id,
+            tokenAddress: newRecord.token_address,
+            ammAddress: newRecord.amm_address,
+            devAddress: newRecord.dev_address,
+            ethDeposited: newRecord.liquidity_deposited,
+            pairSymbol: newRecord.pair_symbol || 'ETH',
+            curveProgress: newRecord.curve_progress,
+            launchBlock: newRecord.launch_block,
+            timestamp: newRecord.created_at,
+            name: newRecord.name || `Token #${newRecord.launch_id}`,
+            ticker: newRecord.symbol ? `$${newRecord.symbol}` : '$TKN',
+          };
+          setDbTokens((prev) => [formattedToken as DBToken, ...prev]);
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'launches' },
+        (payload) => {
+          const updated = payload.new;
+          if (activeTokenRef.current && activeTokenRef.current.toLowerCase() === updated.token_address?.toLowerCase()) {
+            setRefreshTrigger(prev => prev + 1);
+          }
+          setDbTokens((prev) =>
+            prev.map((token) =>
+              (token.tokenAddress || token.token_address)?.toLowerCase() === updated.token_address?.toLowerCase()
+                ? {
+                    ...token,
+                    curveProgress: updated.curve_progress,
+                    curve_progress: updated.curve_progress,
+                    ethDeposited: updated.liquidity_deposited,
+                    liquidity_deposited: updated.liquidity_deposited,
+                  }
+                : token
+            )
+          );
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   const processedTokens = useMemo(() => {
@@ -690,7 +751,7 @@ export default function Home() {
     }
 
     return () => { isMounted = false; };
-  }, [selectedToken?.contractAddress]);
+  }, [selectedToken?.contractAddress, refreshTrigger]);
 
   const handleExecuteApe = async () => {
     if (!selectedToken || !apeAmount || Number(apeAmount) <= 0) return;
@@ -1247,9 +1308,27 @@ export default function Home() {
                         )}
 
                         <div className="border border-zinc-800 bg-zinc-950/50 rounded-lg p-4 mb-4">
-                          <div className="flex justify-between items-center mb-3">
-                            <span className="text-sm text-zinc-400">Vibe Score</span>
-                            <span className={`text-xl font-bold px-3 py-1 rounded-md border ${scoreColor}`}>{token.score}</span>
+                          <div className="grid grid-cols-3 gap-2 text-center divide-x divide-zinc-800/50">
+                            <div>
+                              <span className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider block mb-1">M.Cap (Est)</span>
+                              <span className="text-sm font-bold text-zinc-300">
+                                {token.bondingCurveProgress >= 100 
+                                  ? '$65K+' 
+                                  : `$${Math.round(5000 + (token.bondingCurveProgress / 100) * 60000).toLocaleString()}`}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider block mb-1">24H Vol</span>
+                              <span className="text-sm font-bold text-zinc-300">
+                                ${Math.round(Number(token.momentum?.volumeEth || 0) * 2600).toLocaleString()}
+                              </span>
+                            </div>
+                            <div className="pl-1">
+                              <span className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider block mb-1">Score</span>
+                              <span className={`text-sm font-bold px-2 py-0.5 rounded border inline-block ${scoreColor}`}>
+                                {token.score}
+                              </span>
+                            </div>
                           </div>
                         </div>
                       </div>
