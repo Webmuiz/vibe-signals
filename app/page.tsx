@@ -168,6 +168,38 @@ const getSymbolUsdRate = (symbol: string) => {
   return rates[symbol.toUpperCase()] || 0;
 };
 
+function calculateTokenMetrics(
+  bondingCurveProgress: number,
+  ethDeposited: number | string,
+  pairSymbol: string = 'ETH',
+  liveRates: Record<string, number>,
+  lastPriceWeiPerToken?: number | string
+) {
+  const sym = (pairSymbol || 'ETH').toUpperCase();
+  const usdRate = liveRates[sym] || (sym === 'ETH' || sym === 'WETH' ? liveRates['ETH'] || 2600 : 1);
+
+  if (lastPriceWeiPerToken && Number(lastPriceWeiPerToken) > 0) {
+    const pricePairUnits = Number(lastPriceWeiPerToken) / 1e18;
+    const mcUsd = pricePairUnits * 1_000_000_000 * usdRate;
+    return {
+      marketCapFormatted: mcUsd > 0 ? mcUsd.toLocaleString('en-US', { style: 'currency', currency: 'USD' }) : '$0.00',
+      marketCapRaw: mcUsd
+    };
+  }
+
+  const progress = Math.min(100, Math.max(0, Number(bondingCurveProgress || 0)));
+  const baseUsd = 4000;
+  const gradUsd = 50500;
+  const currentUsd = progress >= 100 
+    ? gradUsd 
+    : baseUsd + ((gradUsd - baseUsd) * Math.pow(progress / 100, 1.45));
+
+  return {
+    marketCapFormatted: currentUsd.toLocaleString('en-US', { style: 'currency', currency: 'USD' }),
+    marketCapRaw: currentUsd
+  };
+}
+
 export default function Home() {
   const { login, logout, authenticated, ready } = usePrivy();
   const { address, isConnected } = useAccount();
@@ -197,6 +229,74 @@ export default function Home() {
   useEffect(() => {
     activeTokenRef.current = selectedToken?.contractAddress || null;
   }, [selectedToken?.contractAddress]);
+
+  const [liveRates, setLiveRates] = useState<Record<string, number>>({
+    ETH: 2600,
+    WETH: 2600,
+    NVDA: 465,
+    AAPL: 225,
+    SPCX: 20,
+    MSFT: 415,
+    TSLA: 250,
+    VIBE: 1,
+    STOCK: 1
+  });
+
+  useEffect(() => {
+    let isSubscribed = true;
+    const syncOraclePrices = async () => {
+      try {
+        const res = await fetch('/api/proxyPrices');
+        if (!res.ok) return;
+        const json = await res.json();
+        const items = json?.data?.items || [];
+        const ethPrice = json?.data?.ethPriceUsd || 2600;
+
+        const updated: Record<string, number> = { ETH: ethPrice, WETH: ethPrice };
+        items.forEach((item: any) => {
+          if (item.symbol && item.priceEthWad) {
+            const sym = item.symbol.toUpperCase();
+            updated[sym] = (Number(item.priceEthWad) / 1e18) * ethPrice;
+          }
+        });
+
+        if (isSubscribed && Object.keys(updated).length > 2) {
+          setLiveRates(prev => ({ ...prev, ...updated }));
+        }
+      } catch (err) {
+        console.error("Failed to sync global oracle prices", err);
+      }
+    };
+
+    syncOraclePrices();
+    const interval = setInterval(syncOraclePrices, 45000);
+    return () => {
+      isSubscribed = false;
+      clearInterval(interval);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (selectedToken && dbTokens.length > 0) {
+      const liveMatch = dbTokens.find(
+        t => (t.tokenAddress || t.token_address)?.toLowerCase() === selectedToken.contractAddress?.toLowerCase()
+      );
+      if (
+        liveMatch &&
+        (liveMatch.curveProgress !== selectedToken.bondingCurveProgress ||
+         liveMatch.curve_progress !== selectedToken.bondingCurveProgress)
+      ) {
+        const nextProgress = liveMatch.curveProgress ?? liveMatch.curve_progress ?? selectedToken.bondingCurveProgress;
+        const nextDeposited = liveMatch.ethDeposited ?? liveMatch.liquidity_deposited ?? selectedToken.ethDeposited;
+        
+        setSelectedToken((prev: any) => ({
+          ...prev,
+          bondingCurveProgress: nextProgress,
+          ethDeposited: nextDeposited
+        }));
+      }
+    }
+  }, [dbTokens, selectedToken?.contractAddress]);
 
   // Fetch Native ETH Balance pinned to Robinhood Testnet
   const { data: ethBalance } = useBalance({
@@ -544,47 +644,25 @@ export default function Home() {
           }
         }
 
-        // 2. FETCH MASTER ORACLE PRICE VIA PROXY
-        let usdRate = getSymbolUsdRate(livePairSymbol) || (livePairSymbol === "ETH" ? globalEthPrice : 0);
-        const quoteAddr = (launch?.pairCurrencyAddress || "").toLowerCase();
-        if (quoteAddr && quoteAddr !== "0x0000000000000000000000000000000000000000") {
-          try {
-            const oracleRes = await fetch('/api/proxyPrices');
-            if (oracleRes.ok) {
-              const oracleJson = await oracleRes.json();
-              const pairData = oracleJson?.data?.items?.find((item: any) => item.pairAddress.toLowerCase() === quoteAddr);
-              if (pairData && pairData.priceEthWad) {
-                usdRate = (Number(pairData.priceEthWad) / 1e18) * globalEthPrice;
-              }
-            }
-          } catch {
-            // Keep usdRate from getSymbolUsdRate fallback
-          }
-        }
-
-        // 3. CORRECT MARKET CAP MATH
-        let currentPriceUnits = json.data?.marketTrades?.[0] ? Number(json.data.marketTrades[0].executionPricePairUnitsPerToken) / 1e18 : 0;
-        if (currentPriceUnits === 0 && launch?.analytics?.lastPriceWeiPerToken) {
-          currentPriceUnits = Number(launch.analytics.lastPriceWeiPerToken) / 1e18;
-        }
-
-        const marketCapUnits = currentPriceUnits * 1_000_000_000;
-        let displayMarketCap = "$0.00";
-        if (marketCapUnits > 0) {
-          if (usdRate > 0) {
-            displayMarketCap = (marketCapUnits * usdRate).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
-          } else {
-            displayMarketCap = `${marketCapUnits.toLocaleString('en-US', { maximumFractionDigits: 2 })} ${livePairSymbol}`;
-          }
-        }
-
-        // 4. RECALCULATE CURVE PROGRESS
+        // 2. RECALCULATE CURVE PROGRESS
         const isGraduated = launch?.lifecycle === "GRADUATED" || launch?.graduated === true || launch?.curve?.lifecycle === "GRADUATED" || selectedToken?.bondingCurveProgress >= 100;
         const currentPairUnits = Number(launch?.curve?.pairReserveUnits || launch?.curve?.netRaisedWei || 0) / 1e18;
         const targetPairUnits = Number(launch?.targetPairUnits || launch?.curve?.netTargetWei || 5000000000000000000) / 1e18;
         let liveCurveProgress = isGraduated ? 100 : (launch?.curve?.progressBps ? launch.curve.progressBps / 100 : Math.min(100, Math.max(0, (currentPairUnits / targetPairUnits) * 100)));
         if (!isGraduated && liveCurveProgress > 0 && liveCurveProgress < 0.1) liveCurveProgress = 0.1;
         const liveDepositedStr = `${currentPairUnits.toFixed(4)} / ${targetPairUnits.toFixed(1)}`;
+
+        // 3. CORRECT MARKET CAP MATH
+        const metrics = calculateTokenMetrics(
+          liveCurveProgress,
+          currentPairUnits,
+          livePairSymbol,
+          liveRates,
+          launch?.analytics?.lastPriceWeiPerToken
+        );
+        let displayMarketCap = metrics.marketCapFormatted;
+
+        let usdRate = liveRates[livePairSymbol.toUpperCase()] || (livePairSymbol === 'ETH' || livePairSymbol === 'WETH' ? liveRates['ETH'] || 2600 : 1);
 
         const stats = json.data?.marketStats;
         let finalVolumeEth = "0.0000";
@@ -1312,15 +1390,13 @@ export default function Home() {
                             <div>
                               <span className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider block mb-1">M.Cap (Est)</span>
                               <span className="text-sm font-bold text-zinc-300">
-                                {token.bondingCurveProgress >= 100 
-                                  ? '$65K+' 
-                                  : `$${Math.round(5000 + (token.bondingCurveProgress / 100) * 60000).toLocaleString()}`}
+                                {calculateTokenMetrics(token.bondingCurveProgress, token.ethDeposited, token.pairSymbol, liveRates).marketCapFormatted}
                               </span>
                             </div>
                             <div>
                               <span className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider block mb-1">24H Vol</span>
                               <span className="text-sm font-bold text-zinc-300">
-                                ${Math.round(Number(token.momentum?.volumeEth || 0) * 2600).toLocaleString()}
+                                ${(Number(token.momentum?.volumeEth || 0) * (liveRates[(token.pairSymbol || 'ETH').toUpperCase()] || liveRates['ETH'] || 2600)).toLocaleString('en-US', { maximumFractionDigits: 0 })}
                               </span>
                             </div>
                             <div className="pl-1">
