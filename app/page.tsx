@@ -292,28 +292,7 @@ export default function Home() {
     };
   }, []);
 
-  useEffect(() => {
-    if (selectedToken && dbTokens.length > 0) {
-      const liveMatch = dbTokens.find(
-        t => (t.tokenAddress || t.token_address)?.toLowerCase() === selectedToken.contractAddress?.toLowerCase()
-      );
-      if (liveMatch) {
-        // If the selected token is already graduated or 100%, do not let stale DB downgrade it
-        if (selectedToken.bondingCurveProgress >= 100) return;
 
-        const nextProgress = liveMatch.curveProgress ?? liveMatch.curve_progress ?? selectedToken.bondingCurveProgress;
-        const nextDeposited = liveMatch.ethDeposited ?? liveMatch.liquidity_deposited ?? selectedToken.ethDeposited;
-
-        if (nextProgress !== selectedToken.bondingCurveProgress) {
-          setSelectedToken((prev: any) => ({
-            ...prev,
-            bondingCurveProgress: nextProgress,
-            ethDeposited: nextDeposited
-          }));
-        }
-      }
-    }
-  }, [dbTokens, selectedToken?.contractAddress, selectedToken?.bondingCurveProgress]);
 
   // Fetch Native ETH Balance pinned to Robinhood Testnet
   const { data: ethBalance } = useBalance({
@@ -637,114 +616,112 @@ export default function Home() {
   useEffect(() => {
     if (!selectedToken?.contractAddress) return;
     let isMounted = true;
-    setIsSyncingLive(true);
 
-    fetch(`/api/proxyVibe?address=${selectedToken.contractAddress}`)
-      .then(async res => {
-        const json = await res.json();
-        if (!isMounted) return;
-        const feeEvents = json.data?.feeEvents || [];
-        const launch = json.data?.launch || (json.data?.tokenAddress ? json.data : null);
+    const fetchLiveToken = () => {
+      setIsSyncingLive(true);
+      fetch(`/api/proxyVibe?address=${selectedToken.contractAddress}`)
+        .then(async res => {
+          const json = await res.json();
+          if (!isMounted) return;
+          const feeEvents = json.data?.feeEvents || [];
+          const launch = json.data?.launch || (json.data?.tokenAddress ? json.data : null);
 
-        // 1. DYNAMICALLY RESOLVE SYMBOL
-        let livePairSymbol = launch?.pairSymbol;
-        if (!livePairSymbol) {
-          if (launch?.pairIsNative || launch?.pairCurrencyAddress === "0x0000000000000000000000000000000000000000") {
-            livePairSymbol = "ETH";
-          } else if (launch?.pairCurrencyAddress) {
-            try {
-              livePairSymbol = await publicClient.readContract({ address: launch.pairCurrencyAddress as `0x${string}`, abi: ERC20_ABI, functionName: 'symbol' });
-            } catch { livePairSymbol = selectedToken?.pairSymbol || "TOKEN"; }
+          // 1. DYNAMICALLY RESOLVE SYMBOL
+          let livePairSymbol = launch?.pairSymbol;
+          if (!livePairSymbol) {
+            if (launch?.pairIsNative || launch?.pairCurrencyAddress === "0x0000000000000000000000000000000000000000") {
+              livePairSymbol = "ETH";
+            } else if (launch?.pairCurrencyAddress) {
+              try {
+                livePairSymbol = await publicClient.readContract({ address: launch.pairCurrencyAddress as `0x${string}`, abi: ERC20_ABI, functionName: 'symbol' });
+              } catch { livePairSymbol = selectedToken?.pairSymbol || "TOKEN"; }
+            } else {
+              livePairSymbol = selectedToken?.pairSymbol || "ETH";
+            }
+          }
+
+          // 2. RECALCULATE CURVE PROGRESS & FORMAT
+          const isGraduated = 
+            launch?.lifecycle === "GRADUATED" || 
+            launch?.graduated === true || 
+            launch?.curve?.lifecycle === "GRADUATED" || 
+            selectedToken?.bondingCurveProgress >= 100 ||
+            !!launch?.graduation ||
+            !!launch?.poolAddress ||
+            !!launch?.graduationPoolAddress ||
+            !!launch?.pool?.address;
+          const currentPairUnits = Number(launch?.curve?.pairReserveUnits || launch?.curve?.netRaisedWei || 0) / 1e18;
+          const targetPairUnits = Number(launch?.targetPairUnits || launch?.curve?.netTargetWei || 4000000000000000000) / 1e18;
+          let liveCurveProgress = isGraduated ? 100 : (launch?.curve?.progressBps != null ? launch.curve.progressBps / 100 : Math.min(100, Math.max(0, (currentPairUnits / targetPairUnits) * 100)));
+          if (!isGraduated && liveCurveProgress > 0 && liveCurveProgress < 0.1) liveCurveProgress = 0.1;
+          const liveDepositedStr = isGraduated ? 'Graduated' : `${currentPairUnits.toFixed(4)} / ${targetPairUnits.toFixed(1)}`;
+
+          // 3. CORRECT MARKET CAP MATH
+          const liveEthPrice = Number(json.data?.ethPriceUsd) || liveRates['ETH'] || 2416;
+          let usdRate = (livePairSymbol === 'ETH' || livePairSymbol === 'WETH')
+            ? liveEthPrice
+            : getUsdRateForPair(livePairSymbol, { ...liveRates, ETH: liveEthPrice, WETH: liveEthPrice });
+
+          const stats = json.data?.marketStats;
+          const directPriceUsd = launch?.priceUsd || launch?.analytics?.priceUsd || launch?.curve?.priceUsd || stats?.priceUsd;
+          let lastPriceWei = launch?.analytics?.lastPriceWeiPerToken || stats?.priceWeiPerToken || stats?.lastPriceWeiPerToken || 0;
+          
+          if (isGraduated && (!lastPriceWei || Number(lastPriceWei) === 0) && json.data?.marketTrades?.[0]) {
+            lastPriceWei = json.data.marketTrades[0].executionPricePairUnitsPerToken;
+          }
+
+          let marketCapUsd = 0;
+          if (directPriceUsd && Number(directPriceUsd) > 0) {
+            marketCapUsd = Number(directPriceUsd) * 1_000_000_000;
+          } else if (Number(lastPriceWei) > 0) {
+            const pricePairUnits = Number(lastPriceWei) / 1e18;
+            marketCapUsd = usdRate > 0 ? pricePairUnits * 1_000_000_000 * usdRate : 0;
           } else {
-            livePairSymbol = selectedToken?.pairSymbol || "ETH";
+            marketCapUsd = calculateTokenMetrics(liveCurveProgress, currentPairUnits, livePairSymbol, liveRates).marketCapRaw;
           }
-        }
 
-        // 2. RECALCULATE CURVE PROGRESS (Force 100% if graduated)
-        const isGraduated = 
-          launch?.lifecycle === "GRADUATED" || 
-          launch?.graduated === true || 
-          launch?.curve?.lifecycle === "GRADUATED" || 
-          selectedToken?.bondingCurveProgress >= 100 ||
-          !!launch?.graduation ||
-          !!launch?.poolAddress ||
-          !!launch?.graduationPoolAddress ||
-          !!launch?.pool?.address;
-        const currentPairUnits = Number(launch?.curve?.pairReserveUnits || launch?.curve?.netRaisedWei || 0) / 1e18;
-        const targetPairUnits = Number(launch?.targetPairUnits || launch?.curve?.netTargetWei || 5000000000000000000) / 1e18;
-        let liveCurveProgress = isGraduated ? 100 : (launch?.curve?.progressBps != null ? launch.curve.progressBps / 100 : Math.min(100, Math.max(0, (currentPairUnits / targetPairUnits) * 100)));
-        if (!isGraduated && liveCurveProgress > 0 && liveCurveProgress < 0.1) liveCurveProgress = 0.1;
-        const liveDepositedStr = isGraduated ? 'Graduated' : `${currentPairUnits.toFixed(4)} / ${targetPairUnits.toFixed(1)}`;
+          let displayMarketCap = marketCapUsd > 0
+            ? marketCapUsd.toLocaleString('en-US', { style: 'currency', currency: 'USD' })
+            : "\$0.00";
 
-        // 3. CORRECT MARKET CAP MATH (Handle Post-Graduation DEX Prices)
-        // Prioritize the live ethPriceUsd returned directly by the proxy
-        const liveEthPrice = Number(json.data?.ethPriceUsd) || liveRates['ETH'] || 2416;
-        let usdRate = (livePairSymbol === 'ETH' || livePairSymbol === 'WETH')
-          ? liveEthPrice
-          : getUsdRateForPair(livePairSymbol, { ...liveRates, ETH: liveEthPrice, WETH: liveEthPrice });
-        const stats = json.data?.marketStats;
+          let finalVolumeEth = "0.0000";
+          let finalBuyPct = 50;
+          let finalSellPct = 50;
 
-        const directPriceUsd = launch?.priceUsd || launch?.analytics?.priceUsd || launch?.curve?.priceUsd || stats?.priceUsd;
-        let lastPriceWei = launch?.analytics?.lastPriceWeiPerToken || stats?.priceWeiPerToken || stats?.lastPriceWeiPerToken || 0;
-        
-        // If graduated and curve price is missing, fallback to the latest DEX trade execution
-        if (isGraduated && (!lastPriceWei || Number(lastPriceWei) === 0) && json.data?.marketTrades?.[0]) {
-          lastPriceWei = json.data.marketTrades[0].executionPricePairUnitsPerToken;
-        }
-
-        let marketCapUsd = 0;
-        if (directPriceUsd && Number(directPriceUsd) > 0) {
-          marketCapUsd = Number(directPriceUsd) * 1_000_000_000;
-        } else if (Number(lastPriceWei) > 0) {
-          const pricePairUnits = Number(lastPriceWei) / 1e18;
-          marketCapUsd = usdRate > 0 ? pricePairUnits * 1_000_000_000 * usdRate : 0;
-        } else {
-          marketCapUsd = calculateTokenMetrics(liveCurveProgress, currentPairUnits, livePairSymbol, liveRates).marketCapRaw;
-        }
-
-        let displayMarketCap = marketCapUsd > 0
-          ? marketCapUsd.toLocaleString('en-US', { style: 'currency', currency: 'USD' })
-          : "$0.00";
-
-        let finalVolumeEth = "0.0000";
-        let finalBuyPct = 50;
-        let finalSellPct = 50;
-
-        if (stats) {
-          const buyVol = Number(stats.buyVolume24hPairUnits || 0) / 1e18;
-          const sellVol = Number(stats.sellVolume24hPairUnits || 0) / 1e18;
-          const totalVol = buyVol + sellVol;
-          if (totalVol > 0) {
-            finalVolumeEth = totalVol.toFixed(4);
-            finalBuyPct = Math.round((buyVol / totalVol) * 100);
-            finalSellPct = 100 - finalBuyPct;
+          if (stats) {
+            const buyVol = Number(stats.buyVolume24hPairUnits || 0) / 1e18;
+            const sellVol = Number(stats.sellVolume24hPairUnits || 0) / 1e18;
+            const totalVol = buyVol + sellVol;
+            if (totalVol > 0) {
+              finalVolumeEth = totalVol.toFixed(4);
+              finalBuyPct = Math.round((buyVol / totalVol) * 100);
+              finalSellPct = 100 - finalBuyPct;
+            }
+          } else if (launch?.analytics) {
+            if (launch.analytics.volume24hWei) finalVolumeEth = (Number(launch.analytics.volume24hWei) / 1e18).toFixed(4);
+            const buys = Number(launch.analytics.buyCount1h || 0);
+            const sells = Number(launch.analytics.sellCount1h || 0);
+            const totalTrades = buys + sells;
+            if (totalTrades > 0) {
+              finalBuyPct = Math.round((buys / totalTrades) * 100);
+              finalSellPct = 100 - finalBuyPct;
+            }
           }
-        } else if (launch?.analytics) {
-          if (launch.analytics.volume24hWei) finalVolumeEth = (Number(launch.analytics.volume24hWei) / 1e18).toFixed(4);
-          const buys = Number(launch.analytics.buyCount1h || 0);
-          const sells = Number(launch.analytics.sellCount1h || 0);
-          const totalTrades = buys + sells;
-          if (totalTrades > 0) {
-            finalBuyPct = Math.round((buys / totalTrades) * 100);
-            finalSellPct = 100 - finalBuyPct;
+
+          const volumeUsdValue = Number(finalVolumeEth) * usdRate;
+          let displayVolumeUsd = "\$0.00";
+          if (Number(finalVolumeEth) > 0) {
+            displayVolumeUsd = usdRate > 0
+              ? volumeUsdValue.toLocaleString('en-US', { style: 'currency', currency: 'USD' })
+              : `${finalVolumeEth} ${livePairSymbol}`;
           }
-        }
 
-        const volumeUsdValue = Number(finalVolumeEth) * usdRate;
-        let displayVolumeUsd = "$0.00";
-        if (Number(finalVolumeEth) > 0) {
-          displayVolumeUsd = usdRate > 0
-            ? volumeUsdValue.toLocaleString('en-US', { style: 'currency', currency: 'USD' })
-            : `${finalVolumeEth} ${livePairSymbol}`;
-        }
+          const socials = launch?.content?.socials || {};
+          const hasSocials = !!(socials.x || socials.telegram || socials.website);
+          const poolAddr = (launch?.graduation?.poolId || launch?.poolAddress || launch?.pool?.address || "").toLowerCase();
 
-        const socials = launch?.content?.socials || {};
-        const hasSocials = !!(socials.x || socials.telegram || socials.website);
-        const poolAddr = (launch?.graduation?.poolId || launch?.poolAddress || launch?.pool?.address || "").toLowerCase();
-
-        // 4. APPLY TO STATE & SYNC BACK TO DB CACHE
-        setSelectedToken((prev: any) => {
-          return {
+          // 4. APPLY DIRECTLY TO STATE
+          setSelectedToken((prev: any) => ({
             ...prev,
             isLegacy: prev?.isLegacy || json.apiVersion === "1" || (!json.data?.launch && !!json.data?.tokenAddress),
             bondingCurveProgress: liveCurveProgress,
@@ -765,25 +742,14 @@ export default function Home() {
               mev: { label: feeEvents.length <= 5 ? "Low Risk (< 5%)" : "Normal", safe: true },
               creatorBag: prev?.safetyChecks?.creatorBag || { label: "Checking...", safe: true }
             }
-          };
-        });
+          }));
+        })
+        .catch(console.error)
+        .finally(() => setIsSyncingLive(false));
+    };
 
-        // Push the API truth into the DB state so the WebSocket doesn't overwrite it
-        setDbTokens((prevTokens) => 
-          prevTokens.map((t) => 
-            (t.tokenAddress || t.token_address)?.toLowerCase() === selectedToken.contractAddress.toLowerCase()
-              ? {
-                  ...t,
-                  curveProgress: liveCurveProgress,
-                  curve_progress: liveCurveProgress,
-                  cachedMarketCapFormatted: displayMarketCap
-                }
-              : t
-          )
-        );
-      })
-      .catch(console.error)
-      .finally(() => setIsSyncingLive(false));
+    fetchLiveToken();
+    const interval = setInterval(fetchLiveToken, 5000);
 
     if (selectedToken?.contractAddress) {
       fetch(`https://explorer.testnet.chain.robinhood.com/api/v2/tokens/${selectedToken.contractAddress}/holders`)
@@ -881,7 +847,10 @@ export default function Home() {
         }).catch(err => console.error("Profiler failed:", err));
     }
 
-    return () => { isMounted = false; };
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
   }, [selectedToken?.contractAddress, refreshTrigger]);
 
   const handleExecuteApe = async () => {
