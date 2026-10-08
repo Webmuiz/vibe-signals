@@ -173,14 +173,12 @@ function getUsdRateForPair(symbol: string | undefined, liveRates: Record<string,
   if (!symbol) return liveRates['ETH'] || 2600;
   const s = symbol.toUpperCase();
 
-  if (s === 'VIBEVIBE' || s === 'VIBE') {
-    return liveRates['VIBEVIBE'] || liveRates['VIBE'] || 0.085;
-  }
-  if (s === 'ETH' || s === 'WETH') {
-    return liveRates['ETH'] || 2600;
-  }
+  if (s.includes('USD')) return 1;
+  if (s === 'OPENAI') return liveRates['ETH'] || 2600;
+  if (s === 'VIBEVIBE' || s === 'VIBE' || s === 'MONKE') return 0.50;
+  if (s === 'ETH' || s === 'WETH') return liveRates['ETH'] || 2600;
 
-  return liveRates[s] || 1;
+  return liveRates[s] || liveRates['ETH'] || 2600;
 }
 
 function calculateTokenMetrics(
@@ -665,34 +663,25 @@ export default function Home() {
 
           // 3. CORRECT MARKET CAP & USD VOLUME MATH
           const liveEthPrice = Number(json.data?.ethPriceUsd) || liveRates['ETH'] || 2416;
-          
-          const pairAddr = (launch?.pairCurrencyAddress || "").toLowerCase();
-          const isNative = !pairAddr || pairAddr === "0x0000000000000000000000000000000000000000";
-          
-          let usdRate = liveEthPrice;
-          if (!isNative) {
-             usdRate = liveRates[pairAddr] || getUsdRateForPair(livePairSymbol, { ...liveRates, ETH: liveEthPrice, WETH: liveEthPrice });
-          }
+          let usdRate = getUsdRateForPair(livePairSymbol, { ...liveRates, ETH: liveEthPrice, WETH: liveEthPrice });
 
           const stats = json.data?.marketStats;
           let marketCapUsd = 0;
-          let lastPriceWei = launch?.analytics?.lastPriceWeiPerToken || stats?.priceWeiPerToken || stats?.lastPriceWeiPerToken || 0;
           
-          // UNGRADUATED tokens MUST use the curve formula, not raw spot trades
-          if (isGraduated) {
-            const directPriceUsd = launch?.priceUsd || launch?.analytics?.priceUsd || launch?.curve?.priceUsd || stats?.priceUsd;
-            if ((!lastPriceWei || Number(lastPriceWei) === 0) && json.data?.marketTrades?.[0]) {
-              lastPriceWei = json.data.marketTrades[0].executionPricePairUnitsPerToken;
-            }
-            if (directPriceUsd && Number(directPriceUsd) > 0) {
-              marketCapUsd = Number(directPriceUsd) * 1_000_000_000;
-            } else if (Number(lastPriceWei) > 0) {
-              const pricePairUnits = Number(lastPriceWei) / pDivisor;
-              marketCapUsd = usdRate > 0 ? pricePairUnits * 1_000_000_000 * usdRate : 0;
-            }
+          // 1. Always prioritize the API's exact backend USD price for ALL tokens
+          const directPriceUsd = launch?.priceUsd || launch?.analytics?.priceUsd || launch?.curve?.priceUsd || stats?.priceUsd;
+          let lastPriceWei = stats?.priceWeiPerToken || stats?.lastPriceWeiPerToken || launch?.analytics?.lastPriceWeiPerToken || 0;
+          
+          if ((!lastPriceWei || Number(lastPriceWei) === 0) && json.data?.marketTrades?.[0]) {
+            lastPriceWei = json.data.marketTrades[0].executionPricePairUnitsPerToken;
           }
-          
-          if (marketCapUsd === 0 || !isGraduated) {
+
+          if (directPriceUsd && Number(directPriceUsd) > 0) {
+            marketCapUsd = Number(directPriceUsd) * 1_000_000_000;
+          } else if (Number(lastPriceWei) > 0) {
+            const pricePairUnits = Number(lastPriceWei) / pDivisor;
+            marketCapUsd = usdRate > 0 ? pricePairUnits * 1_000_000_000 * usdRate : 0;
+          } else {
             marketCapUsd = calculateTokenMetrics(liveCurveProgress, currentPairUnits, livePairSymbol, liveRates).marketCapRaw;
           }
 
