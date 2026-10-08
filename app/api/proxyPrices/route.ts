@@ -12,7 +12,7 @@ export async function GET() {
 
     if (!pairsRes.ok) return NextResponse.json({ error: 'Failed to fetch pair prices' }, { status: pairsRes.status });
     const data = await pairsRes.json();
-    
+
     let ethPriceUsd = 2600;
     if (ethRes.ok) {
       const cbData = await ethRes.json();
