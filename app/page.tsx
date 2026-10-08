@@ -658,7 +658,15 @@ export default function Home() {
         }
 
         // 2. RECALCULATE CURVE PROGRESS (Force 100% if graduated)
-        const isGraduated = launch?.lifecycle === "GRADUATED" || launch?.graduated === true || launch?.curve?.lifecycle === "GRADUATED" || selectedToken?.bondingCurveProgress >= 100;
+        const isGraduated = 
+          launch?.lifecycle === "GRADUATED" || 
+          launch?.graduated === true || 
+          launch?.curve?.lifecycle === "GRADUATED" || 
+          selectedToken?.bondingCurveProgress >= 100 ||
+          !!launch?.graduation ||
+          !!launch?.poolAddress ||
+          !!launch?.graduationPoolAddress ||
+          !!launch?.pool?.address;
         const currentPairUnits = Number(launch?.curve?.pairReserveUnits || launch?.curve?.netRaisedWei || 0) / 1e18;
         const targetPairUnits = Number(launch?.targetPairUnits || launch?.curve?.netTargetWei || 5000000000000000000) / 1e18;
         let liveCurveProgress = isGraduated ? 100 : (launch?.curve?.progressBps != null ? launch.curve.progressBps / 100 : Math.min(100, Math.max(0, (currentPairUnits / targetPairUnits) * 100)));

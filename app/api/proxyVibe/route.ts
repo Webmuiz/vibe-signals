@@ -19,10 +19,10 @@ export async function GET(request: Request) {
     const paths = ['v6/launches', 'v5/launches', 'launches'];
 
     for (const path of paths) {
-      const [launchRes, marketRes, binanceRes] = await Promise.all([
+      const [launchRes, marketRes, ethRes] = await Promise.all([
         fetch(`https://testnet.vibevibe.fun/api/v1/chains/46630/${path}/${address}`, { headers, cache: 'no-store' }),
         fetch(`https://testnet.vibevibe.fun/api/v1/chains/46630/${path}/${address}/market?limit=2`, { headers, cache: 'no-store' }),
-        fetch('https://data.binance.com/api/v3/ticker/price?symbol=ETHUSDT', { cache: 'no-store' })
+        fetch('https://api.coinbase.com/v2/prices/ETH-USD/spot', { cache: 'no-store' })
       ]);
 
       if (launchRes.ok) {
@@ -30,9 +30,9 @@ export async function GET(request: Request) {
         marketData = marketRes.ok ? await marketRes.json() : null;
 
         let ethPriceUsd = 2600;
-        if (binanceRes.ok) {
-          const binanceData = await binanceRes.json();
-          ethPriceUsd = Number(binanceData.price || 2600);
+        if (ethRes.ok) {
+          const cbData = await ethRes.json();
+          if (cbData?.data?.amount) ethPriceUsd = Number(cbData.data.amount);
         }
 
         if (data && data.data) {
