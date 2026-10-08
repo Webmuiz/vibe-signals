@@ -3,14 +3,19 @@ import { createClient } from '@supabase/supabase-js';
 
 export const dynamic = 'force-dynamic';
 
-// 🛑 PASTE YOUR CREDENTIALS HERE
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const SUPABASE_PUBLISHABLE_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-
-const supabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
-
 export async function GET() {
     try {
+        // Initialize inside the function so it doesn't run during build evaluation
+        const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
+        const SUPABASE_PUBLISHABLE_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+        if (!SUPABASE_URL || !SUPABASE_PUBLISHABLE_KEY) {
+            console.error("Missing Supabase credentials");
+            return NextResponse.json([]);
+        }
+
+        const supabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
+
         const { data, error } = await supabase
             .from('launches')
             .select('*')
@@ -19,7 +24,6 @@ export async function GET() {
 
         if (error) throw error;
 
-        // Map the Supabase columns back to the camelCase variables your frontend expects
         const formattedData = data.map(db => ({
             launchId: db.launch_id,
             tokenAddress: db.token_address,
@@ -30,8 +34,8 @@ export async function GET() {
             curveProgress: db.curve_progress,
             launchBlock: db.launch_block,
             timestamp: db.created_at,
-            name: db.name || `Token #${db.launch_id}`, // Pull real name
-            ticker: db.symbol ? `$${db.symbol}` : '$TKN' // Pull real ticker
+            name: db.name || `Token #${db.launch_id}`,
+            ticker: db.symbol ? `$${db.symbol}` : '\$TKN'
         }));
 
         return NextResponse.json(formattedData);
