@@ -619,7 +619,7 @@ export default function Home() {
 
     const fetchLiveToken = () => {
       setIsSyncingLive(true);
-      fetch(`/api/proxyVibe?address=${selectedToken.contractAddress}`)
+      fetch(`/api/proxyVibe?address=${selectedToken.contractAddress}&t=${Date.now()}`, { cache: 'no-store' })
         .then(async res => {
           const json = await res.json();
           if (!isMounted) return;
@@ -640,7 +640,12 @@ export default function Home() {
             }
           }
 
-          // 2. RECALCULATE CURVE PROGRESS & FORMAT
+          // 2. DYNAMIC DECIMALS FOR SYNTHETIC PAIRS (e.g. USDG = 6 decimals)
+          const targetRaw = Number(launch?.targetPairUnits || launch?.curve?.netTargetWei || 4e18);
+          const currentRaw = Number(launch?.curve?.pairReserveUnits || launch?.curve?.netRaisedWei || 0);
+          const pDecimals = (targetRaw > 0 && targetRaw < 1e14) ? 6 : 18;
+          const pDivisor = Math.pow(10, pDecimals);
+          
           const isGraduated = 
             launch?.lifecycle === "GRADUATED" || 
             launch?.graduated === true || 
@@ -650,8 +655,10 @@ export default function Home() {
             !!launch?.poolAddress ||
             !!launch?.graduationPoolAddress ||
             !!launch?.pool?.address;
-          const currentPairUnits = Number(launch?.curve?.pairReserveUnits || launch?.curve?.netRaisedWei || 0) / 1e18;
-          const targetPairUnits = Number(launch?.targetPairUnits || launch?.curve?.netTargetWei || 4000000000000000000) / 1e18;
+            
+          const currentPairUnits = currentRaw / pDivisor;
+          const targetPairUnits = targetRaw / pDivisor;
+          
           let liveCurveProgress = isGraduated ? 100 : (launch?.curve?.progressBps != null ? launch.curve.progressBps / 100 : Math.min(100, Math.max(0, (currentPairUnits / targetPairUnits) * 100)));
           if (!isGraduated && liveCurveProgress > 0 && liveCurveProgress < 0.1) liveCurveProgress = 0.1;
           const liveDepositedStr = isGraduated ? 'Graduated' : `${currentPairUnits.toFixed(4)} / ${targetPairUnits.toFixed(1)}`;
@@ -659,7 +666,6 @@ export default function Home() {
           // 3. CORRECT MARKET CAP & USD VOLUME MATH
           const liveEthPrice = Number(json.data?.ethPriceUsd) || liveRates['ETH'] || 2416;
           
-          // Dynamically resolve USD rate using the contract pair address
           const pairAddr = (launch?.pairCurrencyAddress || "").toLowerCase();
           const isNative = !pairAddr || pairAddr === "0x0000000000000000000000000000000000000000";
           
@@ -669,35 +675,38 @@ export default function Home() {
           }
 
           const stats = json.data?.marketStats;
-          const directPriceUsd = launch?.priceUsd || launch?.analytics?.priceUsd || launch?.curve?.priceUsd || stats?.priceUsd;
+          let marketCapUsd = 0;
           let lastPriceWei = launch?.analytics?.lastPriceWeiPerToken || stats?.priceWeiPerToken || stats?.lastPriceWeiPerToken || 0;
           
-          // CRITICAL FIX: Allow UNGRADUATED tokens to use the latest trade execution price
-          if ((!lastPriceWei || Number(lastPriceWei) === 0) && json.data?.marketTrades?.[0]) {
-            lastPriceWei = json.data.marketTrades[0].executionPricePairUnitsPerToken;
+          // UNGRADUATED tokens MUST use the curve formula, not raw spot trades
+          if (isGraduated) {
+            const directPriceUsd = launch?.priceUsd || launch?.analytics?.priceUsd || launch?.curve?.priceUsd || stats?.priceUsd;
+            if ((!lastPriceWei || Number(lastPriceWei) === 0) && json.data?.marketTrades?.[0]) {
+              lastPriceWei = json.data.marketTrades[0].executionPricePairUnitsPerToken;
+            }
+            if (directPriceUsd && Number(directPriceUsd) > 0) {
+              marketCapUsd = Number(directPriceUsd) * 1_000_000_000;
+            } else if (Number(lastPriceWei) > 0) {
+              const pricePairUnits = Number(lastPriceWei) / pDivisor;
+              marketCapUsd = usdRate > 0 ? pricePairUnits * 1_000_000_000 * usdRate : 0;
+            }
           }
-
-          let marketCapUsd = 0;
-          if (directPriceUsd && Number(directPriceUsd) > 0) {
-            marketCapUsd = Number(directPriceUsd) * 1_000_000_000;
-          } else if (Number(lastPriceWei) > 0) {
-            const pricePairUnits = Number(lastPriceWei) / 1e18;
-            marketCapUsd = usdRate > 0 ? pricePairUnits * 1_000_000_000 * usdRate : 0;
-          } else {
+          
+          if (marketCapUsd === 0 || !isGraduated) {
             marketCapUsd = calculateTokenMetrics(liveCurveProgress, currentPairUnits, livePairSymbol, liveRates).marketCapRaw;
           }
 
           let displayMarketCap = marketCapUsd > 0
             ? marketCapUsd.toLocaleString('en-US', { style: 'currency', currency: 'USD' })
-            : "\$0.00";
+            : "$0.00";
 
           let finalVolumeEth = "0.0000";
           let finalBuyPct = 50;
           let finalSellPct = 50;
 
           if (stats) {
-            const buyVol = Number(stats.buyVolume24hPairUnits || 0) / 1e18;
-            const sellVol = Number(stats.sellVolume24hPairUnits || 0) / 1e18;
+            const buyVol = Number(stats.buyVolume24hPairUnits || 0) / pDivisor;
+            const sellVol = Number(stats.sellVolume24hPairUnits || 0) / pDivisor;
             const totalVol = buyVol + sellVol;
             if (totalVol > 0) {
               finalVolumeEth = totalVol.toFixed(4);
@@ -705,7 +714,8 @@ export default function Home() {
               finalSellPct = 100 - finalBuyPct;
             }
           } else if (launch?.analytics) {
-            if (launch.analytics.volume24hWei) finalVolumeEth = (Number(launch.analytics.volume24hWei) / 1e18).toFixed(4);
+            const volWei = Number(launch.analytics.volume24hWei || 0);
+            if (volWei > 0) finalVolumeEth = (volWei / pDivisor).toFixed(4);
             const buys = Number(launch.analytics.buyCount1h || 0);
             const sells = Number(launch.analytics.sellCount1h || 0);
             const totalTrades = buys + sells;
