@@ -168,6 +168,17 @@ const getSymbolUsdRate = (symbol: string) => {
   return rates[symbol.toUpperCase()] || 0;
 };
 
+function getUsdRateForPair(symbol: string | undefined, liveRates: Record<string, number>): number {
+  if (!symbol) return liveRates['ETH'] || 0;
+  const s = symbol.toUpperCase();
+  
+  // Normalize VIBEVIBE to VIBE oracle rate
+  if (s === 'VIBEVIBE' || s === 'VIBE') return liveRates['VIBE'] || 0;
+  if (s === 'ETH' || s === 'WETH') return liveRates['ETH'] || 0;
+  
+  return liveRates[s] || 0;
+}
+
 function calculateTokenMetrics(
   bondingCurveProgress: number,
   ethDeposited: number | string,
@@ -175,12 +186,11 @@ function calculateTokenMetrics(
   liveRates: Record<string, number>,
   lastPriceWeiPerToken?: number | string
 ) {
-  const sym = (pairSymbol || 'ETH').toUpperCase();
-  const usdRate = liveRates[sym] || (sym === 'ETH' || sym === 'WETH' ? liveRates['ETH'] || 2600 : 1);
+  const usdRate = getUsdRateForPair(pairSymbol, liveRates);
 
   if (lastPriceWeiPerToken && Number(lastPriceWeiPerToken) > 0) {
     const pricePairUnits = Number(lastPriceWeiPerToken) / 1e18;
-    const mcUsd = pricePairUnits * 1_000_000_000 * usdRate;
+    const mcUsd = usdRate > 0 ? pricePairUnits * 1_000_000_000 * usdRate : 0;
     return {
       marketCapFormatted: mcUsd > 0 ? mcUsd.toLocaleString('en-US', { style: 'currency', currency: 'USD' }) : '$0.00',
       marketCapRaw: mcUsd
@@ -188,15 +198,23 @@ function calculateTokenMetrics(
   }
 
   const progress = Math.min(100, Math.max(0, Number(bondingCurveProgress || 0)));
-  const baseUsd = 4000;
-  const gradUsd = 50500;
-  const currentUsd = progress >= 100 
-    ? gradUsd 
-    : baseUsd + ((gradUsd - baseUsd) * Math.pow(progress / 100, 1.45));
+  const sym = (pairSymbol || 'ETH').toUpperCase();
+  if (sym === 'ETH' || sym === 'WETH') {
+    const baseUsd = 4000;
+    const gradUsd = 50500;
+    const currentUsd = progress >= 100 
+      ? gradUsd 
+      : baseUsd + ((gradUsd - baseUsd) * Math.pow(progress / 100, 1.45));
+
+    return {
+      marketCapFormatted: currentUsd.toLocaleString('en-US', { style: 'currency', currency: 'USD' }),
+      marketCapRaw: currentUsd
+    };
+  }
 
   return {
-    marketCapFormatted: currentUsd.toLocaleString('en-US', { style: 'currency', currency: 'USD' }),
-    marketCapRaw: currentUsd
+    marketCapFormatted: '$0.00',
+    marketCapRaw: 0
   };
 }
 
@@ -284,11 +302,11 @@ export default function Home() {
       if (
         liveMatch &&
         (liveMatch.curveProgress !== selectedToken.bondingCurveProgress ||
-         liveMatch.curve_progress !== selectedToken.bondingCurveProgress)
+          liveMatch.curve_progress !== selectedToken.bondingCurveProgress)
       ) {
         const nextProgress = liveMatch.curveProgress ?? liveMatch.curve_progress ?? selectedToken.bondingCurveProgress;
         const nextDeposited = liveMatch.ethDeposited ?? liveMatch.liquidity_deposited ?? selectedToken.ethDeposited;
-        
+
         setSelectedToken((prev: any) => ({
           ...prev,
           bondingCurveProgress: nextProgress,
@@ -392,12 +410,12 @@ export default function Home() {
             prev.map((token) =>
               (token.tokenAddress || token.token_address)?.toLowerCase() === updated.token_address?.toLowerCase()
                 ? {
-                    ...token,
-                    curveProgress: updated.curve_progress,
-                    curve_progress: updated.curve_progress,
-                    ethDeposited: updated.liquidity_deposited,
-                    liquidity_deposited: updated.liquidity_deposited,
-                  }
+                  ...token,
+                  curveProgress: updated.curve_progress,
+                  curve_progress: updated.curve_progress,
+                  ethDeposited: updated.liquidity_deposited,
+                  liquidity_deposited: updated.liquidity_deposited,
+                }
                 : token
             )
           );
@@ -517,7 +535,7 @@ export default function Home() {
             const isGraduated = launch.lifecycle === "GRADUATED" || launch.graduated === true || launch.curve?.lifecycle === "GRADUATED" || (launch.curve?.progressBps ?? 0) >= 10000;
             const currentEth = Number(launch.curve?.pairReserveUnits || launch.curve?.netRaisedWei || 0) / 1e18;
             const targetEth = Number(launch.targetPairUnits || launch.curve?.netTargetWei || 5000000000000000000) / 1e18;
-            let curveProgress = isGraduated ? 100 : (launch.curve?.progressBps ? launch.curve.progressBps / 100 : Math.min(100, Math.max(0, (currentEth / targetEth) * 100)));
+            let curveProgress = isGraduated ? 100 : (launch.curve?.progressBps != null ? launch.curve.progressBps / 100 : Math.min(100, Math.max(0, (currentEth / targetEth) * 100)));
             if (!isGraduated && curveProgress > 0 && curveProgress < 0.1) {
               curveProgress = 0.1;
             }
@@ -648,21 +666,32 @@ export default function Home() {
         const isGraduated = launch?.lifecycle === "GRADUATED" || launch?.graduated === true || launch?.curve?.lifecycle === "GRADUATED" || selectedToken?.bondingCurveProgress >= 100;
         const currentPairUnits = Number(launch?.curve?.pairReserveUnits || launch?.curve?.netRaisedWei || 0) / 1e18;
         const targetPairUnits = Number(launch?.targetPairUnits || launch?.curve?.netTargetWei || 5000000000000000000) / 1e18;
-        let liveCurveProgress = isGraduated ? 100 : (launch?.curve?.progressBps ? launch.curve.progressBps / 100 : Math.min(100, Math.max(0, (currentPairUnits / targetPairUnits) * 100)));
+        let liveCurveProgress = isGraduated ? 100 : (launch?.curve?.progressBps != null ? launch.curve.progressBps / 100 : Math.min(100, Math.max(0, (currentPairUnits / targetPairUnits) * 100)));
         if (!isGraduated && liveCurveProgress > 0 && liveCurveProgress < 0.1) liveCurveProgress = 0.1;
         const liveDepositedStr = `${currentPairUnits.toFixed(4)} / ${targetPairUnits.toFixed(1)}`;
 
         // 3. CORRECT MARKET CAP MATH
-        const metrics = calculateTokenMetrics(
-          liveCurveProgress,
-          currentPairUnits,
-          livePairSymbol,
-          liveRates,
-          launch?.analytics?.lastPriceWeiPerToken
-        );
-        let displayMarketCap = metrics.marketCapFormatted;
+        let usdRate = getUsdRateForPair(livePairSymbol, liveRates);
+        let marketCapUsd = 0;
+        const directPriceUsd = launch?.priceUsd || launch?.analytics?.priceUsd || launch?.curve?.priceUsd;
 
-        let usdRate = liveRates[livePairSymbol.toUpperCase()] || (livePairSymbol === 'ETH' || livePairSymbol === 'WETH' ? liveRates['ETH'] || 2600 : 1);
+        if (directPriceUsd && Number(directPriceUsd) > 0) {
+          marketCapUsd = Number(directPriceUsd) * 1_000_000_000;
+        } else if (launch?.analytics?.lastPriceWeiPerToken && Number(launch.analytics.lastPriceWeiPerToken) > 0) {
+          const pricePairUnits = Number(launch.analytics.lastPriceWeiPerToken) / 1e18;
+          marketCapUsd = usdRate > 0 ? pricePairUnits * 1_000_000_000 * usdRate : 0;
+        } else {
+          if ((livePairSymbol || 'ETH').toUpperCase() === 'ETH' || (livePairSymbol || 'ETH').toUpperCase() === 'WETH') {
+            const progress = Math.min(100, Math.max(0, Number(liveCurveProgress || 0)));
+            const baseUsd = 4000;
+            const gradUsd = 50500;
+            marketCapUsd = progress >= 100 ? gradUsd : baseUsd + ((gradUsd - baseUsd) * Math.pow(progress / 100, 1.45));
+          }
+        }
+
+        let displayMarketCap = marketCapUsd > 0 
+          ? marketCapUsd.toLocaleString('en-US', { style: 'currency', currency: 'USD' }) 
+          : "$0.00";
 
         const stats = json.data?.marketStats;
         let finalVolumeEth = "0.0000";
@@ -1396,7 +1425,7 @@ export default function Home() {
                             <div>
                               <span className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider block mb-1">24H Vol</span>
                               <span className="text-sm font-bold text-zinc-300">
-                                ${(Number(token.momentum?.volumeEth || 0) * (liveRates[(token.pairSymbol || 'ETH').toUpperCase()] || liveRates['ETH'] || 2600)).toLocaleString('en-US', { maximumFractionDigits: 0 })}
+                                ${(Number(token.momentum?.volumeEth || 0) * getUsdRateForPair(token.pairSymbol, liveRates)).toLocaleString('en-US', { maximumFractionDigits: 0 })}
                               </span>
                             </div>
                             <div className="pl-1">
