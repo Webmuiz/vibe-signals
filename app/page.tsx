@@ -264,17 +264,19 @@ export default function Home() {
         if (!res.ok) return;
         const json = await res.json();
         const items = json?.data?.items || [];
-        const ethPrice = json?.data?.ethPriceUsd || 2600;
+        const ethPrice = Number(json?.data?.ethPriceUsd) || 2416;
 
         const updated: Record<string, number> = { ETH: ethPrice, WETH: ethPrice };
-        items.forEach((item: any) => {
-          if (item.symbol && item.priceEthWad) {
-            const sym = item.symbol.toUpperCase();
-            updated[sym] = (Number(item.priceEthWad) / 1e18) * ethPrice;
-          }
-        });
+        if (json?.data?.items) {
+          json.data.items.forEach((item: any) => {
+            if (item.symbol && item.priceEthWad) {
+              const sym = item.symbol.toUpperCase();
+              updated[sym] = (Number(item.priceEthWad) / 1e18) * ethPrice;
+            }
+          });
+        }
 
-        if (isSubscribed && Object.keys(updated).length > 2) {
+        if (isSubscribed) {
           setLiveRates(prev => ({ ...prev, ...updated }));
         }
       } catch (err) {
@@ -674,7 +676,11 @@ export default function Home() {
         const liveDepositedStr = isGraduated ? 'Graduated' : `${currentPairUnits.toFixed(4)} / ${targetPairUnits.toFixed(1)}`;
 
         // 3. CORRECT MARKET CAP MATH (Handle Post-Graduation DEX Prices)
-        let usdRate = getUsdRateForPair(livePairSymbol, liveRates);
+        // Prioritize the live ethPriceUsd returned directly by the proxy
+        const liveEthPrice = Number(json.data?.ethPriceUsd) || liveRates['ETH'] || 2416;
+        let usdRate = (livePairSymbol === 'ETH' || livePairSymbol === 'WETH')
+          ? liveEthPrice
+          : getUsdRateForPair(livePairSymbol, { ...liveRates, ETH: liveEthPrice, WETH: liveEthPrice });
         const stats = json.data?.marketStats;
 
         const directPriceUsd = launch?.priceUsd || launch?.analytics?.priceUsd || launch?.curve?.priceUsd || stats?.priceUsd;
