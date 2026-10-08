@@ -181,14 +181,14 @@ async function runIndexer() {
 
             for (const token of recentTokens) {
                 if (token.pair_symbol === 'ETH') {
-                    // Do not touch already graduated tokens
+                    // 1. If already marked as graduated (>= 100%), skip it completely
                     if (Number(token.curve_progress) >= 100) continue;
 
                     const rawEth = await publicClient.getBalance({ address: token.amm_address as `0x${string}` });
                     const currentLiq = parseFloat(formatEther(rawEth));
                     
-                    // If balance drops to 0 after being close to graduation, it graduated! Freeze at 100%
-                    if (currentLiq === 0 && Number(token.liquidity_deposited) >= 3.5) {
+                    // 2. If balance drops to 0 or was drained after accumulating liquidity, it graduated! Lock to 100%
+                    if (currentLiq === 0 && Number(token.liquidity_deposited) >= 2.0) {
                         await supabase.from('launches').update({
                             curve_progress: 100,
                             liquidity_deposited: 4.0
@@ -198,7 +198,8 @@ async function runIndexer() {
 
                     const progress = Math.min(100, Math.max(0, (currentLiq / 4.0) * 100));
 
-                    if (currentLiq !== token.liquidity_deposited || (token.volume_eth || 0) < currentLiq) {
+                    // Only update if progress actually moved forward
+                    if (progress > Number(token.curve_progress || 0) || (token.volume_eth || 0) < currentLiq) {
                         const updatePayload: any = {
                             liquidity_deposited: Number(currentLiq.toFixed(4)),
                             curve_progress: Number(progress.toFixed(1))

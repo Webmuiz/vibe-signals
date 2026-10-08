@@ -297,22 +297,23 @@ export default function Home() {
       const liveMatch = dbTokens.find(
         t => (t.tokenAddress || t.token_address)?.toLowerCase() === selectedToken.contractAddress?.toLowerCase()
       );
-      if (
-        liveMatch &&
-        (liveMatch.curveProgress !== selectedToken.bondingCurveProgress ||
-          liveMatch.curve_progress !== selectedToken.bondingCurveProgress)
-      ) {
+      if (liveMatch) {
+        // If the selected token is already graduated or 100%, do not let stale DB downgrade it
+        if (selectedToken.bondingCurveProgress >= 100) return;
+
         const nextProgress = liveMatch.curveProgress ?? liveMatch.curve_progress ?? selectedToken.bondingCurveProgress;
         const nextDeposited = liveMatch.ethDeposited ?? liveMatch.liquidity_deposited ?? selectedToken.ethDeposited;
 
-        setSelectedToken((prev: any) => ({
-          ...prev,
-          bondingCurveProgress: nextProgress,
-          ethDeposited: nextDeposited
-        }));
+        if (nextProgress !== selectedToken.bondingCurveProgress) {
+          setSelectedToken((prev: any) => ({
+            ...prev,
+            bondingCurveProgress: nextProgress,
+            ethDeposited: nextDeposited
+          }));
+        }
       }
     }
-  }, [dbTokens, selectedToken?.contractAddress]);
+  }, [dbTokens, selectedToken?.contractAddress, selectedToken?.bondingCurveProgress]);
 
   // Fetch Native ETH Balance pinned to Robinhood Testnet
   const { data: ethBalance } = useBalance({
