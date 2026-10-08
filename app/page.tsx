@@ -632,44 +632,44 @@ export default function Home() {
           const currentRaw = Number(launch?.curve?.pairReserveUnits || launch?.curve?.netRaisedWei || 0);
           const pDecimals = (targetRaw > 0 && targetRaw < 1e14) ? 6 : 18;
           const pDivisor = Math.pow(10, pDecimals);
-          
-          const isGraduated = 
-            launch?.lifecycle === "GRADUATED" || 
-            launch?.graduated === true || 
-            launch?.curve?.lifecycle === "GRADUATED" || 
+
+          const isGraduated =
+            launch?.lifecycle === "GRADUATED" ||
+            launch?.graduated === true ||
+            launch?.curve?.lifecycle === "GRADUATED" ||
             selectedToken?.bondingCurveProgress >= 100 ||
             !!launch?.graduation ||
             !!launch?.poolAddress ||
             !!launch?.graduationPoolAddress ||
             !!launch?.pool?.address;
-            
+
           const currentPairUnits = currentRaw / pDivisor;
           const targetPairUnits = targetRaw / pDivisor;
-          
+
           let liveCurveProgress = isGraduated ? 100 : (launch?.curve?.progressBps != null ? launch.curve.progressBps / 100 : Math.min(100, Math.max(0, (currentPairUnits / targetPairUnits) * 100)));
           if (!isGraduated && liveCurveProgress > 0 && liveCurveProgress < 0.1) liveCurveProgress = 0.1;
           const liveDepositedStr = isGraduated ? 'Graduated' : `${currentPairUnits.toFixed(4)} / ${targetPairUnits.toFixed(1)}`;
 
           // 3. CORRECT MARKET CAP & USD VOLUME MATH
           const liveEthPrice = Number(json.data?.ethPriceUsd) || liveRates['ETH'] || 2416;
-          
+
           const pairAddr = (launch?.pairCurrencyAddress || "").toLowerCase();
           const isNative = !pairAddr || pairAddr === "0x0000000000000000000000000000000000000000";
-          
+
           let usdRate = liveEthPrice;
           if (!isNative && pairAddr && liveRates[pairAddr]) {
-             usdRate = liveRates[pairAddr];
+            usdRate = liveRates[pairAddr];
           } else {
-             usdRate = getUsdRateForPair(livePairSymbol, { ...liveRates, ETH: liveEthPrice, WETH: liveEthPrice });
+            usdRate = getUsdRateForPair(livePairSymbol, { ...liveRates, ETH: liveEthPrice, WETH: liveEthPrice });
           }
 
           const stats = json.data?.marketStats;
           let marketCapUsd = 0;
-          
+
           // 1. Always prioritize the API's exact backend USD price for ALL tokens
           const directPriceUsd = launch?.priceUsd || launch?.analytics?.priceUsd || launch?.curve?.priceUsd || stats?.priceUsd;
           let lastPriceWei = stats?.priceWeiPerToken || stats?.lastPriceWeiPerToken || launch?.analytics?.lastPriceWeiPerToken || 0;
-          
+
           if ((!lastPriceWei || Number(lastPriceWei) === 0) && json.data?.marketTrades?.[0]) {
             lastPriceWei = json.data.marketTrades[0].executionPricePairUnitsPerToken;
           }
@@ -858,22 +858,15 @@ export default function Home() {
     };
   }, [selectedToken?.contractAddress, refreshTrigger]);
 
-  const handleApprove = async () => {
-    if (!selectedToken) return;
-    try {
-      const approveData = encodeAbiParameters(parseAbiParameters('address, uint256'), [ZAP_ROUTER, 115792089237316195423570985008687907853269984665640564039457584007913129639935n]);
-      const txData = `0x095ea7b3${approveData.slice(2)}` as `0x${string}`;
-      sendTransaction({ to: selectedToken.contractAddress as `0x${string}`, value: 0n, data: txData });
-    } catch (err) { console.error(err); }
-  };
-
   const handleExecuteApe = async () => {
     if (!selectedToken || !apeAmount || Number(apeAmount) <= 0) return;
     try {
       const amountInWei = parseEther(apeAmount);
       const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600);
       
-      const targetMarket = selectedToken.bondingCurveProgress >= 100 ? selectedToken.contractAddress : selectedToken.ammAddress;
+      const isGraduated = selectedToken.bondingCurveProgress >= 100;
+      const targetMarket = isGraduated ? selectedToken.contractAddress : selectedToken.ammAddress;
+      const kindCode = isGraduated ? 3n : 1n; // 3 = SWAP, 1 = CURVE_BUY
 
       let toAddress = ZAP_ROUTER;
       let txData;
@@ -886,21 +879,23 @@ export default function Home() {
         toAddress = ZAP_ROUTER;
         const argsData = encodeAbiParameters(
           parseAbiParameters('address, address, uint256, uint256, uint256, uint256, address[], address[]'),
-          [targetMarket as `0x${string}`, "0x0000000000000000000000000000000000000000", amountInWei, 256n, 1n, deadline, [], []]
+          [targetMarket as `0x${string}`, "0x0000000000000000000000000000000000000000", amountInWei, 256n, kindCode, deadline, [], []]
         );
         txData = `0x7681fb10${argsData.slice(2)}` as `0x${string}`;
       }
-      sendTransaction({ to: toAddress, value: amountInWei, data: txData });
+      sendTransaction({ to: toAddress, value: amountInWei, data: txData, chainId: 46630 });
     } catch (err) { console.error(err); }
   };
 
   const handleExecuteSell = async () => {
     if (!selectedToken || !sellAmount || Number(sellAmount) <= 0) return;
     try {
-      const amountInWei = parseUnits(sellAmount, selectedToken.decimals || 18);
+      const amountInWei = parseEther(sellAmount);
       const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600);
       
-      const targetMarket = selectedToken.bondingCurveProgress >= 100 ? selectedToken.contractAddress : selectedToken.ammAddress;
+      const isGraduated = selectedToken.bondingCurveProgress >= 100;
+      const targetMarket = isGraduated ? selectedToken.contractAddress : selectedToken.ammAddress;
+      const kindCode = isGraduated ? 3n : 2n; // 3 = SWAP, 2 = CURVE_SELL
 
       let toAddress = ZAP_ROUTER;
       let txData;
@@ -913,11 +908,11 @@ export default function Home() {
         toAddress = ZAP_ROUTER;
         const argsData = encodeAbiParameters(
           parseAbiParameters('address, uint256, address[], uint256, uint256, address[]'),
-          [targetMarket as `0x${string}`, amountInWei, [], 1n, deadline, []]
+          [targetMarket as `0x${string}`, amountInWei, [], kindCode, deadline, []]
         );
         txData = `0x15d5cb8b${argsData.slice(2)}` as `0x${string}`;
       }
-      sendTransaction({ to: toAddress, value: 0n, data: txData });
+      sendTransaction({ to: toAddress, value: 0n, data: txData, chainId: 46630 });
     } catch (err) { console.error(err); }
   };
 
