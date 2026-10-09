@@ -863,15 +863,16 @@ export default function Home() {
     try {
       const amountInWei = parseEther(apeAmount);
       const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600);
-
-      const targetMarket = selectedToken.bondingCurveProgress >= 100 ? selectedToken.contractAddress : selectedToken.ammAddress;
+      
+      // CRITICAL FIX: The Zap Router ALWAYS expects the Token Contract Address, never the AMM!
+      const targetToken = selectedToken.contractAddress as `0x${string}`;
 
       const argsData = encodeAbiParameters(
         parseAbiParameters('address, address, uint256, uint256, uint256, uint256, address[], address[]'),
-        [targetMarket as `0x${string}`, "0x0000000000000000000000000000000000000000", amountInWei, 256n, 1n, deadline, [], []]
+        [targetToken, "0x0000000000000000000000000000000000000000", amountInWei, 256n, 1n, deadline, [], []]
       );
       const txData = `0x7681fb10${argsData.slice(2)}` as `0x${string}`;
-
+      
       sendTransaction({ to: ZAP_ROUTER, value: amountInWei, data: txData, chainId: 46630 });
     } catch (err) { console.error(err); }
   };
@@ -881,15 +882,17 @@ export default function Home() {
     try {
       const amountInWei = parseEther(sellAmount);
       const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600);
+      
+      // CRITICAL FIX: The Zap Router ALWAYS expects the Token Contract Address, never the AMM!
+      const targetToken = selectedToken.contractAddress as `0x${string}`;
 
-      const targetMarket = selectedToken.bondingCurveProgress >= 100 ? selectedToken.contractAddress : selectedToken.ammAddress;
-
+      // CRITICAL FIX: The Sell ABI requires exactly 8 parameters. Added the missing uint256 (0n).
       const argsData = encodeAbiParameters(
-        parseAbiParameters('address, uint256, address[], uint256, uint256, address[], address[]'),
-        [targetMarket as `0x${string}`, amountInWei, [], 1n, deadline, [], []]
+        parseAbiParameters('address, uint256, address[], uint256, uint256, uint256, address[], address[]'),
+        [targetToken, amountInWei, [], 1n, 0n, deadline, [], []]
       );
       const txData = `0x3177b4d2${argsData.slice(2)}` as `0x${string}`;
-
+      
       sendTransaction({ to: ZAP_ROUTER, value: 0n, data: txData, chainId: 46630 });
     } catch (err) { console.error(err); }
   };
