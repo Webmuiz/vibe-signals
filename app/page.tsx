@@ -864,9 +864,7 @@ export default function Home() {
       const amountInWei = parseEther(apeAmount);
       const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600);
       
-      const isGraduated = selectedToken.bondingCurveProgress >= 100;
-      const targetMarket = isGraduated ? selectedToken.contractAddress : selectedToken.ammAddress;
-      const kindCode = isGraduated ? 3n : 1n; // 3 = SWAP, 1 = CURVE_BUY
+      const targetMarket = selectedToken.bondingCurveProgress >= 100 ? selectedToken.contractAddress : selectedToken.ammAddress;
 
       let toAddress = ZAP_ROUTER;
       let txData;
@@ -879,7 +877,7 @@ export default function Home() {
         toAddress = ZAP_ROUTER;
         const argsData = encodeAbiParameters(
           parseAbiParameters('address, address, uint256, uint256, uint256, uint256, address[], address[]'),
-          [targetMarket as `0x${string}`, "0x0000000000000000000000000000000000000000", amountInWei, 0n, kindCode, deadline, [], []]
+          [targetMarket as `0x${string}`, "0x0000000000000000000000000000000000000000", amountInWei, 256n, 1n, deadline, [], []]
         );
         txData = `0x7681fb10${argsData.slice(2)}` as `0x${string}`;
       }
@@ -890,13 +888,10 @@ export default function Home() {
   const handleExecuteSell = async () => {
     if (!selectedToken || !sellAmount || Number(sellAmount) <= 0) return;
     try {
-      // Meme tokens always use 18 decimals, regardless of the pair (like USDG)
-      const amountInWei = parseEther(sellAmount);
+      const amountInWei = parseEther(sellAmount); // Meme tokens ALWAYS use 18 decimals
       const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600);
       
-      const isGraduated = selectedToken.bondingCurveProgress >= 100;
-      const targetMarket = isGraduated ? selectedToken.contractAddress : selectedToken.ammAddress;
-      const kindCode = isGraduated ? 3n : 2n; // 3 = SWAP, 2 = CURVE_SELL
+      const targetMarket = selectedToken.bondingCurveProgress >= 100 ? selectedToken.contractAddress : selectedToken.ammAddress;
 
       let toAddress = ZAP_ROUTER;
       let txData;
@@ -909,7 +904,7 @@ export default function Home() {
         toAddress = ZAP_ROUTER;
         const argsData = encodeAbiParameters(
           parseAbiParameters('address, uint256, address[], uint256, uint256, address[]'),
-          [targetMarket as `0x${string}`, amountInWei, [], kindCode, deadline, []]
+          [targetMarket as `0x${string}`, amountInWei, [], 1n, deadline, []]
         );
         txData = `0x15d5cb8b${argsData.slice(2)}` as `0x${string}`;
       }
