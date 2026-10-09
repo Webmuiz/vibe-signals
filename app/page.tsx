@@ -866,49 +866,31 @@ export default function Home() {
       
       const targetMarket = selectedToken.bondingCurveProgress >= 100 ? selectedToken.contractAddress : selectedToken.ammAddress;
 
-      let toAddress = ZAP_ROUTER;
-      let txData;
-
-      if (selectedToken.isLegacy) {
-        toAddress = targetMarket as `0x${string}`;
-        const argsData = encodeAbiParameters(parseAbiParameters('uint256, uint256'), [1n, deadline]);
-        txData = `0xd6febde8${argsData.slice(2)}` as `0x${string}`;
-      } else {
-        toAddress = ZAP_ROUTER;
-        const argsData = encodeAbiParameters(
-          parseAbiParameters('address, address, uint256, uint256, uint256, uint256, address[], address[]'),
-          [targetMarket as `0x${string}`, "0x0000000000000000000000000000000000000000", amountInWei, 256n, 1n, deadline, [], []]
-        );
-        txData = `0x7681fb10${argsData.slice(2)}` as `0x${string}`;
-      }
-      sendTransaction({ to: toAddress, value: amountInWei, data: txData, chainId: 46630 });
+      const argsData = encodeAbiParameters(
+        parseAbiParameters('address, address, uint256, uint256, uint256, uint256, address[], address[]'),
+        [targetMarket as `0x${string}`, "0x0000000000000000000000000000000000000000", amountInWei, 256n, 1n, deadline, [], []]
+      );
+      const txData = `0x7681fb10${argsData.slice(2)}` as `0x${string}`;
+      
+      sendTransaction({ to: ZAP_ROUTER, value: amountInWei, data: txData, chainId: 46630 });
     } catch (err) { console.error(err); }
   };
 
   const handleExecuteSell = async () => {
     if (!selectedToken || !sellAmount || Number(sellAmount) <= 0) return;
     try {
-      const amountInWei = parseEther(sellAmount); // Meme tokens ALWAYS use 18 decimals
+      const amountInWei = parseEther(sellAmount);
       const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600);
       
       const targetMarket = selectedToken.bondingCurveProgress >= 100 ? selectedToken.contractAddress : selectedToken.ammAddress;
 
-      let toAddress = ZAP_ROUTER;
-      let txData;
-
-      if (selectedToken.isLegacy) {
-        toAddress = targetMarket as `0x${string}`;
-        const argsData = encodeAbiParameters(parseAbiParameters('uint256, uint256, uint256'), [amountInWei, 1n, deadline]);
-        txData = `0xd3c9727c${argsData.slice(2)}` as `0x${string}`;
-      } else {
-        toAddress = ZAP_ROUTER;
-        const argsData = encodeAbiParameters(
-          parseAbiParameters('address, uint256, address[], uint256, uint256, address[]'),
-          [targetMarket as `0x${string}`, amountInWei, [], 1n, deadline, []]
-        );
-        txData = `0x15d5cb8b${argsData.slice(2)}` as `0x${string}`;
-      }
-      sendTransaction({ to: toAddress, value: 0n, data: txData, chainId: 46630 });
+      const argsData = encodeAbiParameters(
+        parseAbiParameters('address, uint256, address[], uint256, uint256, address[], address[]'),
+        [targetMarket as `0x${string}`, amountInWei, [], 1n, deadline, [], []]
+      );
+      const txData = `0x3177b4d2${argsData.slice(2)}` as `0x${string}`;
+      
+      sendTransaction({ to: ZAP_ROUTER, value: 0n, data: txData, chainId: 46630 });
     } catch (err) { console.error(err); }
   };
 
