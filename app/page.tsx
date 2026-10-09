@@ -863,13 +863,12 @@ export default function Home() {
     try {
       const amountInWei = parseEther(apeAmount);
       const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600);
-      
-      // CRITICAL FIX: The Zap Router ALWAYS expects the Token Contract Address, never the AMM!
       const targetToken = selectedToken.contractAddress as `0x${string}`;
 
+      // CRITICAL FIX: The Buy method 0x7681fb10 requires EXACTLY 9 parameters (7 static, 2 dynamic arrays)
       const argsData = encodeAbiParameters(
-        parseAbiParameters('address, address, uint256, uint256, uint256, uint256, address[], address[]'),
-        [targetToken, "0x0000000000000000000000000000000000000000", amountInWei, 256n, 1n, deadline, [], []]
+        parseAbiParameters('address, address, uint256, uint256, uint256, uint256, uint256, address[], address[]'),
+        [targetToken, "0x0000000000000000000000000000000000000000", amountInWei, 0n, 256n, 0n, deadline, [], []]
       );
       const txData = `0x7681fb10${argsData.slice(2)}` as `0x${string}`;
       
@@ -882,14 +881,12 @@ export default function Home() {
     try {
       const amountInWei = parseEther(sellAmount);
       const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600);
-      
-      // CRITICAL FIX: The Zap Router ALWAYS expects the Token Contract Address, never the AMM!
       const targetToken = selectedToken.contractAddress as `0x${string}`;
 
-      // CRITICAL FIX: The Sell ABI requires exactly 8 parameters. Added the missing uint256 (0n).
+      // CRITICAL FIX: The Sell method 0x3177b4d2 requires EXACTLY 7 parameters (5 static, 2 dynamic arrays)
       const argsData = encodeAbiParameters(
-        parseAbiParameters('address, uint256, address[], uint256, uint256, uint256, address[], address[]'),
-        [targetToken, amountInWei, [], 1n, 0n, deadline, [], []]
+        parseAbiParameters('address, uint256, address[], uint256, uint256, address[], address[]'),
+        [targetToken, amountInWei, [], 0n, deadline, [], []]
       );
       const txData = `0x3177b4d2${argsData.slice(2)}` as `0x${string}`;
       
