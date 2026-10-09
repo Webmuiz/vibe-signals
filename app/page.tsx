@@ -863,7 +863,7 @@ export default function Home() {
     try {
       const amountInWei = parseEther(apeAmount);
       const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600);
-      
+
       const targetMarket = selectedToken.bondingCurveProgress >= 100 ? selectedToken.contractAddress : selectedToken.ammAddress;
 
       const argsData = encodeAbiParameters(
@@ -871,7 +871,7 @@ export default function Home() {
         [targetMarket as `0x${string}`, "0x0000000000000000000000000000000000000000", amountInWei, 256n, 1n, deadline, [], []]
       );
       const txData = `0x7681fb10${argsData.slice(2)}` as `0x${string}`;
-      
+
       sendTransaction({ to: ZAP_ROUTER, value: amountInWei, data: txData, chainId: 46630 });
     } catch (err) { console.error(err); }
   };
@@ -881,7 +881,7 @@ export default function Home() {
     try {
       const amountInWei = parseEther(sellAmount);
       const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600);
-      
+
       const targetMarket = selectedToken.bondingCurveProgress >= 100 ? selectedToken.contractAddress : selectedToken.ammAddress;
 
       const argsData = encodeAbiParameters(
@@ -889,7 +889,7 @@ export default function Home() {
         [targetMarket as `0x${string}`, amountInWei, [], 1n, deadline, [], []]
       );
       const txData = `0x3177b4d2${argsData.slice(2)}` as `0x${string}`;
-      
+
       sendTransaction({ to: ZAP_ROUTER, value: 0n, data: txData, chainId: 46630 });
     } catch (err) { console.error(err); }
   };
