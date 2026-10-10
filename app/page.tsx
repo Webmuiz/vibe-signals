@@ -7,6 +7,7 @@ import { isAddress, parseEther, parseUnits, createPublicClient, http, formatEthe
 import { createClient } from "@supabase/supabase-js";
 import Header from "@/components/ui/Header";
 import TokenCard from "@/components/ui/TokenCard";
+import SafetyAuditPanel from "@/components/ui/SafetyAuditPanel";
 import { shortenAddress, formatTimeLive, getUsdRateForPair, calculateTokenMetrics } from "@/lib/tokenMetrics";
 
 const SIGNAL_TOKEN = "0xD4D41412033a72a0D1cCd0Cb02b666Cf771880B1" as `0x${string}`;
@@ -1169,33 +1170,10 @@ export default function Home() {
                   )}
                 </div>
 
-                <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
-                  <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-wider mb-4">Contract Safety & Audits</h3>
-                  <ul className="space-y-3 text-sm">
-                    <li className="flex justify-between items-center p-3 bg-zinc-950 rounded-lg border border-zinc-800">
-                      <span className="text-zinc-500">Social Presence</span>
-                      <span className={selectedToken.hasSocials ? 'text-emerald-400 font-bold' : 'text-red-400 font-bold'}>
-                        {selectedToken.hasSocials ? 'Linked' : 'No Socials'}
-                      </span>
-                    </li>
-                    <li className="flex justify-between items-center p-3 bg-zinc-950 rounded-lg border border-zinc-800">
-                      <span className="text-zinc-500">MEV Exposure</span>
-                      <span className={selectedToken.safetyChecks.mev.safe ? 'text-emerald-400 font-bold' : 'text-yellow-400 font-bold'}>{selectedToken.safetyChecks.mev.label}</span>
-                    </li>
-                    <li className="flex justify-between items-center p-3 bg-zinc-950 rounded-lg border border-zinc-800">
-                      <span className="text-zinc-500">Creator Wallet</span>
-                      <span className={selectedToken.safetyChecks.creatorBag.safe ? 'text-emerald-400 font-bold' : 'text-red-400 font-bold'}>
-                        {selectedToken.safetyChecks.creatorBag.label}
-                      </span>
-                    </li>
-                    <li className="flex justify-between items-center p-3 bg-zinc-950 rounded-lg border border-zinc-800">
-                      <span className="text-zinc-500">Developer Discipline</span>
-                      <span className={selectedToken.safetyChecks?.dumperRisk?.safe ? 'text-emerald-400 font-bold' : 'text-red-500 font-bold bg-red-500/10 px-2 py-0.5 rounded border border-red-500/30 animate-pulse'}>
-                        {selectedToken.safetyChecks?.dumperRisk?.label || "Scanning..."}
-                      </span>
-                    </li>
-                  </ul>
-                </div>
+                <SafetyAuditPanel
+                  hasSocials={selectedToken.hasSocials}
+                  safetyChecks={selectedToken.safetyChecks}
+                />
 
                 <a
                   href={`https://testnet.vibevibe.fun/token/${selectedToken.contractAddress}`}
