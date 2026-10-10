@@ -8,6 +8,7 @@ import { createClient } from "@supabase/supabase-js";
 import Header from "@/components/ui/Header";
 import TokenCard from "@/components/ui/TokenCard";
 import SafetyAuditPanel from "@/components/ui/SafetyAuditPanel";
+import DeveloperProfilerPanel from "@/components/ui/DeveloperProfilerPanel";
 import { shortenAddress, formatTimeLive, getUsdRateForPair, calculateTokenMetrics } from "@/lib/tokenMetrics";
 
 const SIGNAL_TOKEN = "0xD4D41412033a72a0D1cCd0Cb02b666Cf771880B1" as `0x${string}`;
@@ -1029,36 +1030,13 @@ export default function Home() {
                   </div>
                 </div>
 
-                <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
-                  <div className="flex justify-between items-start mb-4">
-                    <h3 className="text-lg font-bold text-white">Developer Profiler</h3>
-                    <div className={`px-2 py-1 text-[10px] font-bold tracking-wider uppercase border rounded ${devBadgeColor}`}>
-                      {devBadgeText}
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2 mb-6">
-                    <a
-                      href={`https://testnet.vibevibe.fun/profile/${selectedToken.devAddress}`}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-xs px-3 py-1.5 bg-zinc-950 border border-zinc-800 rounded hover:border-emerald-500/50 hover:text-white text-zinc-400 font-mono transition-colors"
-                    >
-                      Creator: {shortenAddress(selectedToken.devAddress)} ↗
-                    </a>
-                  </div>
-                  <div className="grid grid-cols-2 gap-4 text-sm">
-                    <div className="p-4 bg-zinc-950 rounded-lg border border-zinc-800">
-                      <span className="text-zinc-500 block mb-1">Total Launches</span>
-                      <span className="text-white font-bold">
-                        {devStats ? `${devStats.launches} Tokens` : `${selectedToken.devProfile.launches} Tokens`}
-                      </span>
-                    </div>
-                    <div className="p-4 bg-zinc-950 rounded-lg border border-zinc-800">
-                      <span className="text-zinc-500 block mb-1">Graduation Rate</span>
-                      <span className={(devStats ? devStats.gradRate : selectedToken.devProfile.gradRate) > 50 ? 'text-emerald-400 font-bold' : 'text-red-400 font-bold'}>{devStats ? `${devStats.gradRate}%` : `${selectedToken.devProfile.gradRate}%`}</span>
-                    </div>
-                  </div>
-                </div>
+                <DeveloperProfilerPanel
+                  devAddress={selectedToken.devAddress}
+                  badgeText={devBadgeText}
+                  badgeColor={devBadgeColor}
+                  devStats={devStats}
+                  devProfile={selectedToken.devProfile}
+                />
               </div>
 
               <div className="space-y-6">
