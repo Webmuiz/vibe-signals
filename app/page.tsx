@@ -6,6 +6,8 @@ import { useAccount, useSendTransaction, useBalance, useReadContract, useWaitFor
 import { isAddress, parseEther, parseUnits, createPublicClient, http, formatEther, encodeAbiParameters, parseAbiParameters } from "viem";
 import { createClient } from "@supabase/supabase-js";
 import Header from "@/components/ui/Header";
+import TokenCard from "@/components/ui/TokenCard";
+import { shortenAddress, formatTimeLive, getUsdRateForPair, calculateTokenMetrics } from "@/lib/tokenMetrics";
 
 const SIGNAL_TOKEN = "0xD4D41412033a72a0D1cCd0Cb02b666Cf771880B1" as `0x${string}`;
 const FACTORY_ADDRESS = "0xe794217880011f9cA6961340eD5c16EC9559Fea0" as `0x${string}`;
@@ -145,22 +147,6 @@ function calculateVibeScore(
   return Math.max(1, Math.min(100, Math.round(score)));
 }
 
-function shortenAddress(address: string) {
-  return `${address.slice(0, 6)}...${address.slice(-4)}`;
-}
-
-function formatTimeLive(totalMinutes: number) {
-  if (!totalMinutes && totalMinutes !== 0) return '0m';
-  if (totalMinutes < 60) return `${totalMinutes}m`;
-
-  const days = Math.floor(totalMinutes / 1440);
-  const hours = Math.floor((totalMinutes % 1440) / 60);
-  const mins = Math.floor(totalMinutes % 60);
-
-  if (days > 0) return `${days}d ${hours}h ${mins}m`;
-  return `${hours}h ${mins}m`;
-}
-
 const getSymbolUsdRate = (symbol: string) => {
   // VibeVibe Testnet Oracle Mock Rates (Derived from official UI)
   const rates: Record<string, number> = {
@@ -169,55 +155,6 @@ const getSymbolUsdRate = (symbol: string) => {
   };
   return rates[symbol.toUpperCase()] || 0;
 };
-
-function getUsdRateForPair(symbol: string | undefined, liveRates: Record<string, number>): number {
-  if (!symbol) return liveRates['ETH'] || 2416;
-  const s = symbol.toUpperCase();
-
-  if (s.includes('USD') && !s.includes('ETH')) return 1;
-  if (liveRates[s]) return liveRates[s];
-  if (s === 'ETH' || s === 'WETH') return liveRates['ETH'] || 2416;
-
-  return liveRates['ETH'] || 2416;
-}
-
-function calculateTokenMetrics(
-  bondingCurveProgress: number,
-  ethDeposited: number | string,
-  pairSymbol: string = 'ETH',
-  liveRates: Record<string, number>,
-  lastPriceWeiPerToken?: number | string
-) {
-  const usdRate = getUsdRateForPair(pairSymbol, liveRates);
-
-  if (lastPriceWeiPerToken && Number(lastPriceWeiPerToken) > 0) {
-    const pricePairUnits = Number(lastPriceWeiPerToken) / 1e18;
-    const mcUsd = usdRate > 0 ? pricePairUnits * 1_000_000_000 * usdRate : 0;
-    return {
-      marketCapFormatted: mcUsd > 0 ? mcUsd.toLocaleString('en-US', { style: 'currency', currency: 'USD' }) : '$0.00',
-      marketCapRaw: mcUsd
-    };
-  }
-
-  const progress = Math.min(100, Math.max(0, Number(bondingCurveProgress || 0)));
-  const sym = (pairSymbol || 'ETH').toUpperCase();
-
-  let gradUsd = 50500;
-  let baseUsd = 4000;
-  if (sym === 'VIBEVIBE' || sym === 'VIBE') {
-    gradUsd = 220000; // Vibe-paired tokens have higher USD graduation targets
-    baseUsd = 15000;
-  }
-
-  const currentUsd = progress >= 100
-    ? gradUsd
-    : baseUsd + ((gradUsd - baseUsd) * Math.pow(progress / 100, 1.45));
-
-  return {
-    marketCapFormatted: currentUsd.toLocaleString('en-US', { style: 'currency', currency: 'USD' }),
-    marketCapRaw: currentUsd
-  };
-}
 
 export default function Home() {
   const { login, logout, authenticated, ready } = usePrivy();
@@ -311,7 +248,7 @@ export default function Home() {
     args: address ? [address] : undefined,
   });
 
-  const hasAccess = balanceData && BigInt(balanceData as any) >= BigInt("200000") * (BigInt("10") ** BigInt("18"));
+  const hasAccess = !!balanceData && BigInt(balanceData as any) >= BigInt("200000") * (BigInt("10") ** BigInt("18"));
 
   const fetchDatabase = async () => {
     try {
@@ -1313,103 +1250,17 @@ export default function Home() {
               <div className="text-center py-12 text-zinc-500 border border-dashed border-zinc-800 rounded-xl">No tokens indexed yet. Waiting for Node...</div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {filteredTokens.map((token) => {
-                  const scoreColor = token.score >= 70 ? "text-emerald-400 border-emerald-400/30 bg-emerald-400/10" : token.score >= 45 ? "text-yellow-400 border-yellow-400/30 bg-yellow-400/10" : "text-red-400 border-red-400/30 bg-red-400/10";
-
-                  return (
-                    <div
-                      key={token.id}
-                      onClick={() => {
-                        if (isConnected && hasAccess) setSelectedToken(token);
-                      }}
-                      className={`relative border border-zinc-800 bg-zinc-900 rounded-xl p-6 overflow-hidden flex flex-col justify-between transition-all ${isConnected && hasAccess ? 'cursor-pointer hover:border-emerald-500/50 hover:shadow-[0_0_20px_rgba(16,185,129,0.1)] group' : ''}`}
-                    >
-                      <div>
-                        <div className="flex justify-between items-start mb-4">
-                          <div>
-                            <h3 className={`font-bold text-lg ${isConnected && hasAccess ? 'group-hover:text-emerald-400 transition-colors' : ''}`}>{token.name}</h3>
-                            <div className="flex items-center gap-2">
-                              <span className="text-sm text-zinc-400">{token.ticker}</span>
-                              <span className="text-xs px-2 py-1 bg-zinc-800 rounded-md text-zinc-500">{shortenAddress(token.contractAddress)}</span>
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="mb-6">
-
-                          {/* The missing time block you are adding back: */}
-                          <div className="flex justify-between text-xs mb-2">
-                            <span className="text-zinc-500">Time Live (est)</span>
-                            <span className="text-zinc-300">{formatTimeLive(token.timeSinceLaunchMins)}</span>
-                          </div>
-
-                          {/* The existing bonding curve code you just shared: */}
-                          <div className="flex justify-between text-xs mb-2">
-                            <span className="text-zinc-500">{token.bondingCurveProgress >= 100 ? 'Status' : 'Bonding Curve'}</span>
-                            <span className={token.bondingCurveProgress >= 100 ? "text-amber-400 font-bold" : token.bondingCurveProgress > 85 ? "text-emerald-400" : "text-zinc-300"}>
-                              {token.bondingCurveProgress >= 100 ? 'Graduated 🚀' : `${token.bondingCurveProgress.toFixed(1)}%`}
-                            </span>
-                          </div>
-                          <div className="w-full bg-zinc-800 rounded-full h-2">
-                            <div
-                              className={`h-2 rounded-full ${token.bondingCurveProgress >= 100
-                                ? "bg-gradient-to-r from-amber-400 via-amber-500 to-amber-600 shadow-[0_0_10px_rgba(251,191,36,0.8)]"
-                                : token.bondingCurveProgress > 85
-                                  ? "bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.8)]"
-                                  : "bg-zinc-500"
-                                }`}
-                              style={{ width: `${Math.min(100, Math.max(1, token.bondingCurveProgress))}%` }}
-                            />
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="relative">
-                        {(!isConnected || !hasAccess) && (
-                          <div className="absolute inset-0 z-10 backdrop-blur-md bg-zinc-950/60 flex flex-col items-center justify-center rounded-lg border border-zinc-800">
-                            {!isConnected ? (
-                              <span className="text-sm font-bold text-zinc-300">Connect Wallet to Unlock</span>
-                            ) : (
-                              <div className="text-center p-2">
-                                <span className="text-xs font-bold text-emerald-400 block mb-1">Requires 200,000 $SIGNAL</span>
-                                <a href={`https://testnet.vibevibe.fun/token/${SIGNAL_TOKEN}`} target="_blank" rel="noreferrer" className="text-[10px] underline text-zinc-400 hover:text-white pointer-events-auto relative z-20">Acquire Token</a>
-                              </div>
-                            )}
-                          </div>
-                        )}
-
-                        <div className="border border-zinc-800 bg-zinc-950/50 rounded-lg p-4 mb-4">
-                          <div className="grid grid-cols-3 gap-2 text-center divide-x divide-zinc-800/50">
-                            <div>
-                              <span className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider block mb-1">M.Cap (Est)</span>
-                              <span className="text-sm font-bold text-zinc-300">
-                                {token.cachedMarketCapFormatted || calculateTokenMetrics(token.bondingCurveProgress, token.ethDeposited, token.pairSymbol, liveRates).marketCapFormatted}
-                              </span>
-                            </div>
-                            <div>
-                              <span className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider block mb-1">24H Vol</span>
-                              <span className="text-sm font-bold text-zinc-300">
-                                ${(Number(token.momentum?.volumeEth || 0) * getUsdRateForPair(token.pairSymbol, liveRates)).toLocaleString('en-US', { maximumFractionDigits: 0 })}
-                              </span>
-                            </div>
-                            <div className="pl-1">
-                              <span className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider block mb-1">Score</span>
-                              <span className={`text-sm font-bold px-2 py-0.5 rounded border inline-block ${scoreColor}`}>
-                                {token.score}
-                              </span>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-
-                      <button
-                        className={`w-full py-2 font-bold rounded-lg text-center text-sm transition-colors mt-auto block border ${isConnected && hasAccess ? 'bg-zinc-800 hover:bg-emerald-500 hover:text-zinc-950 border-zinc-700 hover:border-emerald-500 text-white' : 'bg-zinc-800/50 text-zinc-600 border-zinc-800 cursor-not-allowed'}`}
-                      >
-                        {isConnected && hasAccess ? 'Analyze Alpha →' : 'Locked'}
-                      </button>
-                    </div>
-                  );
-                })}
+                {filteredTokens.map((token) => (
+                  <TokenCard
+                    key={token.id}
+                    token={token}
+                    isConnected={isConnected}
+                    hasAccess={hasAccess}
+                    liveRates={liveRates}
+                    onSelect={setSelectedToken}
+                    signalTokenAddress={SIGNAL_TOKEN}
+                  />
+                ))}
               </div>
             )}
           </div>
