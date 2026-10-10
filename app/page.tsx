@@ -12,6 +12,7 @@ import DeveloperProfilerPanel from "@/components/ui/DeveloperProfilerPanel";
 import CabalDetectorPanel from "@/components/ui/CabalDetectorPanel";
 import LiveTelemetryPanel from "@/components/ui/LiveTelemetryPanel";
 import RadarHeader from "@/components/ui/RadarHeader";
+import TradingTerminal from "@/components/ui/TradingTerminal";
 import { shortenAddress, formatTimeLive, getUsdRateForPair, calculateTokenMetrics } from "@/lib/tokenMetrics";
 
 const SIGNAL_TOKEN = "0xD4D41412033a72a0D1cCd0Cb02b666Cf771880B1" as `0x${string}`;
@@ -936,113 +937,24 @@ export default function Home() {
               </div>
 
               <div className="space-y-6">
-                <div className="bg-[#0a0a0a] border border-zinc-800 rounded-xl overflow-hidden p-4 flex flex-col shadow-xl">
-                  {/* Header & Tabs */}
-                  <div className="flex items-center justify-between mb-4">
-                    <div className="flex gap-2">
-                      <button
-                        onClick={() => setTradeTab('buy')}
-                        className={`px-5 py-1.5 text-sm font-bold rounded-md transition-all ${tradeTab === 'buy' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' : 'text-zinc-500 hover:text-zinc-300'}`}
-                      >
-                        Buy
-                      </button>
-                      <button
-                        onClick={() => setTradeTab('sell')}
-                        className={`px-5 py-1.5 text-sm font-bold rounded-md transition-all ${tradeTab === 'sell' ? 'bg-red-500/10 text-red-400 border border-red-500/30' : 'text-zinc-500 hover:text-zinc-300'}`}
-                      >
-                        Sell
-                      </button>
-                    </div>
-                    <span className="text-zinc-400 text-xs font-mono bg-zinc-900/50 px-2 py-1 rounded">
-                      Bal: {tradeTab === 'buy' ? `${ethAvailable.toFixed(4)} ETH` : `${Math.floor(tokenBalance).toLocaleString()} ${selectedToken?.symbol || 'TKN'}`}
-                    </span>
-                  </div>
-
-                  {/* Percentage Pills */}
-                  <div className="grid grid-cols-4 gap-2 mb-4">
-                    {[25, 50, 75, 100].map(pct => (
-                      <button
-                        key={pct}
-                        onClick={() => {
-                          if (tradeTab === 'buy') {
-                            // Leave 0.005 ETH for gas when maxing out
-                            const val = pct === 100 ? Math.max(0, ethAvailable - 0.005) : (ethAvailable * (pct / 100));
-                            setApeAmount(val.toFixed(4).replace(/\.?0+$/, ''));
-                          } else {
-                            const val = tokenBalance * (pct / 100);
-                            // Round down to avoid decimal dust reversion on sells
-                            setSellAmount(Math.floor(val).toString());
-                          }
-                        }}
-                        className="bg-zinc-800/40 hover:bg-zinc-700/60 text-zinc-400 text-[11px] py-1.5 rounded transition-colors border border-zinc-800 hover:border-zinc-600 font-semibold"
-                      >
-                        {pct === 100 ? 'MAX' : `${pct}%`}
-                      </button>
-                    ))}
-                  </div>
-
-                  {/* Input Field */}
-                  <div className="relative mb-4">
-                    <input
-                      type="number"
-                      value={tradeTab === 'buy' ? apeAmount : sellAmount}
-                      onChange={(e) => tradeTab === 'buy' ? setApeAmount(e.target.value) : setSellAmount(e.target.value)}
-                      placeholder="0.00"
-                      className="w-full bg-zinc-950 border border-zinc-800 focus:border-emerald-500/50 rounded-lg py-3 px-4 text-white text-xl font-mono outline-none transition-all placeholder:text-zinc-700"
-                    />
-                    <span className="absolute right-4 top-1/2 -translate-y-1/2 text-zinc-500 font-bold text-sm">
-                      {tradeTab === 'buy' ? 'ETH' : (selectedToken?.symbol || 'TKN')}
-                    </span>
-                  </div>
-
-                  {/* Execute Action */}
-                  {tradeTab === 'buy' ? (
-                    <button
-                      onClick={handleExecuteApe}
-                      disabled={isTxPending}
-                      className="w-full py-3 bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-black text-sm uppercase rounded-lg shadow-[0_0_15px_rgba(16,185,129,0.2)] transition-all disabled:opacity-50"
-                    >
-                      {isTxPending ? 'Executing...' : `Quick Buy ${selectedToken?.symbol || ''}`}
-                    </button>
-                  ) : (
-                    <button
-                      onClick={handleExecuteSell}
-                      disabled={isTxPending}
-                      className="w-full py-3 bg-red-500 hover:bg-red-400 text-white font-black text-sm uppercase rounded-lg shadow-[0_0_15px_rgba(239,68,68,0.2)] transition-all disabled:opacity-50"
-                    >
-                      {isTxPending ? 'Executing...' : `Dump ${selectedToken?.symbol || ''}`}
-                    </button>
-                  )}
-
-                  {/* Success Toast */}
-                  {hash && (
-                    <div className="mt-3 p-3 bg-zinc-950 border border-zinc-800 rounded-lg text-xs font-mono text-center flex flex-col items-center gap-1.5">
-                      {isTxWaiting && (
-                        <span className="text-yellow-400 font-bold flex items-center gap-2 animate-pulse">
-                          ⏳ Confirming on-chain...
-                        </span>
-                      )}
-                      {isTxSuccess && receipt?.status === 'success' && (
-                        <span className="text-emerald-400 font-bold">
-                          ✅ Execution Confirmed!
-                        </span>
-                      )}
-                      {receipt?.status === 'reverted' && (
-                        <span className="text-red-400 font-bold">
-                          ❌ Transaction Reverted (Incompatible Router or Slippage)
-                        </span>
-                      )}
-                      <a
-                        href={`https://explorer.testnet.chain.robinhood.com/tx/${hash}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="underline text-zinc-400 hover:text-white transition-colors"
-                      >
-                        View on Explorer ↗
-                      </a>
-                    </div>
-                  )}
-                </div>
+                <TradingTerminal
+                  symbol={selectedToken?.symbol || ""}
+                  tradeTab={tradeTab}
+                  onTradeTabChange={setTradeTab}
+                  apeAmount={apeAmount}
+                  onApeAmountChange={setApeAmount}
+                  sellAmount={sellAmount}
+                  onSellAmountChange={setSellAmount}
+                  ethAvailable={ethAvailable}
+                  tokenBalance={tokenBalance}
+                  isTxPending={isTxPending}
+                  hash={hash}
+                  isTxWaiting={isTxWaiting}
+                  isTxSuccess={isTxSuccess}
+                  receiptStatus={receipt?.status}
+                  onExecuteApe={handleExecuteApe}
+                  onExecuteSell={handleExecuteSell}
+                />
 
                 <SafetyAuditPanel
                   hasSocials={selectedToken.hasSocials}
