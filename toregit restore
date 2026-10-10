@@ -1,0 +1,56 @@
+[1mdiff --git a/app/page.tsx b/app/page.tsx[m
+[1mindex 6e53a07..8328644 100644[m
+[1m--- a/app/page.tsx[m
+[1m+++ b/app/page.tsx[m
+[36m@@ -5,6 +5,7 @@[m [mimport { usePrivy } from "@privy-io/react-auth";[m
+ import { useAccount, useSendTransaction, useBalance, useReadContract, useWaitForTransactionReceipt } from "wagmi";[m
+ import { isAddress, parseEther, parseUnits, createPublicClient, http, formatEther, encodeAbiParameters, parseAbiParameters } from "viem";[m
+ import { createClient } from "@supabase/supabase-js";[m
+[32m+[m[32mimport Header from "@/components/ui/Header";[m
+ [m
+ const SIGNAL_TOKEN = "0xD4D41412033a72a0D1cCd0Cb02b666Cf771880B1" as `0x${string}`;[m
+ const FACTORY_ADDRESS = "0xe794217880011f9cA6961340eD5c16EC9559Fea0" as `0x${string}`;[m
+[36m@@ -925,35 +926,14 @@[m [mexport default function Home() {[m
+ [m
+   return ([m
+     <div className="min-h-screen bg-zinc-950 text-zinc-100 font-mono selection:bg-emerald-500/30">[m
+[31m-      <nav className="flex justify-between items-center p-4 border-b border-zinc-800 bg-zinc-900/50 sticky top-0 z-50 backdrop-blur-md">[m
+[31m-        <div>[m
+[31m-          <h1 className="text-xl font-bold text-emerald-400">Vibe Signals</h1>[m
+[31m-          <span className="text-xs text-zinc-500">Robinhood Chain Testnet | High-Speed Node</span>[m
+[31m-        </div>[m
+[31m-        <div className="flex items-center gap-3">[m
+[31m-          {(!ready || (!authenticated && !isConnected)) ? ([m
+[31m-            <button[m
+[31m-              onClick={login}[m
+[31m-              disabled={!ready}[m
+[31m-              className="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold rounded-lg transition-colors text-sm disabled:opacity-50"[m
+[31m-            >[m
+[31m-              Log In / Connect[m
+[31m-            </button>[m
+[31m-          ) : ([m
+[31m-            <div className="flex items-center gap-3">[m
+[31m-              <span className="text-sm font-mono text-emerald-400 bg-emerald-500/10 px-3 py-1.5 rounded-lg border border-emerald-500/30">[m
+[31m-                {address ? `${address.substring(0, 6)}...${address.substring(address.length - 4)}` : ""}[m
+[31m-              </span>[m
+[31m-              <button[m
+[31m-                onClick={logout}[m
+[31m-                className="px-4 py-2 bg-zinc-800 hover:bg-red-500 hover:text-white text-zinc-400 font-bold rounded-lg transition-colors text-sm border border-zinc-700 hover:border-red-500"[m
+[31m-              >[m
+[31m-                Disconnect[m
+[31m-              </button>[m
+[31m-            </div>[m
+[31m-          )}[m
+[31m-        </div>[m
+[31m-      </nav>[m
+[32m+[m[32m      <Header[m[41m [m
+[32m+[m[32m        ready={ready}[m[41m [m
+[32m+[m[32m        authenticated={authenticated}[m[41m [m
+[32m+[m[32m        isConnected={isConnected}[m[41m [m
+[32m+[m[32m        address={address}[m[41m [m
+[32m+[m[32m        login={login}[m[41m [m
+[32m+[m[32m        logout={logout}[m[41m [m
+[32m+[m[32m      />[m
+ [m
+       <main className="p-8 max-w-6xl mx-auto">[m
+         {selectedToken ? ([m
