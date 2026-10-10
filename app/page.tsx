@@ -179,8 +179,6 @@ export default function Home() {
 
   const [apeAmount, setApeAmount] = useState<string>("0.005");
   const [sellAmount, setSellAmount] = useState<string>("1000");
-  const [slippage, setSlippage] = useState<number>(15);
-  const [txHash, setTxHash] = useState<string | null>(null);
   const [tradeTab, setTradeTab] = useState<'buy' | 'sell'>('buy');
   const [topHolders, setTopHolders] = useState<{ address: string, pct: number }[]>([]);
   const [devStats, setDevStats] = useState<{ launches: number; gradRate: number; label: string; color: string; } | null>(null);
@@ -882,7 +880,7 @@ export default function Home() {
         {selectedToken ? (
           <div className="animate-in fade-in slide-in-from-bottom-4 duration-300">
             <button
-              onClick={() => { setSelectedToken(null); setTxHash(null); }}
+              onClick={() => { setSelectedToken(null); }}
               className="mb-6 text-zinc-400 hover:text-white flex items-center gap-2 text-sm transition-colors"
             >
               ← Back to Radar
