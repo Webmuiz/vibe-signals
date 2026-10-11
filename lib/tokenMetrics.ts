@@ -227,13 +227,28 @@ export function calculateVibeScore(params: VibeScoreParams): number {
   if (concentratedSupply) penalties += 30;
   if (totalPreGradDumps > 0 || isSerialDumper) penalties += 25;
 
+  // --- Developer graduation-rate BONUS -----------------------------------
+  // Reward a proven track record of graduating tokens. This is added BEFORE
+  // the final risk caps so it can lift a good dev, but it can never override
+  // the hard ceilings below (a current dump still caps the score).
+  let graduationBonus = 0;
+  if (graduationRate >= 50) graduationBonus = 15;
+  else if (graduationRate >= 25) graduationBonus = 8;
+  else if (graduationRate > 0) graduationBonus = 4;
+
   // --- Final normalization -----------------------------------------------
-  let raw = base * trustMultiplier * momentumMultiplier - penalties;
+  let raw = base * trustMultiplier * momentumMultiplier - penalties + graduationBonus;
 
   // Hard ceiling for concentrated supply. A token with 69% dev allocation and
   // a dumping history MUST land below 30 regardless of volume/graduation.
   if (concentratedSupply) raw = Math.min(raw, 40);
-  if (totalPreGradDumps > 0 || isSerialDumper) raw = Math.min(raw, 30);
+
+  // Developer-discipline ceiling. A non-zero dump history normally caps the
+  // score at 30 — but a dev with a PROVEN graduation record (>25%) is not
+  // crushed to a 1; they get a softer cap of 45.
+  if (totalPreGradDumps > 0 || isSerialDumper) {
+    raw = Math.min(raw, graduationRate > 25 ? 45 : 30);
+  }
 
   return clamp(Math.round(raw), 1, 100);
 }

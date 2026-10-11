@@ -3,7 +3,7 @@
 import { useState, useMemo, useEffect, useRef, useCallback, memo } from "react";
 import { usePrivy } from "@privy-io/react-auth";
 import { useAccount, useSendTransaction, useBalance, useReadContract, useWaitForTransactionReceipt } from "wagmi";
-import { isAddress, parseEther, parseUnits, createPublicClient, http, formatEther, encodeAbiParameters, parseAbiParameters } from "viem";
+import { isAddress, parseEther, parseUnits, createPublicClient, http, formatEther, encodeFunctionData, parseAbi, BaseError, ContractFunctionRevertedError } from "viem";
 import Header from "@/components/ui/Header";
 import TokenCard, { type TokenCardData } from "@/components/ui/TokenCard";
 import SafetyAuditPanel from "@/components/ui/SafetyAuditPanel";
@@ -37,6 +37,78 @@ const ERC20_ABI = [
   { name: "name", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "string" }] },
   { name: "balanceOf", type: "function", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "uint256" }] }
 ] as const;
+
+// ---------------------------------------------------------------------------
+// vibe/vibe V6 bonding-curve ABIs (verified against vibevibe.md section 5).
+// The curve is the ONLY contract we trade against for pre-graduation tokens:
+//   - buyExactIn(maxPairIn, minNetOut, recipient, deadline) payable
+//   - sell(grossTokens, minPairOut, recipient, deadline)   // NO approve needed
+// ---------------------------------------------------------------------------
+const FACTORY_CURVE_ABI = parseAbi([
+  "function curveOf(address token) view returns (address)",
+  "function isV6Token(address) view returns (bool)",
+]);
+
+const CURVE_ABI = parseAbi([
+  "function token() view returns (address)",
+  "function pairCurrency() view returns (address)",
+  "function complete() view returns (bool)",
+  "function currentRateBps() view returns (uint256)",
+  "function quoteBuyExactIn(uint256 pairIn) view returns (uint256 gross, uint256 net, uint256 cost, uint256 pairFee, uint256 refund)",
+  "function quoteSell(uint256 grossTokens) view returns (uint256 net, uint256 proceeds, uint256 pairFee, uint256 pairOut)",
+  "function buyExactIn(uint256 maxPairIn, uint256 minNetOut, address recipient, uint256 deadline) payable",
+  "function sell(uint256 grossTokens, uint256 minPairOut, address recipient, uint256 deadline)",
+]);
+
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as `0x${string}`;
+
+// Slippage tolerance applied to the quoted output (3% — within the 1-3% band
+// the spec recommends to survive volatile blocks without reverting).
+const SLIPPAGE_BPS = 300n;
+const BPS_DENOMINATOR = 10000n;
+
+/**
+ * Resolves the bonding curve for a token via `factory.curveOf(token)`.
+ * Falls back to the token's indexed `ammAddress` when the factory read fails
+ * (e.g. legacy V5 tokens) so the trade box still has a target.
+ */
+async function resolveCurveAddress(
+  tokenAddress: `0x${string}`,
+  fallbackAmm?: string
+): Promise<`0x${string}`> {
+  try {
+    const curve = (await publicClient.readContract({
+      address: FACTORY_ADDRESS,
+      abi: FACTORY_CURVE_ABI,
+      functionName: "curveOf",
+      args: [tokenAddress],
+    })) as `0x${string}`;
+    if (curve && curve !== ZERO_ADDRESS) return curve;
+  } catch (err) {
+    console.warn("[trade] factory.curveOf failed, using indexed ammAddress:", err);
+  }
+  if (fallbackAmm && isAddress(fallbackAmm)) return fallbackAmm as `0x${string}`;
+  throw new Error("Could not resolve bonding curve address for this token");
+}
+
+/**
+ * Extracts a human-readable revert reason from a viem error so the exact
+ * on-chain failure (SlippageExceeded, CurveClosed, InsufficientValue, ...)
+ * is visible in the console instead of a generic "transaction failed".
+ */
+function describeTxError(err: unknown): string {
+  if (err instanceof BaseError) {
+    const revert = err.walk(
+      (e) => e instanceof ContractFunctionRevertedError
+    ) as ContractFunctionRevertedError | null;
+    if (revert) {
+      const name = revert.data?.errorName ?? revert.shortMessage;
+      return `revert: ${name}`;
+    }
+    return err.shortMessage || err.message;
+  }
+  return err instanceof Error ? err.message : String(err);
+}
 
 const publicClient = createPublicClient({
   transport: http('https://rpc.testnet.chain.robinhood.com')
@@ -1139,40 +1211,152 @@ export default function Home() {
     };
   }, [selectedToken?.contractAddress, refreshTrigger]);
 
+  /**
+   * BUY — native ETH -> curve token via `curve.buyExactIn`.
+   *
+   * Spec (vibevibe.md §5/§6):
+   *   buyExactIn(uint256 maxPairIn, uint256 minNetOut, address recipient, uint256 deadline) payable
+   *   - `value` MUST equal `maxPairIn` (the ETH sent in).
+   *   - `minNetOut` is derived from `quoteBuyExactIn(pairIn).net` minus slippage.
+   *   - Only valid for ETH-paired tokens whose curve is not yet complete.
+   */
   const handleExecuteApe = async () => {
     if (!selectedToken || !apeAmount || Number(apeAmount) <= 0) return;
-    try {
-      const amountInWei = parseEther(apeAmount);
-      const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600);
-      const targetToken = selectedToken.contractAddress as `0x${string}`;
+    if (!address) {
+      console.error("[trade] buy aborted: no connected wallet address");
+      return;
+    }
 
-      // CRITICAL FIX: The Buy method 0x7681fb10 requires EXACTLY 9 parameters (7 static, 2 dynamic arrays)
-      const argsData = encodeAbiParameters(
-        parseAbiParameters('address, address, uint256, uint256, uint256, uint256, uint256, address[], address[]'),
-        [targetToken, "0x0000000000000000000000000000000000000000", amountInWei, 0n, 256n, 0n, deadline, [], []]
+    try {
+      const tokenAddress = selectedToken.contractAddress as `0x${string}`;
+      const amountInWei = parseEther(apeAmount);
+      const curve = await resolveCurveAddress(tokenAddress, selectedToken.ammAddress);
+
+      // Pre-flight guards so we fail fast with a clear reason instead of a revert.
+      const [pairCurrency, complete] = await Promise.all([
+        publicClient.readContract({ address: curve, abi: CURVE_ABI, functionName: "pairCurrency" }),
+        publicClient.readContract({ address: curve, abi: CURVE_ABI, functionName: "complete" }),
+      ]);
+
+      if (complete) {
+        console.error("[trade] buy aborted: CurveClosed() — curve already graduated");
+        return;
+      }
+      if ((pairCurrency as string).toLowerCase() !== ZERO_ADDRESS) {
+        console.error(
+          "[trade] buy aborted: token is not ETH-paired; use the zap router on vibe/vibe for non-ETH pairs"
+        );
+        return;
+      }
+
+      // Quote immediately before trading (spec §4: always quote right before trading).
+      const quote = (await publicClient.readContract({
+        address: curve,
+        abi: CURVE_ABI,
+        functionName: "quoteBuyExactIn",
+        args: [amountInWei],
+      })) as readonly [bigint, bigint, bigint, bigint, bigint];
+      const netOut = quote[1];
+
+      if (netOut <= 0n) {
+        console.error("[trade] buy aborted: quote returned 0 net tokens");
+        return;
+      }
+
+      // 3% slippage tolerance on the quoted net output.
+      const minNetOut = (netOut * (BPS_DENOMINATOR - SLIPPAGE_BPS)) / BPS_DENOMINATOR;
+      const deadline = BigInt(Math.floor(Date.now() / 1000) + 300);
+
+      const data = encodeFunctionData({
+        abi: CURVE_ABI,
+        functionName: "buyExactIn",
+        args: [amountInWei, minNetOut, address as `0x${string}`, deadline],
+      });
+
+      console.log(
+        `[trade] BUY curve=${curve} ethIn=${apeAmount} minNetOut=${minNetOut.toString()}`
       );
-      const txData = `0x7681fb10${argsData.slice(2)}` as `0x${string}`;
-      
-      sendTransaction({ to: ZAP_ROUTER, value: amountInWei, data: txData, chainId: 46630 });
-    } catch (err) { console.error(err); }
+
+      sendTransaction({
+        to: curve,
+        value: amountInWei,
+        data,
+        chainId: 46630,
+      });
+    } catch (err) {
+      console.error("[trade] BUY failed:", describeTxError(err), err);
+    }
   };
 
+  /**
+   * SELL — curve token -> native ETH via `curve.sell`.
+   *
+   * Spec (vibevibe.md §5/§6): "Selling on the curve needs NO approve: tokens
+   * already allow their own curve." So this executes the sell directly on
+   * click — no allowance check, no approve transaction, no waiting.
+   *
+   *   sell(uint256 grossTokens, uint256 minPairOut, address recipient, uint256 deadline)
+   */
   const handleExecuteSell = async () => {
     if (!selectedToken || !sellAmount || Number(sellAmount) <= 0) return;
-    try {
-      const amountInWei = parseEther(sellAmount);
-      const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600);
-      const targetToken = selectedToken.contractAddress as `0x${string}`;
+    if (!address) {
+      console.error("[trade] sell aborted: no connected wallet address");
+      return;
+    }
 
-      // CRITICAL FIX: The Sell method 0x3177b4d2 requires EXACTLY 7 parameters (5 static, 2 dynamic arrays)
-      const argsData = encodeAbiParameters(
-        parseAbiParameters('address, uint256, address[], uint256, uint256, address[], address[]'),
-        [targetToken, amountInWei, [], 0n, deadline, [], []]
+    try {
+      const tokenAddress = selectedToken.contractAddress as `0x${string}`;
+      const grossTokens = parseEther(sellAmount);
+      const curve = await resolveCurveAddress(tokenAddress, selectedToken.ammAddress);
+
+      const complete = await publicClient.readContract({
+        address: curve,
+        abi: CURVE_ABI,
+        functionName: "complete",
+      });
+      if (complete) {
+        console.error("[trade] sell aborted: CurveClosed() — curve already graduated");
+        return;
+      }
+
+      // Quote the exact pair-currency proceeds right before selling.
+      const quote = (await publicClient.readContract({
+        address: curve,
+        abi: CURVE_ABI,
+        functionName: "quoteSell",
+        args: [grossTokens],
+      })) as readonly [bigint, bigint, bigint, bigint];
+      const pairOut = quote[3];
+
+      if (pairOut <= 0n) {
+        console.error("[trade] sell aborted: quote returned 0 pair out");
+        return;
+      }
+
+      // 3% slippage tolerance on the quoted proceeds.
+      const minPairOut = (pairOut * (BPS_DENOMINATOR - SLIPPAGE_BPS)) / BPS_DENOMINATOR;
+      const deadline = BigInt(Math.floor(Date.now() / 1000) + 300);
+
+      const data = encodeFunctionData({
+        abi: CURVE_ABI,
+        functionName: "sell",
+        args: [grossTokens, minPairOut, address as `0x${string}`, deadline],
+      });
+
+      console.log(
+        `[trade] SELL curve=${curve} grossTokens=${sellAmount} minPairOut=${minPairOut.toString()} (no approve)`
       );
-      const txData = `0x3177b4d2${argsData.slice(2)}` as `0x${string}`;
-      
-      sendTransaction({ to: ZAP_ROUTER, value: 0n, data: txData, chainId: 46630 });
-    } catch (err) { console.error(err); }
+
+      // Direct call — the curve is pre-approved by the token contract itself.
+      sendTransaction({
+        to: curve,
+        value: 0n,
+        data,
+        chainId: 46630,
+      });
+    } catch (err) {
+      console.error("[trade] SELL failed:", describeTxError(err), err);
+    }
   };
 
   // Memoized so the detail-drawer score only re-renders when the integer score
