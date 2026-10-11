@@ -732,9 +732,21 @@ export default function Home() {
         // pre-graduation token.
         return list.filter(t => t.creatorHoldingPct === 0 && t.devStats.totalPreGradDumps === 0);
       case "risk":
-        // High Risk / Sniped: concentrated top-5 supply OR a dev with a
-        // pre-graduation dump history.
-        return list.filter(t => t.top5Pct > 40 || t.devStats.totalPreGradDumps > 0);
+        // High Risk / Sniped. This tab must rely ONLY on fields that are
+        // guaranteed to exist on every grid row — `top5Pct` and
+        // `devStats.totalPreGradDumps` are fetched on-demand for the detail
+        // drawer and are usually 0/undefined at the grid level, which made this
+        // tab return an empty array. Instead we catch tokens via:
+        //   1. A low Vibe Score (the scoring engine already penalises
+        //      concentrated supply, snipers and dumper devs).
+        //   2. Block-0 snipers that are dumping (retention <= 50%).
+        //   3. A creator bag > 15% when the grid row happens to carry it.
+        return list.filter(
+          (t) =>
+            t.score <= 30 ||
+            (t.blockZeroBuyers > 0 && t.diamondHandsHoldersPct <= 50) ||
+            t.creatorHoldingPct > 15
+        );
       default:
         return list;
     }
