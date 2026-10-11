@@ -6,6 +6,53 @@ export function shortenAddress(address: string) {
 }
 
 /**
+ * Formats a numeric USD value into a clean, compact string using K (thousands),
+ * M (millions) and B (billions) suffixes, e.g. 16800 -> "$16.8K", 1200000 -> "$1.2M".
+ *
+ * Accepts either a raw number or a pre-formatted currency string (e.g. "$16,800.00"
+ * or "16800") so it can be applied directly to values coming from the API layer.
+ *
+ * Rules:
+ *  - Values below 1,000 keep their cents (e.g. "$842.50").
+ *  - Values >= 1,000 are suffixed and trimmed to at most one decimal place.
+ *  - Non-finite / unparseable input falls back to "$0.00".
+ */
+export function formatCompactUsd(value: number | string | null | undefined): string {
+  const numeric =
+    typeof value === 'number'
+      ? value
+      : typeof value === 'string'
+        ? Number(value.replace(/[^0-9.-]/g, ''))
+        : NaN;
+
+  if (!Number.isFinite(numeric)) return '$0.00';
+
+  const sign = numeric < 0 ? '-' : '';
+  const abs = Math.abs(numeric);
+
+  if (abs < 1_000) {
+    return `${sign}$${abs.toLocaleString('en-US', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })}`;
+  }
+
+  const units: Array<{ threshold: number; suffix: string }> = [
+    { threshold: 1_000_000_000, suffix: 'B' },
+    { threshold: 1_000_000, suffix: 'M' },
+    { threshold: 1_000, suffix: 'K' },
+  ];
+
+  const { threshold, suffix } = units.find((u) => abs >= u.threshold)!;
+  const scaled = abs / threshold;
+
+  // One decimal place, but drop a trailing ".0" for clean whole numbers.
+  const formatted = scaled.toFixed(1).replace(/\.0$/, '');
+
+  return `${sign}$${formatted}${suffix}`;
+}
+
+/**
  * Canonical, normalized market metrics for a single token.
  * This is the SINGLE SOURCE OF TRUTH consumed by both the homepage
  * TokenCard grid and the "Analyse Alpha" detail view.

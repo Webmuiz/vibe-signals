@@ -4,6 +4,7 @@ import {
   formatTimeLive,
   getUsdRateForPair,
   calculateTokenMetrics,
+  formatCompactUsd,
 } from "@/lib/tokenMetrics";
 
 export interface TokenCardData {
@@ -41,6 +42,12 @@ interface TokenCardProps {
   liveRates: Record<string, number>;
   onSelect: (token: TokenCardData) => void;
   signalTokenAddress: string;
+  /**
+   * Whether the real API-derived metrics (`liveMetrics`) have resolved for this
+   * token. While `false`, the Market Cap / 24H Volume numbers are blurred so the
+   * user never sees the synthetic Supabase fallback values mid-load.
+   */
+  liveMetricsResolved?: boolean;
 }
 
 export default function TokenCard({
@@ -50,6 +57,7 @@ export default function TokenCard({
   liveRates,
   onSelect,
   signalTokenAddress,
+  liveMetricsResolved = true,
 }: TokenCardProps) {
   const scoreColor =
     token.score >= 70
@@ -127,20 +135,24 @@ export default function TokenCard({
               <span className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider block mb-1">
                 {token.marketCapIsEstimate ? 'M.Cap (Est)' : 'M.Cap'}
               </span>
-              <span className="text-sm font-bold text-zinc-300">
+              <span
+                className={`text-sm font-bold text-zinc-300 transition-all duration-300 ${!liveMetricsResolved ? 'blur-sm opacity-50 select-none' : ''}`}
+              >
                 {token.marketCapUsd
-                  ? `${token.marketCapIsEstimate ? '~' : ''}${token.marketCapUsd}`
+                  ? `${token.marketCapIsEstimate ? '~' : ''}${formatCompactUsd(token.marketCapUsd)}`
                   : token.cachedMarketCapFormatted
-                    ? token.cachedMarketCapFormatted
-                    : `~${calculateTokenMetrics(token.bondingCurveProgress, token.ethDeposited, token.pairSymbol, liveRates).marketCapFormatted}`}
+                    ? formatCompactUsd(token.cachedMarketCapFormatted)
+                    : `~${formatCompactUsd(calculateTokenMetrics(token.bondingCurveProgress, token.ethDeposited, token.pairSymbol, liveRates).marketCapFormatted)}`}
               </span>
             </div>
             <div>
               <span className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider block mb-1">24H Vol</span>
-              <span className="text-sm font-bold text-zinc-300">
+              <span
+                className={`text-sm font-bold text-zinc-300 transition-all duration-300 ${!liveMetricsResolved ? 'blur-sm opacity-50 select-none' : ''}`}
+              >
                 {token.volumeUsd
-                  ? token.volumeUsd
-                  : `$${(Number(token.momentum?.volumeEth || 0) * getUsdRateForPair(token.pairSymbol, liveRates)).toLocaleString('en-US', { maximumFractionDigits: 0 })}`}
+                  ? formatCompactUsd(token.volumeUsd)
+                  : formatCompactUsd(Number(token.momentum?.volumeEth || 0) * getUsdRateForPair(token.pairSymbol, liveRates))}
               </span>
             </div>
             <div className="pl-1">

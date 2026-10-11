@@ -1070,6 +1070,7 @@ export default function Home() {
                     isConnected={isConnected}
                     hasAccess={hasAccess}
                     liveRates={liveRates}
+                    liveMetricsResolved={!!liveMetrics[token.contractAddress.toLowerCase()]}
                     onSelect={(selected) => {
                       // Seed the detail view from the SAME cached live metrics
                       // the card is displaying, so there is no stale-state jump.
