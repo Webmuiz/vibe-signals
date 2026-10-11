@@ -544,6 +544,10 @@ export default function Home() {
       const volumeEth = live?.volumeEth ?? Number(db.volume_eth ?? db.volumeEth ?? 0).toFixed(4);
       const hasSocials = live?.hasSocials ?? db.has_socials ?? db.hasSocials ?? false;
       const creatorHoldingPct = Number(db.creator_holding_pct ?? db.creatorHoldingPct ?? 0);
+      // Top-5 concentration is only known for the selected token (holders are
+      // fetched on demand); when absent we pass 0 so the rule simply doesn't
+      // fire rather than fabricating a risk.
+      const top5Pct = Number((db as any).top5_pct ?? (db as any).top5Pct ?? 0);
 
       // When live data exists, its curve progress is authoritative.
       const resolvedCurveProgress = live ? live.bondingCurveProgress : bondingCurveProgress;
@@ -560,6 +564,7 @@ export default function Home() {
         buyPct,
         hasSocials,
         creatorHoldingPct,
+        top5Pct,
         totalLaunches: devProfile.launches,
         graduationRate: devProfile.gradRate,
         totalPreGradDumps: 0,
@@ -1220,6 +1225,29 @@ export default function Home() {
   const creatorHoldingPct = devHolder ? devHolder.pct : 0;
   const isCabalRisk = selectedToken ? (top5Pct > 25 || (selectedToken.momentum?.sellPct ?? 0) >= 65 || selectedToken.safetyChecks?.creatorBag?.safe === false) : false;
 
+  // Recompute the detail-view Vibe Score with the REAL holder concentration
+  // once the holders endpoint resolves. This is what lets the Critical Risk
+  // rules (creator > 15% / top-5 > 40% / dev dumps) actually fire — the score
+  // produced during the initial fetch has no holder data yet.
+  const detailScore = useMemo(() => {
+    if (!selectedToken) return 0;
+    return calculateVibeScore({
+      blockZeroBuyers: selectedToken.blockZeroBuyers || 0,
+      timeSinceLaunchMins: selectedToken.timeSinceLaunchMins,
+      curveProgress: selectedToken.bondingCurveProgress,
+      diamondPct: selectedToken.diamondHandsHoldersPct ?? 50,
+      volumeEth: Number(selectedToken.momentum?.volumeEth ?? 0),
+      buyPct: selectedToken.momentum?.buyPct ?? 50,
+      hasSocials: selectedToken.hasSocials ?? false,
+      creatorHoldingPct,
+      top5Pct,
+      totalLaunches: devStats?.launches ?? selectedToken.devProfile?.launches ?? 0,
+      graduationRate: devStats?.gradRate ?? selectedToken.devProfile?.gradRate ?? 0,
+      totalPreGradDumps: (selectedToken as any).totalPreGradDumps ?? 0,
+      isSerialDumper: (selectedToken as any).isSerialDumper ?? false,
+    });
+  }, [selectedToken, creatorHoldingPct, top5Pct, devStats]);
+
   let devBadgeText = "NEUTRAL / UNPROVEN";
   let devBadgeColor = "text-zinc-500 border-zinc-700 bg-zinc-900";
 
@@ -1275,7 +1303,7 @@ export default function Home() {
               </div>
               <div className="text-right">
                 <span className="block text-sm text-zinc-400 mb-1">Vibe Score</span>
-                <VibeScoreDisplay score={selectedToken.score} />
+                <VibeScoreDisplay score={detailScore} />
               </div>
             </header>
 

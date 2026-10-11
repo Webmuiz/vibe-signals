@@ -548,9 +548,21 @@ async function runIndexer() {
                 const live = await fetchLiveApiMetrics(token.token_address);
                 const apiPayload: Record<string, any> = {};
                 if (live) {
-                    if (live.marketCapFormatted) apiPayload.cachedMarketCapFormatted = live.marketCapFormatted;
-                    if (live.volumeEth != null) apiPayload.volume_eth = live.volumeEth;
-                    if (live.hasSocials) apiPayload.has_socials = true;
+                    // NEVER regress a previously-known-good value to a transient
+                    // falsy/zero. A failed/partial API response must not erase
+                    // real data (e.g. socials flipping true -> false, or a
+                    // market cap dropping to null).
+                    if (live.marketCapFormatted) {
+                        apiPayload.cachedMarketCapFormatted = live.marketCapFormatted;
+                    }
+                    if (live.volumeEth != null && live.volumeEth > 0) {
+                        apiPayload.volume_eth = live.volumeEth;
+                    }
+                    // Socials are sticky: once true, a failed fetch can never
+                    // set them back to false.
+                    if (live.hasSocials || token.has_socials) {
+                        apiPayload.has_socials = true;
+                    }
                 }
 
                 if (token.pair_symbol === 'ETH') {
@@ -591,29 +603,45 @@ async function runIndexer() {
                             ? 100
                             : Math.min(100, Math.max(0, (currentLiq / targetUnits) * 100));
 
-                        if (progress > Number(token.curve_progress || 0) || Object.keys(apiPayload).length > 0) {
+                        // Non-regression guards: a transient RPC read that returns
+                        // 0 must never overwrite a previously high curve progress
+                        // or liquidity. We only ever move these values UP.
+                        const prevProgress = Number(token.curve_progress || 0);
+                        const prevLiq = Number(token.liquidity_deposited || 0);
+                        const safeProgress = Math.max(progress, prevProgress);
+                        const safeLiq = Math.max(currentLiq, prevLiq);
+
+                        if (safeProgress > prevProgress || Object.keys(apiPayload).length > 0) {
                             const updatePayload: any = {
                                 ...apiPayload,
-                                liquidity_deposited: Number(currentLiq.toFixed(4)),
-                                curve_progress: Number(progress.toFixed(1)),
+                                liquidity_deposited: Number(safeLiq.toFixed(4)),
+                                curve_progress: Number(safeProgress.toFixed(1)),
                             };
                             await updateLaunchById(token.launch_id, updatePayload);
                             console.log(
-                                `📈 SYNC: $${token.symbol} liq: ${currentLiq.toFixed(4)} (${progress.toFixed(1)}%)`
+                                `📈 SYNC: $${token.symbol} liq: ${safeLiq.toFixed(4)} (${safeProgress.toFixed(1)}%)`
                             );
                         }
                     } catch (curveErr) {
                         // Fall back to the balance heuristic if the curve read fails.
+                        // Same non-regression rule: never let a failed read drop
+                        // liquidity/progress below what we already know.
                         const rawEth = await publicClient.getBalance({
                             address: token.amm_address as `0x${string}`,
                         });
                         currentLiq = parseFloat(formatUnits(rawEth, 18));
                         const progress = Math.min(100, Math.max(0, (currentLiq / 4.0) * 100));
-                        if (progress > Number(token.curve_progress || 0) || Object.keys(apiPayload).length > 0) {
+
+                        const prevProgress = Number(token.curve_progress || 0);
+                        const prevLiq = Number(token.liquidity_deposited || 0);
+                        const safeProgress = Math.max(progress, prevProgress);
+                        const safeLiq = Math.max(currentLiq, prevLiq);
+
+                        if (safeProgress > prevProgress || Object.keys(apiPayload).length > 0) {
                             await updateLaunchById(token.launch_id, {
                                 ...apiPayload,
-                                liquidity_deposited: Number(currentLiq.toFixed(4)),
-                                curve_progress: Number(progress.toFixed(1)),
+                                liquidity_deposited: Number(safeLiq.toFixed(4)),
+                                curve_progress: Number(safeProgress.toFixed(1)),
                             });
                         }
                     }

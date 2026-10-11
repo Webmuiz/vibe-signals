@@ -413,8 +413,11 @@ export async function GET(request: Request) {
                     amm_address = excluded.amm_address,
                     dev_address = excluded.dev_address,
                     pair_symbol = excluded.pair_symbol,
-                    liquidity_deposited = excluded.liquidity_deposited,
-                    curve_progress = excluded.curve_progress,
+                    -- Non-regression: a transient RPC read returning 0 must
+                    -- never overwrite a previously high curve progress or
+                    -- liquidity. These only ever move UP.
+                    liquidity_deposited = MAX(launches.liquidity_deposited, excluded.liquidity_deposited),
+                    curve_progress = MAX(launches.curve_progress, excluded.curve_progress),
                     launch_block = excluded.launch_block,
                     name = excluded.name,
                     symbol = excluded.symbol,

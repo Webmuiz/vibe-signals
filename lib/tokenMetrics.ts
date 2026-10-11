@@ -129,6 +129,8 @@ export interface VibeScoreParams {
   hasSocials: boolean;
   /** Creator bag as a percentage of total supply, 0-100. */
   creatorHoldingPct: number;
+  /** Combined top-5 holder share of total supply, 0-100. */
+  top5Pct?: number;
   /** Total launches by this developer (0 = unknown). */
   totalLaunches: number;
   /** Developer graduation rate, 0-100. */
@@ -155,6 +157,7 @@ export function calculateVibeScore(params: VibeScoreParams): number {
     buyPct,
     hasSocials,
     creatorHoldingPct,
+    top5Pct = 0,
     totalLaunches,
     graduationRate,
     totalPreGradDumps,
@@ -213,8 +216,25 @@ export function calculateVibeScore(params: VibeScoreParams): number {
   if (buyPct < 40 && volumeEth >= 0.01) penalties += 12;
   if (totalPreGradDumps >= 2) penalties += 10;
 
+  // --- CRITICAL RISK hard penalties + score ceiling ----------------------
+  // Additive scoring alone let dangerous tokens reach 70+ purely on socials
+  // and volume. These rules impose hard, non-negotiable consequences.
+  //
+  // 1. Concentrated supply: creator bag > 15% OR top-5 > 40% → massive
+  //    penalty AND a hard ceiling of 40 (a rug-in-waiting can never look safe).
+  // 2. Developer discipline: any past pre-graduation dump → instant -25.
+  const concentratedSupply = creatorHoldingPct > 15 || top5Pct > 40;
+  if (concentratedSupply) penalties += 30;
+  if (totalPreGradDumps > 0 || isSerialDumper) penalties += 25;
+
   // --- Final normalization -----------------------------------------------
-  const raw = base * trustMultiplier * momentumMultiplier - penalties;
+  let raw = base * trustMultiplier * momentumMultiplier - penalties;
+
+  // Hard ceiling for concentrated supply. A token with 69% dev allocation and
+  // a dumping history MUST land below 30 regardless of volume/graduation.
+  if (concentratedSupply) raw = Math.min(raw, 40);
+  if (totalPreGradDumps > 0 || isSerialDumper) raw = Math.min(raw, 30);
+
   return clamp(Math.round(raw), 1, 100);
 }
 
