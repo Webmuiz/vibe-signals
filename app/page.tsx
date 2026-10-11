@@ -594,6 +594,9 @@ export default function Home() {
             const json = await res.json();
             const launch = json.data?.launch || (json.data?.tokenAddress ? json.data : null);
             const isLegacy = json.apiVersion === "1" || (!json.data?.launch && !!json.data?.tokenAddress);
+            // A partial payload (market stats timed out upstream) still carries
+            // the launch identity, so we can hydrate the detail view from it.
+            const isPartial = json.data?.partial === true;
             if (!launch) throw new Error('Token launch data missing from API response');
 
             const createdMs = new Date(launch.createdAt).getTime();
@@ -696,11 +699,52 @@ export default function Home() {
 
             setOnChainToken(mappedToken);
             setSelectedToken(mappedToken);
+
+            // JIT INGESTION: persist the freshly-discovered token into Supabase
+            // so it becomes a first-class grid entry (and survives reloads).
+            // Fire-and-forget so a slow/failed write never blocks the UI.
+            void (async () => {
+              try {
+                const row = {
+                  launch_id: Number(launch.id) || undefined,
+                  token_address: launch.tokenAddress,
+                  amm_address: launch.curveAddress || null,
+                  dev_address: launch.launcherAddress || launch.creatorAddress || query,
+                  liquidity_deposited: currentEth,
+                  pair_symbol: resolvedSymbol,
+                  curve_progress: curveProgress,
+                  name: launch.name || null,
+                  symbol: launch.symbol || null,
+                  created_at: launch.createdAt || new Date().toISOString(),
+                };
+                const { error: upsertError } = await supabase
+                  .from('launches')
+                  .upsert(row, { onConflict: 'token_address' });
+                if (upsertError) {
+                  console.warn('[JIT] Supabase upsert failed:', upsertError.message);
+                } else {
+                  // Optimistically surface it in the grid immediately; the
+                  // realtime INSERT/UPDATE subscription will reconcile it.
+                  setDbTokens((prev) => {
+                    const exists = prev.some(
+                      (t) => (t.token_address || t.tokenAddress || '').toLowerCase() === launch.tokenAddress.toLowerCase()
+                    );
+                    if (exists) return prev;
+                    return [row as DBToken, ...prev];
+                  });
+                }
+              } catch (upsertErr) {
+                console.warn('[JIT] Supabase upsert threw:', upsertErr);
+              }
+            })();
           } else {
             const errData = await res.json().catch(() => ({}));
-            const errMsg = errData.error || await res.text() || "Failed to fetch from VibeVibe API";
+            const errMsg = errData.error || "Failed to fetch from VibeVibe API";
             console.error("VibeVibe API failed:", errMsg);
-            setSearchError(errMsg);
+            // A 404 genuinely means "not found". Anything else (502/504) is a
+            // transient upstream failure — surface a soft message rather than
+            // the alarming "JIT Failed" banner.
+            setSearchError(res.status === 404 ? errMsg : "Upstream temporarily unavailable — retry shortly");
           }
         } catch (err) {
           console.error("On-chain fallback failed", err);
@@ -720,6 +764,89 @@ export default function Home() {
     if (!selectedToken?.contractAddress) return;
     let isMounted = true;
 
+    /**
+     * Hydrates the telemetry panel from on-chain/contract metrics when the
+     * proxy is slow, times out, or returns a partial payload. This is the
+     * guaranteed fallback that prevents the panel from hanging on
+     * "SYNCING..." / "MC: ..." indefinitely.
+     */
+    const hydrateFromOnChain = async () => {
+      const detailKey = selectedToken.contractAddress.toLowerCase();
+      try {
+        // Read the raw ETH reserve directly from the bonding curve contract
+        // when the API is unavailable. `pairReserveUnits`/`netRaisedWei` are
+        // the same fields the normalizer consumes, so the derived curve
+        // progress stays consistent with the API path.
+        let onChainEth = 0;
+        const amm = selectedToken.ammAddress as `0x${string}` | undefined;
+        if (amm) {
+          try {
+            const reserve = await publicClient.readContract({
+              address: amm,
+              abi: [
+                { name: 'pairReserveUnits', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
+              ] as const,
+              functionName: 'pairReserveUnits',
+            });
+            onChainEth = Number(formatEther(reserve as bigint));
+          } catch {
+            // Contract may not expose that getter — fall back to the last
+            // known curve progress already held in state.
+          }
+        }
+
+        const targetEth = 4; // default bonding-curve target (ETH-equivalent)
+        const fallbackProgress =
+          onChainEth > 0
+            ? Math.min(100, Math.max(0.1, (onChainEth / targetEth) * 100))
+            : selectedToken.bondingCurveProgress ?? 0;
+
+        // Publish a metrics entry so the grid card and detail view agree.
+        const fallbackMetrics: LiveTokenMetrics = {
+          contractAddress: detailKey,
+          name: selectedToken.name || 'Unknown',
+          ticker: selectedToken.ticker || 'TKN',
+          symbol: selectedToken.symbol || '',
+          pairSymbol: selectedToken.pairSymbol || 'ETH',
+          bondingCurveProgress: fallbackProgress,
+          ethDeposited: onChainEth > 0 ? `${onChainEth.toFixed(4)} / ${targetEth.toFixed(1)}` : (selectedToken.ethDeposited || '0.0000 / 4.0'),
+          marketCapUsd: selectedToken.marketCapUsd || '$0.00',
+          marketCapRaw: 0,
+          volumeEth: selectedToken.volumeEth || '0.0000',
+          volumeUsd: selectedToken.volumeUsd || '$0.00',
+          buyPct: selectedToken.momentum?.buyPct ?? 50,
+          sellPct: selectedToken.momentum?.sellPct ?? 50,
+          priceUsd: 0,
+          hasSocials: selectedToken.hasSocials ?? false,
+          socialLinks: selectedToken.socialLinks || {},
+          devAddress: selectedToken.devAddress || '',
+          ammAddress: selectedToken.ammAddress || '',
+          timeSinceLaunchMins: selectedToken.timeSinceLaunchMins ?? 0,
+          isGraduated: fallbackProgress >= 100,
+          imageUri: selectedToken.imageUri,
+          isLegacy: selectedToken.isLegacy ?? false,
+        };
+
+        if (!isMounted) return;
+        resolvedOnceRef.current.add(detailKey);
+        setLiveMetrics((prev) => ({ ...prev, [detailKey]: fallbackMetrics }));
+        setSelectedToken((prev: any) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            bondingCurveProgress: fallbackProgress,
+            ethDeposited: fallbackMetrics.ethDeposited,
+            pairSymbol: fallbackMetrics.pairSymbol,
+          };
+        });
+      } catch (err) {
+        console.warn('[detail] on-chain hydration failed:', err);
+      } finally {
+        // Always lift the syncing state so the panel can never hang.
+        if (isMounted) setIsSyncingLive(false);
+      }
+    };
+
     const fetchLiveToken = () => {
       const detailKey = selectedToken.contractAddress.toLowerCase();
       // Only surface the "Syncing..." state on the FIRST load for this token.
@@ -728,18 +855,27 @@ export default function Home() {
       if (!resolvedOnceRef.current.has(detailKey)) {
         setIsSyncingLive(true);
       }
-      fetch(`/api/proxyVibe?address=${selectedToken.contractAddress}&t=${Date.now()}`, { cache: 'no-store' })
+      // Hard client-side ceiling: if the proxy hasn't answered in 5s we abort
+      // and hydrate from on-chain metrics rather than hanging on "SYNCING...".
+      const controller = new AbortController();
+      const clientTimeout = setTimeout(() => controller.abort(), 5000);
+      fetch(`/api/proxyVibe?address=${selectedToken.contractAddress}&t=${Date.now()}`, {
+        cache: 'no-store',
+        signal: controller.signal,
+      })
         .then(async res => {
           if (!isMounted) return;
 
           // Guard against error payloads (404/502/504). Parsing an error body
           // and feeding it to the normalizer would zero out every metric.
+          // Instead, hydrate from on-chain metrics so the panel still renders.
           if (!res.ok) {
             const body = await res.json().catch(() => null);
             console.warn(
               `[detail] proxyVibe ${res.status} for ${selectedToken.contractAddress}:`,
               body?.reason || body?.error || 'unknown'
             );
+            await hydrateFromOnChain();
             return;
           }
 
@@ -774,6 +910,15 @@ export default function Home() {
               }
             }
           );
+
+          // PARTIAL PAYLOAD: the proxy returned launch identity but market
+          // stats timed out upstream. The normalizer already degraded volume /
+          // market cap gracefully; additionally hydrate the curve progress from
+          // on-chain reserves so the telemetry panel shows real numbers.
+          if (json.data?.partial === true) {
+            console.warn(`[detail] partial payload for ${detailKey} — hydrating on-chain metrics`);
+            await hydrateFromOnChain();
+          }
 
           // Mark resolved so the card blur is lifted permanently and future
           // background refreshes never re-trigger the syncing state.
@@ -829,8 +974,16 @@ export default function Home() {
             },
           }));
         })
-        .catch(console.error)
+        .catch(async (err) => {
+          // Client timeout (AbortError) or network failure: hydrate from
+          // on-chain metrics so the panel renders real numbers instead of
+          // hanging on "SYNCING..." / "MC: ...".
+          const reason = err?.name === 'AbortError' ? 'client timeout (5s)' : err?.message || String(err);
+          console.warn(`[detail] proxyVibe fetch failed for ${detailKey}: ${reason}`);
+          await hydrateFromOnChain();
+        })
         .finally(() => {
+          clearTimeout(clientTimeout);
           // Only clear the syncing flag if this fetch was the initial load for
           // this token. Background refreshes never set it, so they must not
           // clear it either (avoids clobbering a concurrent initial load).

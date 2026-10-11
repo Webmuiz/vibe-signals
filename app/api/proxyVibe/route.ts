@@ -3,9 +3,10 @@ import { NextResponse } from 'next/server';
 // Upstream VibeVibe API base. Overridable so local dev can point elsewhere.
 const VIBE_API_BASE = process.env.VIBE_API_BASE || 'https://testnet.vibevibe.fun';
 
-// Per-request timeout. Local networks are often slow/blocked, so we fail fast
-// with a clear 504 instead of hanging until the platform kills the function.
-const UPSTREAM_TIMEOUT_MS = Number(process.env.VIBE_TIMEOUT_MS) || 8000;
+// Aggressive per-request timeout. Every upstream call is capped at 4s so the
+// total endpoint response can never exceed ~5s (4s fetch + JSON parse/serialize).
+// This is what keeps JIT search from hanging past the platform's 10s ceiling.
+const UPSTREAM_TIMEOUT_MS = Number(process.env.VIBE_TIMEOUT_MS) || 4000;
 
 // The ETH oracle is BEST-EFFORT only. It must never block the launch/market
 // response, so it gets its own short timeout and is raced against a fallback.
@@ -62,6 +63,23 @@ async function fetchWithTimeout(
   }
 }
 
+type FetchResult = Awaited<ReturnType<typeof fetchWithTimeout>>;
+
+/**
+ * Normalizes a `Promise.allSettled` entry into the same discriminated shape
+ * `fetchWithTimeout` returns, so a rejected promise (should never happen, but
+ * defensive) is treated as a network failure rather than crashing the route.
+ */
+function settleToResult(settled: PromiseSettledResult<FetchResult>): FetchResult {
+  if (settled.status === 'fulfilled') return settled.value;
+  return {
+    ok: false,
+    status: 502,
+    reason: 'network',
+    detail: settled.reason?.message || String(settled.reason),
+  };
+}
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const address = searchParams.get('address');
@@ -80,14 +98,18 @@ export async function GET(request: Request) {
     const launchUrl = `${VIBE_API_BASE}/api/v1/chains/46630/${path}/${address}`;
     const marketUrl = `${VIBE_API_BASE}/api/v1/chains/46630/${path}/${address}/market?limit=2`;
 
-    // Launch + market are REQUIRED. The ETH oracle is best-effort and is
-    // fetched with a short timeout so a slow/blocked Coinbase endpoint can
-    // never delay the real launch/market data the UI depends on.
-    const [launchRes, marketRes, ethRes] = await Promise.all([
+    // Launch + market + ETH oracle are fired CONCURRENTLY. `allSettled` means a
+    // single slow/failed upstream can never reject the whole batch — we inspect
+    // each result independently and degrade gracefully.
+    const [launchSettled, marketSettled, ethSettled] = await Promise.allSettled([
       fetchWithTimeout(launchUrl, UPSTREAM_TIMEOUT_MS),
       fetchWithTimeout(marketUrl, UPSTREAM_TIMEOUT_MS),
       fetchWithTimeout('https://api.coinbase.com/v2/prices/ETH-USD/spot', ORACLE_TIMEOUT_MS),
     ]);
+
+    const launchRes = settleToResult(launchSettled);
+    const marketRes = settleToResult(marketSettled);
+    const ethRes = settleToResult(ethSettled);
 
     if (!launchRes.ok) {
       // Log the EXACT upstream error for this path so local debugging is possible.
@@ -105,7 +127,17 @@ export async function GET(request: Request) {
     }
 
     const data = launchRes.json;
+
+    // PARTIAL PAYLOAD: launch succeeded but market stats timed out / failed.
+    // Return the primary launch data immediately rather than 504/500-ing the
+    // whole request. The client normalizer treats a missing `marketStats` as
+    // "no volume data" and falls back to on-chain/curve metrics.
     const marketData = marketRes.ok ? marketRes.json : null;
+    if (!marketRes.ok) {
+      console.warn(
+        `[proxyVibe] market stats ${marketRes.reason} on ${path} — returning partial launch payload: ${marketRes.detail}`
+      );
+    }
 
     let ethPriceUsd = FALLBACK_ETH_USD;
     if (ethRes.ok && ethRes.json?.data?.amount) {
@@ -121,6 +153,9 @@ export async function GET(request: Request) {
       data.data.marketTrades = marketData?.data?.trades || [];
       data.data.ethPriceUsd = ethPriceUsd;
       data.data.apiVersion = path;
+      // Signal to the client that market telemetry is degraded so it can
+      // hydrate from on-chain metrics instead of waiting on a spinner.
+      data.data.partial = !marketRes.ok;
     }
 
     return NextResponse.json(data);

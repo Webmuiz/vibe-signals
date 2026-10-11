@@ -48,7 +48,12 @@ export default function LiveTelemetryPanel({
         <div className="flex justify-between text-xs mb-2">
           <span className="text-zinc-400">{bondingCurveProgress >= 100 ? 'Status' : `Bonding Curve Progress (${ethDeposited} ${pairSymbol})`}</span>
           <div className="flex gap-3">
-            <span className="text-zinc-400 font-mono">MC: {isSyncingLive ? <span className="animate-pulse">...</span> : formatCompactUsd(marketCapUsd)}</span>
+            {/* Only show the "..." placeholder while we have NO market cap at
+                all. Once a fallback value (even $0.00) is available we render
+                it immediately so the panel never hangs on "MC: ...". */}
+            <span className="text-zinc-400 font-mono">
+              MC: {isSyncingLive && !marketCapUsd ? <span className="animate-pulse">...</span> : formatCompactUsd(marketCapUsd)}
+            </span>
             <span className={bondingCurveProgress >= 100 ? "text-amber-400 font-bold" : "text-emerald-400 font-bold"}>
               {bondingCurveProgress >= 100 ? 'Graduated 🚀' : `${bondingCurveProgress.toFixed(1)}%`}
             </span>
@@ -68,7 +73,13 @@ export default function LiveTelemetryPanel({
       <div>
         <div className="flex justify-between text-xs mb-2">
           <span className="text-zinc-400 uppercase tracking-wider font-bold">24H MOMENTUM</span>
-          <span className="text-zinc-500">24H Volume: {isSyncingLive ? <span className="animate-pulse">...</span> : (momentum?.volumeUsd || volumeUsd ? formatCompactUsd(momentum?.volumeUsd ?? volumeUsd) : `${momentum?.volumeEth || volumeEth || '0.0000'} ${pairSymbol}`)}</span>
+          <span className="text-zinc-500">
+            24H Volume: {isSyncingLive && !momentum?.volumeUsd && !volumeUsd && !momentum?.volumeEth && !volumeEth
+              ? <span className="animate-pulse">...</span>
+              : (momentum?.volumeUsd || volumeUsd
+                ? formatCompactUsd(momentum?.volumeUsd ?? volumeUsd)
+                : `${momentum?.volumeEth || volumeEth || '0.0000'} ${pairSymbol}`)}
+          </span>
         </div>
         <div className="flex justify-between text-xs mb-2">
           <span className="text-emerald-400 font-bold">{momentum?.buyPct ?? 50}% Buys</span>
