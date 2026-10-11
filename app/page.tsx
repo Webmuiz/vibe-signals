@@ -10,7 +10,7 @@ import SafetyAuditPanel from "@/components/ui/SafetyAuditPanel";
 import DeveloperProfilerPanel from "@/components/ui/DeveloperProfilerPanel";
 import CabalDetectorPanel from "@/components/ui/CabalDetectorPanel";
 import LiveTelemetryPanel from "@/components/ui/LiveTelemetryPanel";
-import RadarHeader from "@/components/ui/RadarHeader";
+import RadarHeader, { type RadarFilter } from "@/components/ui/RadarHeader";
 import TradingTerminal from "@/components/ui/TradingTerminal";
 import {
   shortenAddress,
@@ -237,7 +237,7 @@ export default function Home() {
   const { sendTransaction, isPending: isTxPending, data: hash, reset: resetSendTransaction } = useSendTransaction();
   const { data: receipt, isLoading: isTxWaiting, isSuccess: isTxSuccess } = useWaitForTransactionReceipt({ hash });
 
-  const [activeFilter, setActiveFilter] = useState<"all" | "alpha" | "graduating" | "risk">("all");
+  const [activeFilter, setActiveFilter] = useState<RadarFilter>("all");
   const [dbTokens, setDbTokens] = useState<DBToken[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedToken, setSelectedToken] = useState<any | null>(null);
@@ -662,6 +662,19 @@ export default function Home() {
         isSerialDumper: false,
       };
 
+      // Developer discipline stats. `totalPreGradDumps` is only known once the
+      // profiler resolves for a token; grid rows default to 0 (no known dumps)
+      // so the "Clean Devs" / "High Risk" filters never fabricate a risk.
+      const totalPreGradDumps = Number(
+        (db as any).total_pre_grad_dumps ?? (db as any).totalPreGradDumps ?? 0
+      );
+      const devStats = {
+        launches: devProfile.launches,
+        gradRate: devProfile.gradRate,
+        totalPreGradDumps,
+        isSerialDumper: totalPreGradDumps > 0,
+      };
+
       return {
         id: (db.launch_id || db.launchId || "0").toString(),
         name: live?.name || db.name || "Unknown",
@@ -678,6 +691,7 @@ export default function Home() {
         diamondHandsHoldersPct: diamond,
         totalSupply: 1000000000,
         creatorHoldingPct,
+        top5Pct,
         cachedMarketCapFormatted: db.cachedMarketCapFormatted,
         // Real, API-derived market cap + volume (same values the detail view shows).
         marketCapUsd: live?.marketCapUsd,
@@ -686,6 +700,7 @@ export default function Home() {
         score: calculateVibeScore(vibeParams),
         hasSocials: hasSocials,
         devProfile,
+        devStats,
         safetyChecks: getSafetyChecks(0, hasSocials, null),
         momentum: {
           buyPct,
@@ -702,11 +717,26 @@ export default function Home() {
       const query = searchQuery.trim().toLowerCase();
       list = list.filter(token => token.contractAddress.toLowerCase().includes(query));
     }
+    // Preset filter tabs. These are pure, in-memory predicates over the already
+    // processed token list — switching tabs never triggers a data refetch, so
+    // the grid updates instantly.
     switch (activeFilter) {
-      case "alpha": return list.filter(t => t.score >= 70);
-      case "graduating": return list.filter(t => t.bondingCurveProgress >= 85);
-      case "risk": return list.filter(t => (t.momentum.sellPct >= 60 && Number(t.momentum.volumeEth) > 0.01) || t.blockZeroBuyers > 15 || t.score < 30);
-      default: return list;
+      case "alpha":
+        // High Alpha: strong Vibe Score.
+        return list.filter(t => t.score >= 70);
+      case "graduating":
+        // Graduating Soon: on the curve and close to (but not yet) graduated.
+        return list.filter(t => t.bondingCurveProgress > 85 && t.bondingCurveProgress < 100);
+      case "clean":
+        // Clean Devs: creator holds nothing AND the dev has never dumped a
+        // pre-graduation token.
+        return list.filter(t => t.creatorHoldingPct === 0 && t.devStats.totalPreGradDumps === 0);
+      case "risk":
+        // High Risk / Sniped: concentrated top-5 supply OR a dev with a
+        // pre-graduation dump history.
+        return list.filter(t => t.top5Pct > 40 || t.devStats.totalPreGradDumps > 0);
+      default:
+        return list;
     }
   }, [processedTokens, activeFilter, searchQuery]);
 
@@ -1464,6 +1494,32 @@ export default function Home() {
     });
   }, [selectedToken, creatorHoldingPct, top5Pct, devStats]);
 
+  // Critical-risk evaluation for the detail drawer. Each entry is a fully
+  // formatted, human-readable warning derived from REAL data only — no
+  // fabricated risks. The banner renders when at least one condition fires.
+  const criticalRisks = useMemo<string[]>(() => {
+    if (!selectedToken) return [];
+    const risks: string[] = [];
+
+    // Condition 1: creator holds a dangerous share of supply.
+    if (creatorHoldingPct > 15) {
+      risks.push(`🚨 HIGH RISK: Creator holds ${creatorHoldingPct.toFixed(1)}% of total supply.`);
+    }
+
+    // Condition 2: top-5 wallets control a dangerous share of supply.
+    if (top5Pct > 40) {
+      risks.push(`🚨 CABAL WARNING: Top 5 wallets control ${top5Pct.toFixed(1)}% of supply.`);
+    }
+
+    // Condition 3: the developer has dumped a past token pre-graduation.
+    const dumps = Number((selectedToken as any).totalPreGradDumps ?? 0);
+    if (dumps > 0) {
+      risks.push(`🚨 SERIAL DUMPER: Dev dumped ${dumps} past token${dumps > 1 ? 's' : ''} before graduation.`);
+    }
+
+    return risks;
+  }, [selectedToken, creatorHoldingPct, top5Pct]);
+
   let devBadgeText = "NEUTRAL / UNPROVEN";
   let devBadgeColor = "text-zinc-500 border-zinc-700 bg-zinc-900";
 
@@ -1525,6 +1581,17 @@ export default function Home() {
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               <div className="lg:col-span-2 space-y-6">
+
+                {criticalRisks.length > 0 && (
+                  <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-3 rounded-lg mb-4 flex items-center gap-2 text-sm">
+                    <span className="text-lg leading-none">⚠️</span>
+                    <div className="flex flex-col gap-1">
+                      {criticalRisks.map((risk, i) => (
+                        <span key={i} className="font-bold">{risk}</span>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 <LiveTelemetryPanel
                   isSyncingLive={isSyncingLive}

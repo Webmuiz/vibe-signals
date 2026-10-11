@@ -1,6 +1,6 @@
 import React from "react";
 
-export type RadarFilter = "all" | "alpha" | "graduating" | "risk";
+export type RadarFilter = "all" | "alpha" | "graduating" | "clean" | "risk";
 
 interface RadarHeaderProps {
   searchQuery: string;
@@ -41,6 +41,9 @@ export default function RadarHeader({
         </button>
         <button onClick={() => onFilterChange("graduating")} className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${activeFilter === "graduating" ? "bg-blue-500/20 text-blue-400 border border-blue-500/30" : "text-zinc-500 hover:text-blue-400 hover:bg-blue-500/10"}`}>
           Graduating Soon ({'>'}85%)
+        </button>
+        <button onClick={() => onFilterChange("clean")} className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${activeFilter === "clean" ? "bg-cyan-500/20 text-cyan-400 border border-cyan-500/30" : "text-zinc-500 hover:text-cyan-400 hover:bg-cyan-500/10"}`}>
+          Clean Devs
         </button>
         <button onClick={() => onFilterChange("risk")} className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${activeFilter === "risk" ? "bg-red-500/20 text-red-400 border border-red-500/30" : "text-zinc-500 hover:text-red-400 hover:bg-red-500/10"}`}>
           High Risk / Sniped
