@@ -5,6 +5,256 @@ export function shortenAddress(address: string) {
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
 }
 
+/**
+ * Canonical, normalized market metrics for a single token.
+ * This is the SINGLE SOURCE OF TRUTH consumed by both the homepage
+ * TokenCard grid and the "Analyse Alpha" detail view.
+ */
+export interface LiveTokenMetrics {
+  contractAddress: string;
+  name: string;
+  ticker: string;
+  symbol: string;
+  pairSymbol: string;
+  bondingCurveProgress: number;
+  ethDeposited: string;
+  marketCapUsd: string;
+  marketCapRaw: number;
+  volumeEth: string;
+  volumeUsd: string;
+  buyPct: number;
+  sellPct: number;
+  priceUsd: number;
+  hasSocials: boolean;
+  socialLinks: Record<string, string>;
+  devAddress: string;
+  ammAddress: string;
+  timeSinceLaunchMins: number;
+  isGraduated: boolean;
+  imageUri?: string;
+  isLegacy: boolean;
+}
+
+/**
+ * Raw shape of the `/api/proxyVibe` JSON payload (loosely typed on purpose —
+ * the upstream VibeVibe API is versioned and fields vary across v5/v6/legacy).
+ */
+export interface RawVibeResponse {
+  apiVersion?: string;
+  data?: {
+    launch?: any;
+    tokenAddress?: string;
+    feeEvents?: any[];
+    marketStats?: any;
+    marketTrades?: any[];
+    ethPriceUsd?: number;
+    [key: string]: any;
+  };
+  [key: string]: any;
+}
+
+const ERC20_SYMBOL_ABI = [
+  { name: 'symbol', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'string' }] },
+] as const;
+
+/**
+ * Normalizes a raw `/api/proxyVibe` response into a single canonical
+ * `LiveTokenMetrics` object. Both the homepage card and the detail view
+ * MUST derive their displayed numbers from this function so they can never
+ * disagree.
+ *
+ * @param json       Raw JSON returned by `/api/proxyVibe`.
+ * @param liveRates  Global oracle rates (symbol/address -> USD).
+ * @param fallback   Optional prior token state to fill gaps (e.g. name/ticker).
+ * @param resolveSymbol  Optional async resolver for on-chain pair symbols.
+ */
+export async function normalizeVibeResponse(
+  json: RawVibeResponse,
+  liveRates: Record<string, number>,
+  fallback?: Partial<LiveTokenMetrics> & { contractAddress?: string },
+  resolveSymbol?: (address: string) => Promise<string | null>
+): Promise<LiveTokenMetrics> {
+  const launch = json?.data?.launch || (json?.data?.tokenAddress ? json.data : null) || {};
+  const stats = json?.data?.marketStats;
+  const feeEvents = json?.data?.feeEvents || [];
+
+  const contractAddress = (launch.tokenAddress || fallback?.contractAddress || '').toLowerCase();
+
+  // --- Pair symbol resolution ---
+  let pairSymbol: string = launch.pairSymbol || fallback?.pairSymbol || '';
+  if (!pairSymbol) {
+    if (launch.pairIsNative || launch.pairCurrencyAddress === '0x0000000000000000000000000000000000000000') {
+      pairSymbol = 'ETH';
+    } else if (launch.pairCurrencyAddress && resolveSymbol) {
+      pairSymbol = (await resolveSymbol(launch.pairCurrencyAddress)) || 'TOKEN';
+    } else {
+      pairSymbol = 'ETH';
+    }
+  }
+
+  // --- Decimals for synthetic pairs (e.g. USDG = 6) ---
+  const targetRaw = Number(launch.targetPairUnits || launch.curve?.netTargetWei || 4e18);
+  const currentRaw = Number(launch.curve?.pairReserveUnits || launch.curve?.netRaisedWei || 0);
+  const pDecimals = targetRaw > 0 && targetRaw < 1e14 ? 6 : 18;
+  const pDivisor = Math.pow(10, pDecimals);
+
+  // --- Graduation detection ---
+  const isGraduated =
+    launch.lifecycle === 'GRADUATED' ||
+    launch.graduated === true ||
+    launch.curve?.lifecycle === 'GRADUATED' ||
+    !!launch.graduation ||
+    !!launch.poolAddress ||
+    !!launch.graduationPoolAddress ||
+    !!launch.pool?.address ||
+    (fallback?.bondingCurveProgress ?? 0) >= 100;
+
+  const currentPairUnits = currentRaw / pDivisor;
+  const targetPairUnits = targetRaw / pDivisor;
+
+  let bondingCurveProgress = isGraduated
+    ? 100
+    : launch.curve?.progressBps != null
+      ? launch.curve.progressBps / 100
+      : Math.min(100, Math.max(0, (currentPairUnits / targetPairUnits) * 100));
+  if (!isGraduated && bondingCurveProgress > 0 && bondingCurveProgress < 0.1) {
+    bondingCurveProgress = 0.1;
+  }
+  const ethDeposited = isGraduated
+    ? 'Graduated'
+    : `${currentPairUnits.toFixed(4)} / ${targetPairUnits.toFixed(1)}`;
+
+  // --- USD rate for the pair ---
+  const liveEthPrice = Number(json?.data?.ethPriceUsd) || liveRates['ETH'] || 2416;
+  const pairAddr = (launch.pairCurrencyAddress || '').toLowerCase();
+  const isNative = !pairAddr || pairAddr === '0x0000000000000000000000000000000000000000';
+  let usdRate = liveEthPrice;
+  if (!isNative && pairAddr && liveRates[pairAddr]) {
+    usdRate = liveRates[pairAddr];
+  } else {
+    usdRate = getUsdRateForPair(pairSymbol, { ...liveRates, ETH: liveEthPrice, WETH: liveEthPrice });
+  }
+
+  // --- Market cap (real price first, synthetic only as last resort) ---
+  const directPriceUsd =
+    launch.priceUsd || launch.analytics?.priceUsd || launch.curve?.priceUsd || stats?.priceUsd;
+  let lastPriceWei =
+    stats?.priceWeiPerToken || stats?.lastPriceWeiPerToken || launch.analytics?.lastPriceWeiPerToken || 0;
+  if ((!lastPriceWei || Number(lastPriceWei) === 0) && json?.data?.marketTrades?.[0]) {
+    lastPriceWei = json.data.marketTrades[0].executionPricePairUnitsPerToken;
+  }
+
+  let marketCapRaw = 0;
+  let priceUsd = 0;
+  if (directPriceUsd && Number(directPriceUsd) > 0) {
+    priceUsd = Number(directPriceUsd);
+    marketCapRaw = priceUsd * 1_000_000_000;
+  } else if (Number(lastPriceWei) > 0) {
+    const pricePairUnits = Number(lastPriceWei) / pDivisor;
+    priceUsd = usdRate > 0 ? pricePairUnits * usdRate : 0;
+    marketCapRaw = usdRate > 0 ? pricePairUnits * 1_000_000_000 * usdRate : 0;
+  } else {
+    // Explicit synthetic estimate — flagged by the caller via `priceUsd === 0`.
+    marketCapRaw = calculateTokenMetrics(bondingCurveProgress, currentPairUnits, pairSymbol, liveRates).marketCapRaw;
+  }
+
+  const marketCapUsd =
+    marketCapRaw > 0
+      ? marketCapRaw.toLocaleString('en-US', { style: 'currency', currency: 'USD' })
+      : '$0.00';
+
+  // --- Volume + buy/sell momentum ---
+  let volumeEth = '0.0000';
+  let buyPct = 50;
+  let sellPct = 50;
+
+  if (stats) {
+    const buyVol = Number(stats.buyVolume24hPairUnits || 0) / pDivisor;
+    const sellVol = Number(stats.sellVolume24hPairUnits || 0) / pDivisor;
+    const totalVol = buyVol + sellVol;
+    if (totalVol > 0) {
+      volumeEth = totalVol.toFixed(4);
+      buyPct = Math.round((buyVol / totalVol) * 100);
+      sellPct = 100 - buyPct;
+    }
+  } else if (launch.analytics) {
+    const volWei = Number(launch.analytics.volume24hWei || 0);
+    if (volWei > 0) volumeEth = (volWei / pDivisor).toFixed(4);
+    const buys = Number(launch.analytics.buyCount1h || 0);
+    const sells = Number(launch.analytics.sellCount1h || 0);
+    const totalTrades = buys + sells;
+    if (totalTrades > 0) {
+      buyPct = Math.round((buys / totalTrades) * 100);
+      sellPct = 100 - buyPct;
+    }
+  } else if (feeEvents.length > 0) {
+    let buyVolume = 0;
+    let sellVolume = 0;
+    feeEvents.forEach((ev: any) => {
+      const eth = Number(ev.pairPrincipalUnits || 0) / 1e18;
+      if (ev.side === 'BUY' || ev.source === 'CURVE_BUY' || ev.source === 'INITIAL_PURCHASE') {
+        buyVolume += eth;
+      } else if (ev.side === 'SELL' || ev.source === 'CURVE_SELL') {
+        sellVolume += eth;
+      }
+    });
+    const totalVol = buyVolume + sellVolume;
+    if (totalVol > 0) {
+      volumeEth = totalVol.toFixed(4);
+      buyPct = Math.round((buyVolume / totalVol) * 100);
+      sellPct = 100 - buyPct;
+    }
+  }
+
+  const volumeUsd =
+    Number(volumeEth) > 0 && usdRate > 0
+      ? (Number(volumeEth) * usdRate).toLocaleString('en-US', { style: 'currency', currency: 'USD' })
+      : Number(volumeEth) > 0
+        ? `${volumeEth} ${pairSymbol}`
+        : '$0.00';
+
+  // --- Socials ---
+  const socials = launch.content?.socials || {};
+  const hasSocials = !!(socials.x || socials.telegram || socials.website);
+
+  // --- Time live ---
+  const createdMs = new Date(launch.createdAt || Date.now()).getTime();
+  const timeSinceLaunchMins = isNaN(createdMs)
+    ? fallback?.timeSinceLaunchMins ?? 0
+    : Math.max(0, Math.floor((Date.now() - createdMs) / 60000));
+
+  const imageUri = launch.content?.image?.uri?.startsWith('ipfs://')
+    ? launch.content.image.uri.replace('ipfs://', 'https://ipfs.io/ipfs/')
+    : launch.content?.image?.uri;
+
+  return {
+    contractAddress,
+    name: launch.name || fallback?.name || 'Unknown',
+    ticker: launch.symbol || fallback?.ticker || 'TKN',
+    symbol: launch.symbol || fallback?.symbol || '',
+    pairSymbol,
+    bondingCurveProgress,
+    ethDeposited,
+    marketCapUsd,
+    marketCapRaw,
+    volumeEth,
+    volumeUsd,
+    buyPct,
+    sellPct,
+    priceUsd,
+    hasSocials,
+    socialLinks: socials,
+    devAddress: launch.launcherAddress || launch.creatorAddress || fallback?.devAddress || '',
+    ammAddress: launch.curveAddress || fallback?.ammAddress || '',
+    timeSinceLaunchMins,
+    isGraduated,
+    imageUri,
+    isLegacy: json?.apiVersion === '1' || (!json?.data?.launch && !!json?.data?.tokenAddress),
+  };
+}
+
+export { ERC20_SYMBOL_ABI };
+
 export function formatTimeLive(totalMinutes: number) {
   if (!totalMinutes && totalMinutes !== 0) return '0m';
   if (totalMinutes < 60) return `${totalMinutes}m`;

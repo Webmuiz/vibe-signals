@@ -17,6 +17,16 @@ export interface TokenCardData {
   timeSinceLaunchMins: number;
   score: number;
   cachedMarketCapFormatted?: string;
+  /**
+   * Real, API-derived market cap (formatted USD string). When present this is
+   * the SAME value the "Analyse Alpha" detail view shows. When absent the card
+   * falls back to a clearly-marked synthetic estimate.
+   */
+  marketCapUsd?: string;
+  /** True when `marketCapUsd` is a synthetic estimate rather than real price data. */
+  marketCapIsEstimate?: boolean;
+  /** Real, API-derived 24h volume in USD (formatted string). */
+  volumeUsd?: string;
   momentum?: {
     buyPct?: number;
     sellPct?: number;
@@ -114,15 +124,23 @@ export default function TokenCard({
         <div className="border border-zinc-800 bg-zinc-950/50 rounded-lg p-4 mb-4">
           <div className="grid grid-cols-3 gap-2 text-center divide-x divide-zinc-800/50">
             <div>
-              <span className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider block mb-1">M.Cap (Est)</span>
+              <span className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider block mb-1">
+                {token.marketCapIsEstimate ? 'M.Cap (Est)' : 'M.Cap'}
+              </span>
               <span className="text-sm font-bold text-zinc-300">
-                {token.cachedMarketCapFormatted || calculateTokenMetrics(token.bondingCurveProgress, token.ethDeposited, token.pairSymbol, liveRates).marketCapFormatted}
+                {token.marketCapUsd
+                  ? `${token.marketCapIsEstimate ? '~' : ''}${token.marketCapUsd}`
+                  : token.cachedMarketCapFormatted
+                    ? token.cachedMarketCapFormatted
+                    : `~${calculateTokenMetrics(token.bondingCurveProgress, token.ethDeposited, token.pairSymbol, liveRates).marketCapFormatted}`}
               </span>
             </div>
             <div>
               <span className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider block mb-1">24H Vol</span>
               <span className="text-sm font-bold text-zinc-300">
-                ${(Number(token.momentum?.volumeEth || 0) * getUsdRateForPair(token.pairSymbol, liveRates)).toLocaleString('en-US', { maximumFractionDigits: 0 })}
+                {token.volumeUsd
+                  ? token.volumeUsd
+                  : `$${(Number(token.momentum?.volumeEth || 0) * getUsdRateForPair(token.pairSymbol, liveRates)).toLocaleString('en-US', { maximumFractionDigits: 0 })}`}
               </span>
             </div>
             <div className="pl-1">

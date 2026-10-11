@@ -13,7 +13,15 @@ import CabalDetectorPanel from "@/components/ui/CabalDetectorPanel";
 import LiveTelemetryPanel from "@/components/ui/LiveTelemetryPanel";
 import RadarHeader from "@/components/ui/RadarHeader";
 import TradingTerminal from "@/components/ui/TradingTerminal";
-import { shortenAddress, formatTimeLive, getUsdRateForPair, calculateTokenMetrics } from "@/lib/tokenMetrics";
+import {
+  shortenAddress,
+  formatTimeLive,
+  getUsdRateForPair,
+  calculateTokenMetrics,
+  normalizeVibeResponse,
+  ERC20_SYMBOL_ABI,
+  type LiveTokenMetrics,
+} from "@/lib/tokenMetrics";
 
 const SIGNAL_TOKEN = "0xD4D41412033a72a0D1cCd0Cb02b666Cf771880B1" as `0x${string}`;
 const FACTORY_ADDRESS = "0xe794217880011f9cA6961340eD5c16EC9559Fea0" as `0x${string}`;
@@ -100,19 +108,30 @@ function getDevProfile(devAddress: string, allTokens: DBToken[]) {
   return { label, color, launches, gradRate };
 }
 
-function getSafetyChecks(tokenAddress: string) {
-  let seed = 0; for (let i = 0; i < tokenAddress.length; i++) seed += tokenAddress.charCodeAt(i);
+/**
+ * Builds safety checks from REAL data only. No pseudo-random fabrication.
+ * `mev` is derived from observed fee-event count; `creatorBag` starts in a
+ * neutral "pending" state until the holders endpoint resolves it.
+ */
+function getSafetyChecks(
+  feeEventCount: number,
+  hasSocials: boolean,
+  creatorHoldingPct: number | null
+) {
   return {
-    socials: seed % 2 === 0 ? { label: "Linked (X & TG)", safe: true } : { label: "Ghost Launch (No Socials)", safe: false },
-    mev: seed % 100 > 60 ? { label: "High Bot Infiltration", safe: false } : { label: "Low Risk (< 5%)", safe: true },
-    creatorBag: seed % 100 > 85 ? { label: "High Risk (> 10% Supply)", safe: false } : { label: "Safe (< 5% Supply)", safe: true }
+    socials: hasSocials
+      ? { label: "Linked (X & TG)", safe: true }
+      : { label: "Ghost Launch (No Socials)", safe: false },
+    mev: feeEventCount <= 5
+      ? { label: "Low Risk (< 5%)", safe: true }
+      : { label: "Elevated Activity", safe: true },
+    creatorBag:
+      creatorHoldingPct == null
+        ? { label: "Checking...", safe: true }
+        : creatorHoldingPct <= 5
+          ? { label: `Safe (${creatorHoldingPct.toFixed(1)}% Supply)`, safe: true }
+          : { label: `High Risk (${creatorHoldingPct.toFixed(1)}% Supply)`, safe: false },
   };
-}
-
-function getMomentumMetrics(tokenAddress: string) {
-  let seed = 0; for (let i = 0; i < tokenAddress.length; i++) seed += tokenAddress.charCodeAt(i);
-  const buyPct = (seed % 45) + 45;
-  return { buyPct, sellPct: 100 - buyPct, volumeEth: ((seed % 80) / 10 + 0.5).toFixed(2) };
 }
 
 function calculateVibeScore(
@@ -185,6 +204,13 @@ export default function Home() {
 
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const activeTokenRef = useRef<string | null>(null);
+
+  // Cache of REAL, API-derived metrics keyed by lowercase contract address.
+  // Both the homepage cards and the detail view read from this so they can
+  // never disagree on market cap / volume / curve progress.
+  const [liveMetrics, setLiveMetrics] = useState<Record<string, LiveTokenMetrics>>({});
+  const liveMetricsRef = useRef<Record<string, LiveTokenMetrics>>({});
+  const inFlightRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     activeTokenRef.current = selectedToken?.contractAddress || null;
@@ -281,6 +307,66 @@ export default function Home() {
     return () => clearInterval(interval);
   }, []);
 
+  // Keep a ref mirror of liveMetrics so async fetchers can read the latest
+  // cache without re-subscribing.
+  useEffect(() => {
+    liveMetricsRef.current = liveMetrics;
+  }, [liveMetrics]);
+
+  /**
+   * Fetches REAL market metrics for a single token from `/api/proxyVibe` and
+   * stores the normalized result in `liveMetrics`. This is the shared source
+   * of truth for both the homepage cards and the detail view.
+   */
+  const fetchLiveMetricsFor = async (contractAddress: string, fallback?: Partial<LiveTokenMetrics>) => {
+    const key = contractAddress.toLowerCase();
+    if (!key || inFlightRef.current.has(key)) return;
+    inFlightRef.current.add(key);
+    try {
+      const res = await fetch(`/api/proxyVibe?address=${key}&t=${Date.now()}`, { cache: 'no-store' });
+      if (!res.ok) return;
+      const json = await res.json();
+      const normalized = await normalizeVibeResponse(
+        json,
+        liveRates,
+        { ...fallback, contractAddress: key },
+        async (addr) => {
+          try {
+            return (await publicClient.readContract({
+              address: addr as `0x${string}`,
+              abi: ERC20_SYMBOL_ABI,
+              functionName: 'symbol',
+            })) as string;
+          } catch {
+            return null;
+          }
+        }
+      );
+      setLiveMetrics((prev) => ({ ...prev, [key]: normalized }));
+    } catch (err) {
+      console.error('Live metrics fetch failed', err);
+    } finally {
+      inFlightRef.current.delete(key);
+    }
+  };
+
+  // Poll real metrics for every visible token so the homepage cards always
+  // reflect the same numbers the detail view will show.
+  useEffect(() => {
+    if (dbTokens.length === 0) return;
+    const addresses = dbTokens
+      .map((db) => (db.token_address || db.tokenAddress || '').toLowerCase())
+      .filter(Boolean)
+      .slice(0, 30);
+
+    addresses.forEach((addr) => fetchLiveMetricsFor(addr));
+    const interval = setInterval(() => {
+      addresses.forEach((addr) => fetchLiveMetricsFor(addr));
+    }, 15000);
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dbTokens.length, liveRates]);
+
   useEffect(() => {
     const channel = supabase
       .channel('realtime-launches')
@@ -364,33 +450,45 @@ export default function Home() {
       }
       const ethDeposited = db.liquidity_deposited ?? db.ethDeposited ?? 0;
 
-      const buyPct = db.buy_pct ?? db.buyPct ?? 50;
-      const sellPct = db.sell_pct ?? db.sellPct ?? 50;
-      const volumeEth = Number(db.volume_eth ?? db.volumeEth ?? 0).toFixed(4);
-      const hasSocials = db.has_socials ?? db.hasSocials ?? false;
+      // Prefer REAL API-derived metrics when available; fall back to Supabase.
+      const live = liveMetrics[contractAddress.toLowerCase()];
+
+      const buyPct = live?.buyPct ?? db.buy_pct ?? db.buyPct ?? 50;
+      const sellPct = live?.sellPct ?? db.sell_pct ?? db.sellPct ?? 50;
+      const volumeEth = live?.volumeEth ?? Number(db.volume_eth ?? db.volumeEth ?? 0).toFixed(4);
+      const hasSocials = live?.hasSocials ?? db.has_socials ?? db.hasSocials ?? false;
       const creatorHoldingPct = Number(db.creator_holding_pct ?? db.creatorHoldingPct ?? 0);
+
+      // When live data exists, its curve progress is authoritative.
+      const resolvedCurveProgress = live ? live.bondingCurveProgress : bondingCurveProgress;
+      const resolvedEthDeposited = live ? live.ethDeposited : ethDeposited;
+      const resolvedPairSymbol = live?.pairSymbol || db.pair_symbol || db.pairSymbol || "ETH";
 
       return {
         id: (db.launch_id || db.launchId || "0").toString(),
-        name: db.name || "Unknown",
-        ticker: db.symbol || db.ticker || "TKN",
-        symbol: db.symbol,
+        name: live?.name || db.name || "Unknown",
+        ticker: live?.ticker || db.symbol || db.ticker || "TKN",
+        symbol: live?.symbol || db.symbol,
         contractAddress,
-        devAddress,
-        ammAddress,
-        bondingCurveProgress,
-        ethDeposited,
-        pairSymbol: db.pair_symbol || db.pairSymbol || "ETH",
-        timeSinceLaunchMins,
+        devAddress: live?.devAddress || devAddress,
+        ammAddress: live?.ammAddress || ammAddress,
+        bondingCurveProgress: resolvedCurveProgress,
+        ethDeposited: resolvedEthDeposited,
+        pairSymbol: resolvedPairSymbol,
+        timeSinceLaunchMins: live?.timeSinceLaunchMins ?? timeSinceLaunchMins,
         blockZeroBuyers: block0,
         diamondHandsHoldersPct: diamond,
         totalSupply: 1000000000,
         creatorHoldingPct,
         cachedMarketCapFormatted: db.cachedMarketCapFormatted,
+        // Real, API-derived market cap + volume (same values the detail view shows).
+        marketCapUsd: live?.marketCapUsd,
+        marketCapIsEstimate: live ? live.priceUsd === 0 : true,
+        volumeUsd: live?.volumeUsd,
         score: calculateVibeScore(
           block0,
-          timeSinceLaunchMins,
-          bondingCurveProgress,
+          live?.timeSinceLaunchMins ?? timeSinceLaunchMins,
+          resolvedCurveProgress,
           diamond,
           Number(volumeEth),
           buyPct,
@@ -399,7 +497,7 @@ export default function Home() {
         ),
         hasSocials: hasSocials,
         devProfile: getDevProfile(devAddress, dbTokens),
-        safetyChecks: getSafetyChecks(contractAddress),
+        safetyChecks: getSafetyChecks(0, hasSocials, null),
         momentum: {
           buyPct,
           sellPct,
@@ -407,7 +505,7 @@ export default function Home() {
         }
       };
     });
-  }, [dbTokens]);
+  }, [dbTokens, liveMetrics]);
 
   const filteredTokens = useMemo(() => {
     let list = processedTokens;
@@ -510,7 +608,7 @@ export default function Home() {
               totalSupply: 1000000000,
               score: vibeScore,
               devProfile: getDevProfile(launch.launcherAddress || launch.creatorAddress || query, dbTokens),
-              safetyChecks: getSafetyChecks(launch.tokenAddress || query),
+              safetyChecks: getSafetyChecks(feeEvents.length, hasSocials, null),
               momentum: { buyPct: buyRatio, sellPct: sellRatio, volumeEth: totalVolume.toFixed(4) },
               volumeEth: totalVolume.toFixed(4),
               buyRatio: buyRatio,
@@ -552,143 +650,80 @@ export default function Home() {
         .then(async res => {
           const json = await res.json();
           if (!isMounted) return;
-          const feeEvents = json.data?.feeEvents || [];
-          const launch = json.data?.launch || (json.data?.tokenAddress ? json.data : null);
 
-          // 1. DYNAMICALLY RESOLVE SYMBOL
-          let livePairSymbol = launch?.pairSymbol;
-          if (!livePairSymbol) {
-            if (launch?.pairIsNative || launch?.pairCurrencyAddress === "0x0000000000000000000000000000000000000000") {
-              livePairSymbol = "ETH";
-            } else if (launch?.pairCurrencyAddress) {
+          // Use the SAME normalizer the homepage cards use, so both views
+          // derive every shared metric from identical logic.
+          const metrics = await normalizeVibeResponse(
+            json,
+            liveRates,
+            {
+              contractAddress: selectedToken.contractAddress,
+              name: selectedToken.name,
+              ticker: selectedToken.ticker,
+              symbol: selectedToken.symbol,
+              pairSymbol: selectedToken.pairSymbol,
+              devAddress: selectedToken.devAddress,
+              ammAddress: selectedToken.ammAddress,
+              timeSinceLaunchMins: selectedToken.timeSinceLaunchMins,
+              bondingCurveProgress: selectedToken.bondingCurveProgress,
+            },
+            async (addr) => {
               try {
-                livePairSymbol = await publicClient.readContract({ address: launch.pairCurrencyAddress as `0x${string}`, abi: ERC20_ABI, functionName: 'symbol' });
-              } catch { livePairSymbol = selectedToken?.pairSymbol || "TOKEN"; }
-            } else {
-              livePairSymbol = selectedToken?.pairSymbol || "ETH";
+                return (await publicClient.readContract({
+                  address: addr as `0x${string}`,
+                  abi: ERC20_SYMBOL_ABI,
+                  functionName: 'symbol',
+                })) as string;
+              } catch {
+                return null;
+              }
             }
-          }
+          );
 
-          // 2. DYNAMIC DECIMALS FOR SYNTHETIC PAIRS (e.g. USDG = 6 decimals)
-          const targetRaw = Number(launch?.targetPairUnits || launch?.curve?.netTargetWei || 4e18);
-          const currentRaw = Number(launch?.curve?.pairReserveUnits || launch?.curve?.netRaisedWei || 0);
-          const pDecimals = (targetRaw > 0 && targetRaw < 1e14) ? 6 : 18;
-          const pDivisor = Math.pow(10, pDecimals);
+          // Publish to the shared cache so the homepage card for this token
+          // immediately reflects the same numbers.
+          setLiveMetrics((prev) => ({ ...prev, [metrics.contractAddress]: metrics }));
 
-          const isGraduated =
-            launch?.lifecycle === "GRADUATED" ||
-            launch?.graduated === true ||
-            launch?.curve?.lifecycle === "GRADUATED" ||
-            selectedToken?.bondingCurveProgress >= 100 ||
-            !!launch?.graduation ||
-            !!launch?.poolAddress ||
-            !!launch?.graduationPoolAddress ||
-            !!launch?.pool?.address;
-
-          const currentPairUnits = currentRaw / pDivisor;
-          const targetPairUnits = targetRaw / pDivisor;
-
-          let liveCurveProgress = isGraduated ? 100 : (launch?.curve?.progressBps != null ? launch.curve.progressBps / 100 : Math.min(100, Math.max(0, (currentPairUnits / targetPairUnits) * 100)));
-          if (!isGraduated && liveCurveProgress > 0 && liveCurveProgress < 0.1) liveCurveProgress = 0.1;
-          const liveDepositedStr = isGraduated ? 'Graduated' : `${currentPairUnits.toFixed(4)} / ${targetPairUnits.toFixed(1)}`;
-
-          // 3. CORRECT MARKET CAP & USD VOLUME MATH
-          const liveEthPrice = Number(json.data?.ethPriceUsd) || liveRates['ETH'] || 2416;
-
-          const pairAddr = (launch?.pairCurrencyAddress || "").toLowerCase();
-          const isNative = !pairAddr || pairAddr === "0x0000000000000000000000000000000000000000";
-
-          let usdRate = liveEthPrice;
-          if (!isNative && pairAddr && liveRates[pairAddr]) {
-            usdRate = liveRates[pairAddr];
-          } else {
-            usdRate = getUsdRateForPair(livePairSymbol, { ...liveRates, ETH: liveEthPrice, WETH: liveEthPrice });
-          }
-
-          const stats = json.data?.marketStats;
-          let marketCapUsd = 0;
-
-          // 1. Always prioritize the API's exact backend USD price for ALL tokens
-          const directPriceUsd = launch?.priceUsd || launch?.analytics?.priceUsd || launch?.curve?.priceUsd || stats?.priceUsd;
-          let lastPriceWei = stats?.priceWeiPerToken || stats?.lastPriceWeiPerToken || launch?.analytics?.lastPriceWeiPerToken || 0;
-
-          if ((!lastPriceWei || Number(lastPriceWei) === 0) && json.data?.marketTrades?.[0]) {
-            lastPriceWei = json.data.marketTrades[0].executionPricePairUnitsPerToken;
-          }
-
-          if (directPriceUsd && Number(directPriceUsd) > 0) {
-            marketCapUsd = Number(directPriceUsd) * 1_000_000_000;
-          } else if (Number(lastPriceWei) > 0) {
-            const pricePairUnits = Number(lastPriceWei) / pDivisor;
-            marketCapUsd = usdRate > 0 ? pricePairUnits * 1_000_000_000 * usdRate : 0;
-          } else {
-            marketCapUsd = calculateTokenMetrics(liveCurveProgress, currentPairUnits, livePairSymbol, liveRates).marketCapRaw;
-          }
-
-          let displayMarketCap = marketCapUsd > 0
-            ? marketCapUsd.toLocaleString('en-US', { style: 'currency', currency: 'USD' })
-            : "$0.00";
-
-          let finalVolumeEth = "0.0000";
-          let finalBuyPct = 50;
-          let finalSellPct = 50;
-
-          if (stats) {
-            const buyVol = Number(stats.buyVolume24hPairUnits || 0) / pDivisor;
-            const sellVol = Number(stats.sellVolume24hPairUnits || 0) / pDivisor;
-            const totalVol = buyVol + sellVol;
-            if (totalVol > 0) {
-              finalVolumeEth = totalVol.toFixed(4);
-              finalBuyPct = Math.round((buyVol / totalVol) * 100);
-              finalSellPct = 100 - finalBuyPct;
-            }
-          } else if (launch?.analytics) {
-            const volWei = Number(launch.analytics.volume24hWei || 0);
-            if (volWei > 0) finalVolumeEth = (volWei / pDivisor).toFixed(4);
-            const buys = Number(launch.analytics.buyCount1h || 0);
-            const sells = Number(launch.analytics.sellCount1h || 0);
-            const totalTrades = buys + sells;
-            if (totalTrades > 0) {
-              finalBuyPct = Math.round((buys / totalTrades) * 100);
-              finalSellPct = 100 - finalBuyPct;
-            }
-          }
-
-          const volumeUsdValue = Number(finalVolumeEth) * usdRate;
-          let displayVolumeUsd = "\$0.00";
-          if (Number(finalVolumeEth) > 0) {
-            displayVolumeUsd = usdRate > 0
-              ? volumeUsdValue.toLocaleString('en-US', { style: 'currency', currency: 'USD' })
-              : `${finalVolumeEth} ${livePairSymbol}`;
-          }
-
-          const socials = launch?.content?.socials || {};
-          const hasSocials = !!(socials.x || socials.telegram || socials.website);
+          const launch = json.data?.launch || (json.data?.tokenAddress ? json.data : null);
           const poolAddr = (launch?.graduation?.poolId || launch?.poolAddress || launch?.pool?.address || "").toLowerCase();
 
-          // 4. APPLY DIRECTLY TO STATE
           setSelectedToken((prev: any) => ({
             ...prev,
-            decimals: pDecimals,
-            isLegacy: prev?.isLegacy || json.apiVersion === "1" || (!json.data?.launch && !!json.data?.tokenAddress),
-            bondingCurveProgress: liveCurveProgress,
-            ethDeposited: liveDepositedStr,
-            pairSymbol: livePairSymbol,
-            symbol: launch?.symbol || prev?.symbol,
-            devAddress: launch?.launcherAddress || launch?.creatorAddress || prev?.devAddress,
-            score: calculateVibeScore(prev?.blockZeroBuyers || 0, prev?.timeSinceLaunchMins || 0, liveCurveProgress, prev?.diamondHandsHoldersPct || 50, Number(finalVolumeEth), finalBuyPct, hasSocials, 0),
-            hasSocials: hasSocials,
-            socialLinks: socials,
+            isLegacy: prev?.isLegacy || metrics.isLegacy,
+            bondingCurveProgress: metrics.bondingCurveProgress,
+            ethDeposited: metrics.ethDeposited,
+            pairSymbol: metrics.pairSymbol,
+            symbol: metrics.symbol || prev?.symbol,
+            devAddress: metrics.devAddress || prev?.devAddress,
+            score: calculateVibeScore(
+              prev?.blockZeroBuyers || 0,
+              metrics.timeSinceLaunchMins,
+              metrics.bondingCurveProgress,
+              prev?.diamondHandsHoldersPct || 50,
+              Number(metrics.volumeEth),
+              metrics.buyPct,
+              metrics.hasSocials,
+              0
+            ),
+            hasSocials: metrics.hasSocials,
+            socialLinks: metrics.socialLinks,
             poolAddress: poolAddr || prev?.poolAddress,
-            marketCapUsd: displayMarketCap,
-            momentum: { buyPct: finalBuyPct, sellPct: finalSellPct, volumeEth: finalVolumeEth, volumeUsd: displayVolumeUsd },
-            volumeEth: finalVolumeEth,
-            volumeUsd: displayVolumeUsd,
+            marketCapUsd: metrics.marketCapUsd,
+            momentum: {
+              buyPct: metrics.buyPct,
+              sellPct: metrics.sellPct,
+              volumeEth: metrics.volumeEth,
+              volumeUsd: metrics.volumeUsd,
+            },
+            volumeEth: metrics.volumeEth,
+            volumeUsd: metrics.volumeUsd,
             safetyChecks: {
               ...prev?.safetyChecks,
-              mev: { label: feeEvents.length <= 5 ? "Low Risk (< 5%)" : "Normal", safe: true },
-              creatorBag: prev?.safetyChecks?.creatorBag || { label: "Checking...", safe: true }
-            }
+              mev: metrics.priceUsd > 0
+                ? { label: "Low Risk (< 5%)", safe: true }
+                : { label: "Checking...", safe: true },
+              creatorBag: prev?.safetyChecks?.creatorBag || { label: "Checking...", safe: true },
+            },
           }));
         })
         .catch(console.error)
@@ -996,7 +1031,30 @@ export default function Home() {
                     isConnected={isConnected}
                     hasAccess={hasAccess}
                     liveRates={liveRates}
-                    onSelect={setSelectedToken}
+                    onSelect={(selected) => {
+                      // Seed the detail view from the SAME cached live metrics
+                      // the card is displaying, so there is no stale-state jump.
+                      const live = liveMetrics[selected.contractAddress.toLowerCase()];
+                      setSelectedToken(
+                        live
+                          ? {
+                              ...selected,
+                              ...live,
+                              id: selected.id,
+                              blockZeroBuyers: (selected as any).blockZeroBuyers ?? 0,
+                              diamondHandsHoldersPct: (selected as any).diamondHandsHoldersPct ?? 50,
+                              devProfile: (selected as any).devProfile,
+                              safetyChecks: (selected as any).safetyChecks,
+                              momentum: {
+                                buyPct: live.buyPct,
+                                sellPct: live.sellPct,
+                                volumeEth: live.volumeEth,
+                                volumeUsd: live.volumeUsd,
+                              },
+                            }
+                          : selected
+                      );
+                    }}
                     signalTokenAddress={SIGNAL_TOKEN}
                   />
                 ))}
