@@ -105,6 +105,92 @@ const ERC20_SYMBOL_ABI = [
 ] as const;
 
 /**
+ * Classification of the asset a token is quoted/priced against.
+ *
+ * VibeVibe launches can be paired against several distinct quote assets:
+ *  - `native`  : raw ETH / WETH (the default bonding-curve pair).
+ *  - `usd`     : a USD stable (USDG, USDC, ...) — 1:1 with USD.
+ *  - `stock`   : a tokenized equity (NVDA, AAPL, SPCX, MSFT, TSLA, ...).
+ *  - `guild`   : a VibeVibe Guild / community token (e.g. ALPHAHUNTERGUILD).
+ *  - `vibe`    : the platform VIBE/VIBEVIBE token.
+ *  - `unknown` : an unrecognised non-ETH quote asset.
+ *
+ * The distinction matters because pair reserves are denominated in the QUOTE
+ * asset, so they may only be multiplied by that asset's own USD rate — never
+ * blindly by the ETH oracle price.
+ */
+export type QuoteAssetKind = 'native' | 'usd' | 'stock' | 'guild' | 'vibe' | 'unknown';
+
+const NATIVE_QUOTE_SYMBOLS = new Set(['ETH', 'WETH', 'NATIVE']);
+const USD_QUOTE_SYMBOLS = new Set(['USD', 'USDC', 'USDT', 'USDG', 'DAI', 'STOCK']);
+const VIBE_QUOTE_SYMBOLS = new Set(['VIBE', 'VIBEVIBE']);
+const STOCK_QUOTE_SYMBOLS = new Set(['NVDA', 'AAPL', 'SPCX', 'MSFT', 'TSLA', 'AMZN', 'GOOG', 'META']);
+
+/**
+ * Classifies a quote asset from its resolved symbol and/or on-chain address.
+ * Address-only hints (the zero address) are treated as native ETH.
+ */
+export function classifyQuoteAsset(
+  pairSymbol: string | undefined,
+  pairAddress?: string
+): QuoteAssetKind {
+  const addr = (pairAddress || '').toLowerCase();
+  if (addr === '0x0000000000000000000000000000000000000000') return 'native';
+
+  const s = (pairSymbol || '').toUpperCase().trim();
+  if (!s) return 'unknown';
+
+  if (NATIVE_QUOTE_SYMBOLS.has(s)) return 'native';
+  if (USD_QUOTE_SYMBOLS.has(s)) return 'usd';
+  if (VIBE_QUOTE_SYMBOLS.has(s)) return 'vibe';
+  if (STOCK_QUOTE_SYMBOLS.has(s)) return 'stock';
+
+  // Heuristic: anything ending in "GUILD" is a community/guild quote token.
+  if (s.endsWith('GUILD')) return 'guild';
+
+  return 'unknown';
+}
+
+/**
+ * Resolves the USD price of ONE unit of the quote asset.
+ *
+ * Returns `null` when the quote asset is non-ETH and no trustworthy USD rate is
+ * available — signalling to the caller that it must NOT fall back to the ETH
+ * oracle (which would inflate a Guild/Stock-paired token's market cap into the
+ * billions). Native ETH always resolves to the ETH oracle price.
+ */
+export function resolveQuoteUsdRate(
+  kind: QuoteAssetKind,
+  pairSymbol: string | undefined,
+  pairAddress: string | undefined,
+  liveRates: Record<string, number>,
+  ethPriceUsd: number
+): number | null {
+  const addr = (pairAddress || '').toLowerCase();
+  const sym = (pairSymbol || '').toUpperCase().trim();
+
+  // 1. Exact address match from the oracle map is always authoritative.
+  if (addr && liveRates[addr] != null && Number.isFinite(liveRates[addr])) {
+    return liveRates[addr];
+  }
+
+  // 2. Exact symbol match from the oracle map.
+  if (sym && liveRates[sym] != null && Number.isFinite(liveRates[sym])) {
+    return liveRates[sym];
+  }
+
+  // 3. Native ETH/WETH always uses the ETH oracle.
+  if (kind === 'native') return ethPriceUsd;
+
+  // 4. USD stables are 1:1.
+  if (kind === 'usd') return 1;
+
+  // 5. Non-ETH quote asset with no known rate: refuse to guess.
+  //    Returning null forces the caller to use the token's direct USD price.
+  return null;
+}
+
+/**
  * Normalizes a raw `/api/proxyVibe` response into a single canonical
  * `LiveTokenMetrics` object. Both the homepage card and the detail view
  * MUST derive their displayed numbers from this function so they can never
@@ -203,16 +289,23 @@ export async function normalizeVibeResponse(
     ? 'Graduated'
     : `${currentPairUnits.toFixed(4)} / ${targetPairUnits.toFixed(1)}`;
 
-  // --- USD rate for the pair ---
+  // --- Quote-asset classification + USD rate for the pair ---
+  // Pair reserves are denominated in the QUOTE asset, so they may only be
+  // multiplied by that asset's own USD rate. Blindly using the ETH oracle for a
+  // Guild/Stock-paired token inflates its market cap into the billions.
   const liveEthPrice = Number(json?.data?.ethPriceUsd) || liveRates['ETH'] || 2416;
   const pairAddr = (launch.pairCurrencyAddress || '').toLowerCase();
-  const isNative = !pairAddr || pairAddr === '0x0000000000000000000000000000000000000000';
-  let usdRate = liveEthPrice;
-  if (!isNative && pairAddr && liveRates[pairAddr]) {
-    usdRate = liveRates[pairAddr];
-  } else {
-    usdRate = getUsdRateForPair(pairSymbol, { ...liveRates, ETH: liveEthPrice, WETH: liveEthPrice });
-  }
+  const quoteKind = classifyQuoteAsset(pairSymbol, pairAddr);
+
+  // `quoteUsdRate` is `null` when the quote asset is non-ETH and has no known
+  // USD rate — in that case we must rely on the token's direct USD price.
+  const quoteUsdRate = resolveQuoteUsdRate(
+    quoteKind,
+    pairSymbol,
+    pairAddr,
+    { ...liveRates, ETH: liveEthPrice, WETH: liveEthPrice },
+    liveEthPrice
+  );
 
   // --- Market cap (real price first, synthetic only as last resort) ---
   const directPriceUsd =
@@ -226,12 +319,20 @@ export async function normalizeVibeResponse(
   let marketCapRaw = 0;
   let priceUsd = 0;
   if (directPriceUsd && Number(directPriceUsd) > 0) {
+    // Preferred path: the API already gives us the token's direct USD price.
     priceUsd = Number(directPriceUsd);
     marketCapRaw = priceUsd * 1_000_000_000;
-  } else if (Number(lastPriceWei) > 0) {
+  } else if (Number(lastPriceWei) > 0 && quoteUsdRate != null && quoteUsdRate > 0) {
+    // Pair-denominated price × the QUOTE asset's own USD rate.
     const pricePairUnits = Number(lastPriceWei) / pDivisor;
-    priceUsd = usdRate > 0 ? pricePairUnits * usdRate : 0;
-    marketCapRaw = usdRate > 0 ? pricePairUnits * 1_000_000_000 * usdRate : 0;
+    priceUsd = pricePairUnits * quoteUsdRate;
+    marketCapRaw = pricePairUnits * 1_000_000_000 * quoteUsdRate;
+  } else if (Number(lastPriceWei) > 0 && quoteUsdRate == null) {
+    // Non-ETH quote asset with no trustworthy USD rate: we deliberately do NOT
+    // multiply by the ETH oracle. Leave priceUsd at 0 so the caller flags this
+    // as an estimate rather than reporting a wildly inflated market cap.
+    priceUsd = 0;
+    marketCapRaw = 0;
   } else {
     // Explicit synthetic estimate — flagged by the caller via `priceUsd === 0`.
     marketCapRaw = calculateTokenMetrics(bondingCurveProgress, currentPairUnits, pairSymbol, liveRates).marketCapRaw;
@@ -285,9 +386,12 @@ export async function normalizeVibeResponse(
     }
   }
 
+  // Volume is denominated in the QUOTE asset, so it may only be converted with
+  // that asset's own USD rate. When the rate is unknown (non-ETH pair), we show
+  // the raw pair-denominated figure instead of a bogus ETH-priced USD value.
   const volumeUsd =
-    Number(volumeEth) > 0 && usdRate > 0
-      ? (Number(volumeEth) * usdRate).toLocaleString('en-US', { style: 'currency', currency: 'USD' })
+    Number(volumeEth) > 0 && quoteUsdRate != null && quoteUsdRate > 0
+      ? (Number(volumeEth) * quoteUsdRate).toLocaleString('en-US', { style: 'currency', currency: 'USD' })
       : Number(volumeEth) > 0
         ? `${volumeEth} ${pairSymbol}`
         : '$0.00';
