@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { createPublicClient, http, formatEther, parseAbiItem, getAddress } from 'viem';
+import { createPublicClient, http, formatUnits, parseAbi, getAddress } from 'viem';
 import { createClient } from '@supabase/supabase-js';
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -7,24 +7,161 @@ const SUPABASE_SECRET_KEY = process.env.SUPABASE_SECRET_KEY || process.env.NEXT_
 const supabase = createClient(SUPABASE_URL, SUPABASE_SECRET_KEY);
 
 const publicClient = createPublicClient({
-    transport: http('https://rpc.testnet.chain.robinhood.com')
+    transport: http('https://rpc.testnet.chain.robinhood.com'),
 });
 
-const FACTORY_ADDRESS = "0xe794217880011f9cA6961340eD5c16EC9559Fea0";
-const ROUTER_ADDRESS = "0x89944BC9D3b20764BeA771CFAf9711a8Fb839e72";
-const creationEvent = parseAbiItem('event Creation(uint256 indexed launchId, address indexed creator, address indexed token)');
-const curveBuyEvent = parseAbiItem('event CurveBuy(address indexed token, address indexed buyer, uint256 tokensOut, uint256 bnbIn, uint256 fee, uint256 reserveAfter, uint256 soldAfter, uint256 timestamp)');
+// ---------------------------------------------------------------------------
+// Verified V6 addresses (vibevibe.md §2). Do not invent addresses.
+// ---------------------------------------------------------------------------
+const FACTORY_ADDRESS = '0xe794217880011f9cA6961340eD5c16EC9559Fea0' as const;
+const ZAP_ROUTER = '0x2784448c519D01d3aE257C0aac0b7cDAd8AccEB1' as const;
+const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000' as const;
 
-const ERC20_ABI = [
-    { name: "symbol", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "string" }] },
-    { name: "name", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "string" }] }
-] as const;
+// ---------------------------------------------------------------------------
+// ABIs — taken verbatim from the verified contract spec (vibevibe.md §5).
+// ---------------------------------------------------------------------------
+const FACTORY_ABI = parseAbi([
+    'function curveOf(address token) view returns (address)',
+    'function isV6Token(address) view returns (bool)',
+    'function launchCount() view returns (uint256)',
+    'event LaunchCreated(uint256 indexed launchId, address indexed launcher, address indexed token, address curve, string name, string symbol, string metadataURI, address pairCurrency, uint16 taxBps, uint64 packedWeights, address projectTreasury, uint256 targetPairUnits, uint256 netPersonal, uint256 giftNetTotal, bytes32 giftRoot, uint256 giftCount)',
+]);
 
-const FACTORY_ABI = [
-    { name: "amm", type: "function", stateMutability: "view", inputs: [{ name: "token", type: "address" }], outputs: [{ type: "address" }] },
-    { name: "pools", type: "function", stateMutability: "view", inputs: [{ name: "token", type: "address" }], outputs: [{ type: "address" }] },
-    { name: "getAmm", type: "function", stateMutability: "view", inputs: [{ name: "token", type: "address" }], outputs: [{ type: "address" }] }
-] as const;
+const CURVE_ABI = parseAbi([
+    'function token() view returns (address)',
+    'function pairCurrency() view returns (address)',
+    'function complete() view returns (bool)',
+    'function sold() view returns (uint120)',
+    'function targetPairUnits() view returns (uint256)',
+    'function pairPrincipal() view returns (uint128)',
+    'function currentRateBps() view returns (uint256)',
+    'event CurveBuy(address indexed buyer, address indexed recipient, uint256 grossTokens, uint256 netTokens, uint256 tokenFee, uint256 pairCost, uint256 pairFee, uint256 rateBps)',
+    'event CurveSell(address indexed seller, address indexed recipient, uint256 grossTokens, uint256 netTokens, uint256 tokenFee, uint256 pairProceeds, uint256 pairFee)',
+]);
+
+const TOKEN_ABI = parseAbi([
+    'function name() view returns (string)',
+    'function symbol() view returns (string)',
+    'function decimals() view returns (uint8)',
+    'function transfersUnlocked() view returns (bool)',
+    'function baseTaxBps() view returns (uint256)',
+]);
+
+// The zap router is what the vibe/vibe website uses for non-ETH pairs and
+// graduated tokens, so in CurveBuy/CurveSell the buyer/seller is often this
+// address. The real wallet is then `recipient`. Never count the zap as a trader.
+const ZAP_ROUTER_LOWER = ZAP_ROUTER.toLowerCase();
+
+// Read logs in ranges of at most 5,000 blocks (vibevibe.md §1: block time is
+// well under a second, so block numbers grow fast).
+const LOG_CHUNK_SIZE = 5000n;
+
+/**
+ * Scans factory logs backwards in 5,000-block chunks to find the LaunchCreated
+ * event for a token. Returns the decoded args (or null if not found).
+ */
+async function findLaunchEvent(token: `0x${string}`) {
+    const currentBlock = await publicClient.getBlockNumber();
+    let toBlock = currentBlock;
+    let fromBlock = toBlock > LOG_CHUNK_SIZE ? toBlock - LOG_CHUNK_SIZE : 0n;
+
+    while (toBlock >= 0n) {
+        try {
+            const logs = await publicClient.getContractEvents({
+                address: FACTORY_ADDRESS,
+                abi: FACTORY_ABI,
+                eventName: 'LaunchCreated',
+                args: { token },
+                fromBlock,
+                toBlock,
+                strict: false,
+            });
+            if (logs.length > 0) return logs[0];
+        } catch (err) {
+            console.warn(`RPC chunk error ${fromBlock}-${toBlock}:`, err);
+        }
+
+        if (fromBlock === 0n) break;
+        toBlock = fromBlock - 1n;
+        fromBlock = toBlock > LOG_CHUNK_SIZE ? toBlock - LOG_CHUNK_SIZE : 0n;
+    }
+    return null;
+}
+
+/**
+ * Sums real curve trades for a token. Buys use `pairCost`, sells use
+ * `pairProceeds` (both in the pair currency, 18 decimals). The zap router is
+ * never counted as a trader — the real wallet is `recipient`.
+ */
+async function sumCurveTrades(curve: `0x${string}`, startBlock: bigint) {
+    const currentBlock = await publicClient.getBlockNumber();
+    let volumePairUnits = 0;
+    let buyCount = 0;
+    let sellCount = 0;
+
+    let toBlock = currentBlock;
+    let fromBlock = toBlock > LOG_CHUNK_SIZE ? toBlock - LOG_CHUNK_SIZE : 0n;
+    // Never scan earlier than the launch block.
+    if (fromBlock < startBlock) fromBlock = startBlock;
+
+    while (toBlock >= startBlock) {
+        const chunkFrom = fromBlock;
+        try {
+            const [buys, sells] = await Promise.all([
+                publicClient.getContractEvents({
+                    address: curve,
+                    abi: CURVE_ABI,
+                    eventName: 'CurveBuy',
+                    fromBlock: chunkFrom,
+                    toBlock,
+                }),
+                publicClient.getContractEvents({
+                    address: curve,
+                    abi: CURVE_ABI,
+                    eventName: 'CurveSell',
+                    fromBlock: chunkFrom,
+                    toBlock,
+                }),
+            ]);
+
+            for (const b of buys) {
+                const { pairCost, recipient, buyer } = b.args as {
+                    pairCost?: bigint;
+                    recipient?: string;
+                    buyer?: string;
+                };
+                if (pairCost == null) continue;
+                // The real wallet is `recipient`; `buyer` is often the zap.
+                const trader = (recipient || buyer || '').toLowerCase();
+                if (trader === ZAP_ROUTER_LOWER && !recipient) continue;
+                volumePairUnits += Number(formatUnits(pairCost, 18));
+                buyCount += 1;
+            }
+
+            for (const s of sells) {
+                const { pairProceeds, recipient, seller } = s.args as {
+                    pairProceeds?: bigint;
+                    recipient?: string;
+                    seller?: string;
+                };
+                if (pairProceeds == null) continue;
+                const trader = (recipient || seller || '').toLowerCase();
+                if (trader === ZAP_ROUTER_LOWER && !recipient) continue;
+                volumePairUnits += Number(formatUnits(pairProceeds, 18));
+                sellCount += 1;
+            }
+        } catch (err) {
+            console.warn(`Curve trade chunk error ${chunkFrom}-${toBlock}:`, err);
+        }
+
+        if (chunkFrom <= startBlock) break;
+        toBlock = chunkFrom - 1n;
+        fromBlock = toBlock > LOG_CHUNK_SIZE ? toBlock - LOG_CHUNK_SIZE : 0n;
+        if (fromBlock < startBlock) fromBlock = startBlock;
+    }
+
+    return { volumePairUnits, buyCount, sellCount };
+}
 
 export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
@@ -42,144 +179,146 @@ export async function GET(request: Request) {
             return NextResponse.json({ error: 'Invalid checksum address' }, { status: 400 });
         }
 
-        // 1. Fetch token details (name/symbol)
+        // 1. Token metadata (name/symbol) straight from the ERC-20.
         const [name, symbol] = await Promise.all([
-            publicClient.readContract({ address: checksummedToken, abi: ERC20_ABI, functionName: "name" }).catch(() => "Unknown"),
-            publicClient.readContract({ address: checksummedToken, abi: ERC20_ABI, functionName: "symbol" }).catch(() => "TKN")
+            publicClient
+                .readContract({ address: checksummedToken, abi: TOKEN_ABI, functionName: 'name' })
+                .catch(() => 'Unknown'),
+            publicClient
+                .readContract({ address: checksummedToken, abi: TOKEN_ABI, functionName: 'symbol' })
+                .catch(() => 'TKN'),
         ]);
 
-        let ammAddress: `0x${string}` | null = null;
-
-        // 2. Try Direct Factory View Method
-        for (const fn of ['amm', 'pools', 'getAmm'] as const) {
-            try {
-                const result = await publicClient.readContract({
-                    address: FACTORY_ADDRESS as `0x${string}`,
-                    abi: FACTORY_ABI,
-                    functionName: fn,
-                    args: [checksummedToken]
-                }) as string;
-                if (result && result !== '0x0000000000000000000000000000000000000000') {
-                    ammAddress = result.toLowerCase() as `0x${string}`;
-                    break;
-                }
-            } catch (e) {
-                // Ignore and try next
+        // 2. Curve address from the V6 factory (the authoritative mapping).
+        let curveAddress: `0x${string}` | null = null;
+        try {
+            const curve = (await publicClient.readContract({
+                address: FACTORY_ADDRESS,
+                abi: FACTORY_ABI,
+                functionName: 'curveOf',
+                args: [checksummedToken],
+            })) as string;
+            if (curve && curve !== ZERO_ADDRESS) {
+                curveAddress = curve.toLowerCase() as `0x${string}`;
             }
+        } catch (e) {
+            // Fall through to the log scan below.
         }
 
-        const currentBlock = await publicClient.getBlockNumber();
-        let log: any = null;
-
-        // 3. Comprehensive Log Scan (Backward Pagination)
-        if (!ammAddress) {
-            const CHUNK_SIZE = 45000n;
-            let toBlock = currentBlock;
-            let fromBlock = toBlock > CHUNK_SIZE ? toBlock - CHUNK_SIZE : 0n;
-
-            while (toBlock >= 0n) {
-                try {
-                    const logs = await publicClient.getLogs({
-                        address: FACTORY_ADDRESS as `0x${string}`,
-                        event: creationEvent,
-                        args: { token: checksummedToken },
-                        fromBlock,
-                        toBlock,
-                        strict: false
-                    });
-
-                    if (logs.length > 0) {
-                        log = logs[0];
-                        ammAddress = `0x${log.data.slice(26, 66)}`.toLowerCase() as `0x${string}`;
-                        break;
-                    }
-                } catch (err) {
-                    console.warn(`RPC chunk error ${fromBlock}-${toBlock}:`, err);
-                }
-
-                if (fromBlock === 0n) break;
-                toBlock = fromBlock - 1n;
-                fromBlock = toBlock > CHUNK_SIZE ? toBlock - CHUNK_SIZE : 0n;
-            }
+        // 3. Fall back to the LaunchCreated event if curveOf returned nothing.
+        const launchLog = await findLaunchEvent(checksummedToken);
+        if (!curveAddress && launchLog) {
+            const args = launchLog.args as { curve?: string };
+            if (args.curve) curveAddress = args.curve.toLowerCase() as `0x${string}`;
         }
 
-        if (!ammAddress) {
-            return NextResponse.json({ 
-                error: 'Token not found on vibevibe factory',
-                partialToken: { name, symbol }
-            }, { status: 404 });
+        if (!curveAddress) {
+            return NextResponse.json(
+                {
+                    error: 'Token not found on vibevibe V6 factory',
+                    partialToken: { name, symbol },
+                },
+                { status: 404 }
+            );
         }
 
-        const launchId = log ? Number(log.args.launchId) : 0;
-        const devAddress = log ? (log.args.creator?.toLowerCase() || '') : tokenAddress;
-        
-        let isNativeEth = true;
-        if (log) {
-            const baseTokenHex = log.data.slice(282, 322);
-            isNativeEth = baseTokenHex === "0000000000000000000000000000000000000000";
+        // 4. Decode launch metadata from the event (name/symbol/pair/tax).
+        const launchArgs = (launchLog?.args || {}) as {
+            launchId?: bigint;
+            launcher?: string;
+            name?: string;
+            symbol?: string;
+            pairCurrency?: string;
+            taxBps?: number;
+        };
+        const launchId = Number(launchArgs.launchId ?? 0);
+        const devAddress = (launchArgs.launcher || tokenAddress).toLowerCase();
+        const isNativeEth = (launchArgs.pairCurrency || '').toLowerCase() === ZERO_ADDRESS;
+        const finalName = launchArgs.name || (name as string);
+        const finalSymbol = launchArgs.symbol || (symbol as string);
+
+        // 5. Live curve state (real graduation progress, not a balance guess).
+        let currentLiq = 0;
+        let curveProgress = 0;
+        let graduated = false;
+        try {
+            const [principal, target, complete] = await Promise.all([
+                publicClient.readContract({
+                    address: curveAddress,
+                    abi: CURVE_ABI,
+                    functionName: 'pairPrincipal',
+                }),
+                publicClient.readContract({
+                    address: curveAddress,
+                    abi: CURVE_ABI,
+                    functionName: 'targetPairUnits',
+                }),
+                publicClient.readContract({
+                    address: curveAddress,
+                    abi: CURVE_ABI,
+                    functionName: 'complete',
+                }),
+            ]);
+            currentLiq = Number(formatUnits(principal as bigint, 18));
+            graduated = complete as boolean;
+            const targetUnits = Number(formatUnits(target as bigint, 18)) || 4;
+            curveProgress = graduated ? 100 : Math.min(100, Math.max(0, (currentLiq / targetUnits) * 100));
+        } catch (curveErr) {
+            console.warn('Could not read curve state, falling back to balance:', curveErr);
+            const rawEth = await publicClient.getBalance({ address: curveAddress });
+            currentLiq = Number(formatUnits(rawEth, 18));
+            curveProgress = Math.min(100, Math.max(0, (currentLiq / 4.0) * 100));
         }
 
-        let launchBlock = currentBlock;
+        // 6. Real momentum from CurveBuy/CurveSell (pairCost / pairProceeds).
+        const launchBlock = launchLog ? Number(launchLog.blockNumber) : Number(await publicClient.getBlockNumber());
+        const { volumePairUnits, buyCount, sellCount } = await sumCurveTrades(
+            curveAddress,
+            BigInt(launchBlock)
+        );
+
+        const totalTrades = buyCount + sellCount;
+        const buyPct = totalTrades > 0 ? Math.round((buyCount / totalTrades) * 100) : 50;
+        const sellPct = 100 - buyPct;
+
         let timestamp = new Date().toISOString();
-
-        if (log) {
-            launchBlock = log.blockNumber;
-            const block = await publicClient.getBlock({ blockNumber: launchBlock });
-            timestamp = new Date(Number(block.timestamp) * 1000).toISOString();
-        }
-
-        // 4. Get Current AMM Balance
-        const rawEth = await publicClient.getBalance({ address: ammAddress });
-        const currentLiq = parseFloat(formatEther(rawEth));
-        const curveProgress = Math.min(100, Math.max(0, (currentLiq / 4.0) * 100));
-
-        // 5. Query Router for CurveBuy events to calculate momentum
-        const momentumFromBlock = log ? launchBlock : (currentBlock > 45000n ? currentBlock - 45000n : 0n);
-        const buyLogs = await publicClient.getLogs({
-            address: ROUTER_ADDRESS as `0x${string}`,
-            event: curveBuyEvent,
-            args: { token: checksummedToken },
-            fromBlock: momentumFromBlock,
-            toBlock: 'latest'
-        }).catch(() => []); // graceful fallback
-
-        let volumeEth = 0;
-        let buyCount = buyLogs.length;
-        
-        for (const buyLog of buyLogs) {
-            if (buyLog.args.bnbIn) {
-                volumeEth += Number(formatEther(buyLog.args.bnbIn as bigint));
+        if (launchLog) {
+            try {
+                const block = await publicClient.getBlock({ blockNumber: launchLog.blockNumber });
+                timestamp = new Date(Number(block.timestamp) * 1000).toISOString();
+            } catch {
+                /* keep current time */
             }
         }
-        
-        // 6. Upsert into Supabase
+
+        // 7. Upsert into Supabase.
         const dbPayload = {
             launch_id: launchId,
             token_address: tokenAddress,
-            amm_address: ammAddress,
+            amm_address: curveAddress,
             dev_address: devAddress,
             pair_symbol: isNativeEth ? 'ETH' : 'STOCK',
             liquidity_deposited: Number(currentLiq.toFixed(4)),
             curve_progress: Number(curveProgress.toFixed(1)),
-            launch_block: Number(launchBlock),
-            name: name,
-            symbol: symbol,
+            launch_block: launchBlock,
+            name: finalName,
+            symbol: finalSymbol,
             created_at: timestamp,
-            volume_eth: volumeEth,
+            volume_eth: Number(volumePairUnits.toFixed(4)),
             buy_count: buyCount,
-            sell_count: 0,
-            buy_pct: buyCount > 0 ? 100 : 50,
-            sell_pct: buyCount > 0 ? 0 : 50
+            sell_count: sellCount,
+            buy_pct: buyPct,
+            sell_pct: sellPct,
         };
 
         await supabase.from('launches').upsert(dbPayload, { onConflict: 'token_address' });
 
-        return NextResponse.json({ 
+        return NextResponse.json({
             success: true,
-            token: dbPayload
+            token: dbPayload,
         });
     } catch (error) {
-        console.error("JIT Indexing error:", error);
+        console.error('JIT Indexing error:', error);
         return NextResponse.json({ error: 'Failed to index token' }, { status: 500 });
     }
 }

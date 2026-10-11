@@ -1,13 +1,27 @@
 import { createServer } from 'http';
-import 'dotenv/config';
-import { createPublicClient, http, defineChain, formatEther, parseAbiItem } from 'viem';
+import { config as loadEnv } from 'dotenv';
+// Next.js keeps secrets in `.env.local`; the indexer runs outside Next, so load
+// that first and fall back to `.env`. Without this the Supabase client gets no
+// URL/key and the process dies on boot.
+loadEnv({ path: '.env.local' });
+loadEnv();
+import {
+    createPublicClient,
+    http,
+    defineChain,
+    formatUnits,
+    parseAbi,
+    parseAbiItem,
+    decodeEventLog,
+    getAddress,
+} from 'viem';
 import { createClient } from '@supabase/supabase-js';
 
 process.on('uncaughtException', (err) => {
-  console.error('Unhandled Exception trapped:', err);
+    console.error('Unhandled Exception trapped:', err);
 });
 process.on('unhandledRejection', (reason) => {
-  console.error('Unhandled Rejection trapped:', reason);
+    console.error('Unhandled Rejection trapped:', reason);
 });
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -15,30 +29,70 @@ const SUPABASE_SECRET_KEY = process.env.SUPABASE_SECRET_KEY!;
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SECRET_KEY);
 
-const ERC20_ABI = [
-    { name: "balanceOf", type: "function", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "uint256" }] },
-    { name: "decimals", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "uint8" }] },
-    { name: "symbol", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "string" }] },
-    { name: "name", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "string" }] }
-] as const;
-
+// ---------------------------------------------------------------------------
+// Chain + contract addresses (verified against vibevibe.md, Robinhood Chain
+// testnet, chain id 46630). Do not invent addresses.
+// ---------------------------------------------------------------------------
 const robinhoodTestnet = defineChain({
     id: 46630,
-    name: 'Robinhood Testnet',
-    network: 'robinhood-testnet',
+    name: 'Robinhood Chain Testnet',
     nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
     rpcUrls: { default: { http: ['https://rpc.testnet.chain.robinhood.com'] } },
+    blockExplorers: {
+        default: { name: 'Explorer', url: 'https://explorer.testnet.chain.robinhood.com' },
+    },
+    testnet: true,
 });
 
 const publicClient = createPublicClient({ chain: robinhoodTestnet, transport: http() });
 
-const FACTORY_ADDRESS = "0xe794217880011f9cA6961340eD5c16EC9559Fea0";
-const ROUTER_ADDRESS = "0x89944BC9D3b20764BeA771CFAf9711a8Fb839e72";
-const CREATION_TOPIC = "0xa7e8032bfd07a9fbcde50eabe91eb2901faee6dbddd9cced579491d9b07ef5c8";
+const FACTORY_ADDRESS = '0xe794217880011f9cA6961340eD5c16EC9559Fea0' as const;
+const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000' as const;
 
 // Base URL for our own proxy route. Overridable via env so the indexer can
 // point at localhost during development or the deployed app in production.
 const PROXY_BASE_URL = process.env.PROXY_BASE_URL || 'https://vibe-signals.vercel.app';
+
+// ---------------------------------------------------------------------------
+// ABIs — taken verbatim from the verified contract spec (vibevibe.md §5).
+// ---------------------------------------------------------------------------
+const FACTORY_ABI = parseAbi([
+    'function curveOf(address token) view returns (address)',
+    'function isV6Token(address) view returns (bool)',
+    'function launchCount() view returns (uint256)',
+    'event LaunchCreated(uint256 indexed launchId, address indexed launcher, address indexed token, address curve, string name, string symbol, string metadataURI, address pairCurrency, uint16 taxBps, uint64 packedWeights, address projectTreasury, uint256 targetPairUnits, uint256 netPersonal, uint256 giftNetTotal, bytes32 giftRoot, uint256 giftCount)',
+]);
+
+const CURVE_ABI = parseAbi([
+    'function token() view returns (address)',
+    'function pairCurrency() view returns (address)',
+    'function complete() view returns (bool)',
+    'function sold() view returns (uint120)',
+    'function targetPairUnits() view returns (uint256)',
+    'function pairPrincipal() view returns (uint128)',
+    'function currentRateBps() view returns (uint256)',
+    'event CurveBuy(address indexed buyer, address indexed recipient, uint256 grossTokens, uint256 netTokens, uint256 tokenFee, uint256 pairCost, uint256 pairFee, uint256 rateBps)',
+    'event CurveSell(address indexed seller, address indexed recipient, uint256 grossTokens, uint256 netTokens, uint256 tokenFee, uint256 pairProceeds, uint256 pairFee)',
+]);
+
+const TOKEN_ABI = parseAbi([
+    'function name() view returns (string)',
+    'function symbol() view returns (string)',
+    'function decimals() view returns (uint8)',
+    'function transfersUnlocked() view returns (bool)',
+    'function baseTaxBps() view returns (uint256)',
+]);
+
+// Event topic hashes (keccak256 of the canonical signatures above). Used to
+// filter raw logs before decoding.
+const LAUNCH_CREATED_TOPIC = '0xa7e8032bfd07a9fbcde50eabe91eb2901faee6dbddd9cced579491d9b07ef5c8';
+const CURVE_BUY_TOPIC = '0x55867fe9a84ea30ad247ef1bb703eba47fd9af476149002512a2814b1e3d8fb5';
+const CURVE_SELL_TOPIC = '0x3899b2b9ba4dfe77b54ff5e6f921672b2a7563ade468f2a106b25a4b808d60de';
+
+// The zap router is what the vibe/vibe website uses for non-ETH pairs and
+// graduated tokens, so CurveBuy/CurveSell `buyer`/`seller` is often this
+// address. The real wallet is then `recipient`. Never show the zap as a trader.
+const ZAP_ROUTER = '0x2784448c519D01d3aE257C0aac0b7cDAd8AccEB1'.toLowerCase();
 
 interface LiveApiMetrics {
     marketCapFormatted: string | null;
@@ -150,9 +204,19 @@ async function fetchLiveApiMetrics(tokenAddress: string): Promise<LiveApiMetrics
     }
 }
 
-// --- DB HELPER FUNCTION ---
-async function updateMomentumInDatabase(tokenAddress: string, isBuy: boolean, ethVolume: number, txBlockNumber: number, buyerAddress: string) {
-    // 1. Fetch current momentum data for this token
+// ---------------------------------------------------------------------------
+// DB HELPER — momentum from a real curve trade.
+//
+// `pairAmount` is the pair-currency amount in base units (18 decimals for ETH
+// and most pairs). `trader` is the REAL wallet (recipient), never the zap.
+// ---------------------------------------------------------------------------
+async function updateMomentumInDatabase(
+    tokenAddress: string,
+    isBuy: boolean,
+    pairAmount: bigint,
+    txBlockNumber: number,
+    trader: string
+) {
     const { data: token } = await supabase
         .from('launches')
         .select('volume_eth, buy_count, sell_count, launch_block, block_zero_buyers, dev_address')
@@ -161,26 +225,25 @@ async function updateMomentumInDatabase(tokenAddress: string, isBuy: boolean, et
 
     if (!token) return;
 
+    const pairVolume = Number(formatUnits(pairAmount, 18));
+
     let newBlockZeroBuyers = token.block_zero_buyers || 0;
     if (isBuy && token.launch_block && txBlockNumber === token.launch_block) {
         // Filter out the developer's pre-buy
-        if (buyerAddress.toLowerCase() !== (token.dev_address || "").toLowerCase()) {
+        if (trader.toLowerCase() !== (token.dev_address || '').toLowerCase()) {
             newBlockZeroBuyers += 1;
-            console.log(`🎯 SNIPER DETECTED: Block 0 buy by ${buyerAddress} on ${tokenAddress}`);
+            console.log(`🎯 SNIPER DETECTED: Block 0 buy by ${trader} on ${tokenAddress}`);
         }
     }
 
-    // 2. Add the new trade to the rolling total
     const newBuyCount = isBuy ? (token.buy_count || 0) + 1 : (token.buy_count || 0);
     const newSellCount = !isBuy ? (token.sell_count || 0) + 1 : (token.sell_count || 0);
-    const newVolume = (token.volume_eth || 0) + ethVolume;
+    const newVolume = (token.volume_eth || 0) + pairVolume;
 
-    // 3. Calculate percentages
     const totalTrades = newBuyCount + newSellCount;
     const buyPct = totalTrades > 0 ? Math.round((newBuyCount / totalTrades) * 100) : 50;
     const sellPct = 100 - buyPct;
 
-    // 4. Save it back to Supabase
     await supabase
         .from('launches')
         .update({
@@ -189,51 +252,176 @@ async function updateMomentumInDatabase(tokenAddress: string, isBuy: boolean, et
             sell_count: newSellCount,
             buy_pct: buyPct,
             sell_pct: sellPct,
-            block_zero_buyers: newBlockZeroBuyers
+            block_zero_buyers: newBlockZeroBuyers,
         })
         .eq('token_address', tokenAddress.toLowerCase());
 }
 
-async function runIndexer() {
-    console.log("⚡ Vibe Signals Cloud Node Live...");
+// ---------------------------------------------------------------------------
+// Per-curve trade watchers. Each launched token has its own curve contract, so
+// we attach a watcher to every curve we discover and keep a map so we never
+// double-subscribe.
+// ---------------------------------------------------------------------------
+const watchedCurves = new Map<string, () => void>();
 
-    // 1. THE LAUNCH CATCHER
-    publicClient.watchEvent({
-        address: FACTORY_ADDRESS,
-        onLogs: async logs => {
+function watchCurve(curveAddress: string, tokenAddress: string) {
+    const curve = curveAddress.toLowerCase();
+    if (watchedCurves.has(curve)) return;
+
+    const unwatch = publicClient.watchContractEvent({
+        address: curve as `0x${string}`,
+        abi: CURVE_ABI,
+        onLogs: async (logs) => {
             for (const log of logs) {
                 try {
-                    if (log.topics[0] === CREATION_TOPIC && log.topics[1] && log.topics[2] && log.topics[3]) {
-                        const launchId = parseInt(log.topics[1] as string, 16);
-                        const devAddress = `0x${log.topics[2].slice(26)}`.toLowerCase();
-                        const tokenAddress = `0x${log.topics[3].slice(26)}`.toLowerCase();
-                        const ammAddress = `0x${log.data.slice(26, 66)}`.toLowerCase() as `0x${string}`;
+                    if (log.eventName === 'CurveBuy') {
+                        const { recipient, buyer, pairCost } = log.args as {
+                            recipient?: string;
+                            buyer?: string;
+                            pairCost?: bigint;
+                        };
+                        if (pairCost == null) continue;
+                        // The real wallet is the recipient; `buyer` is often the zap.
+                        const trader = (recipient || buyer || '').toLowerCase();
+                        console.log(
+                            `🟢 BUY: ${formatUnits(pairCost, 18)} pair on ${tokenAddress} by ${trader}`
+                        );
+                        await updateMomentumInDatabase(
+                            tokenAddress,
+                            true,
+                            pairCost,
+                            Number(log.blockNumber),
+                            trader
+                        );
+                    } else if (log.eventName === 'CurveSell') {
+                        const { recipient, seller, pairProceeds } = log.args as {
+                            recipient?: string;
+                            seller?: string;
+                            pairProceeds?: bigint;
+                        };
+                        if (pairProceeds == null) continue;
+                        const trader = (recipient || seller || '').toLowerCase();
+                        console.log(
+                            `🔴 SELL: ${formatUnits(pairProceeds, 18)} pair on ${tokenAddress} by ${trader}`
+                        );
+                        await updateMomentumInDatabase(
+                            tokenAddress,
+                            false,
+                            pairProceeds,
+                            Number(log.blockNumber),
+                            trader
+                        );
+                    }
+                } catch (logErr) {
+                    console.error('Error processing curve trade log:', logErr);
+                }
+            }
+        },
+        onError: (error) => {
+            console.error(`Curve watchEvent error for ${curve} (RPC hiccup):`, error);
+        },
+    });
 
-                        const baseTokenHex = log.data.slice(282, 322);
-                        const isNativeEth = baseTokenHex === "0000000000000000000000000000000000000000";
+    watchedCurves.set(curve, unwatch);
+    console.log(`👀 Watching curve ${curve} for ${tokenAddress}`);
+}
 
-                        // Fetch real token name and ticker from the contract
-                        let tokenName = `Token #${launchId}`;
-                        let tokenSymbol = "TKN";
+/**
+ * Re-attaches curve watchers for tokens already in the DB. Called once on boot
+ * so a restart does not lose real-time momentum for existing launches.
+ */
+async function rehydrateCurveWatchers() {
+    try {
+        const { data: tokens } = await supabase
+            .from('launches')
+            .select('token_address, amm_address')
+            .order('launch_id', { ascending: false })
+            .limit(200);
+        if (!tokens) return;
+        for (const t of tokens) {
+            if (t.amm_address && t.token_address) {
+                watchCurve(t.amm_address, t.token_address);
+            }
+        }
+        console.log(`♻ Rehydrated ${watchedCurves.size} curve watchers`);
+    } catch (err) {
+        console.error('Failed to rehydrate curve watchers:', err);
+    }
+}
+
+async function runIndexer() {
+    console.log('⚡ Vibe Signals Cloud Node Live...');
+
+    // 1. THE LAUNCH CATCHER — decode the real LaunchCreated event.
+    publicClient.watchContractEvent({
+        address: FACTORY_ADDRESS,
+        abi: FACTORY_ABI,
+        onLogs: async (logs) => {
+            for (const log of logs) {
+                try {
+                    if (log.eventName !== 'LaunchCreated') continue;
+                    const args = log.args as {
+                        launchId?: bigint;
+                        launcher?: string;
+                        token?: string;
+                        curve?: string;
+                        name?: string;
+                        symbol?: string;
+                        pairCurrency?: string;
+                        taxBps?: number;
+                        packedWeights?: bigint;
+                        projectTreasury?: string;
+                        targetPairUnits?: bigint;
+                    };
+
+                    const launchId = Number(args.launchId ?? 0);
+                    const devAddress = (args.launcher || '').toLowerCase();
+                    const tokenAddress = (args.token || '').toLowerCase();
+                    const curveAddress = (args.curve || '').toLowerCase();
+                    if (!tokenAddress || !curveAddress) continue;
+
+                    const isNativeEth =
+                        (args.pairCurrency || '').toLowerCase() === ZERO_ADDRESS;
+
+                    // Prefer the event's own name/symbol; fall back to the contract.
+                    let tokenName = args.name || `Token #${launchId}`;
+                    let tokenSymbol = args.symbol || 'TKN';
+                    if (!args.name || !args.symbol) {
                         try {
-                            tokenName = await publicClient.readContract({ address: tokenAddress as `0x${string}`, abi: ERC20_ABI, functionName: "name" }) as string;
-                            tokenSymbol = await publicClient.readContract({ address: tokenAddress as `0x${string}`, abi: ERC20_ABI, functionName: "symbol" }) as string;
-                        } catch (e) { console.log("⚠ Could not read token metadata"); }
+                            const [n, s] = await Promise.all([
+                                publicClient.readContract({
+                                    address: tokenAddress as `0x${string}`,
+                                    abi: TOKEN_ABI,
+                                    functionName: 'name',
+                                }),
+                                publicClient.readContract({
+                                    address: tokenAddress as `0x${string}`,
+                                    abi: TOKEN_ABI,
+                                    functionName: 'symbol',
+                                }),
+                            ]);
+                            tokenName = n as string;
+                            tokenSymbol = s as string;
+                        } catch {
+                            console.log('⚠ Could not read token metadata');
+                        }
+                    }
 
-                        // 2-second delay to let VibeVibe's off-chain DB catch up,
-                        // then pull REAL market data (socials, market cap, volume).
-                        await new Promise(r => setTimeout(r, 2000));
-                        const live = await fetchLiveApiMetrics(tokenAddress);
+                    // 2-second delay to let VibeVibe's off-chain DB catch up,
+                    // then pull REAL market data (socials, market cap, volume).
+                    await new Promise((r) => setTimeout(r, 2000));
+                    const live = await fetchLiveApiMetrics(tokenAddress);
 
-                        const hasSocials = live?.hasSocials ?? false;
-                        if (hasSocials) console.log(`🔗 Socials verified for ${tokenSymbol}`);
+                    const hasSocials = live?.hasSocials ?? false;
+                    if (hasSocials) console.log(`🔗 Socials verified for ${tokenSymbol}`);
 
-                        console.log(`🚨 CLOUD SYNC: [#${launchId}] ${tokenName} ($${tokenSymbol})`);
+                    console.log(`🚨 CLOUD SYNC: [#${launchId}] ${tokenName} ($${tokenSymbol})`);
 
-                        await supabase.from('launches').upsert({
+                    await supabase.from('launches').upsert(
+                        {
                             launch_id: launchId,
                             token_address: tokenAddress,
-                            amm_address: ammAddress,
+                            amm_address: curveAddress,
                             dev_address: devAddress,
                             pair_symbol: live?.pairSymbol || (isNativeEth ? 'ETH' : 'STOCK'),
                             liquidity_deposited: live?.liquidityDeposited ?? 0,
@@ -245,48 +433,33 @@ async function runIndexer() {
                             // Backfill real market data so Supabase converges with the API.
                             cachedMarketCapFormatted: live?.marketCapFormatted ?? null,
                             volume_eth: live?.volumeEth ?? 0,
-                        }, { onConflict: 'token_address' });
-                    }
+                        },
+                        { onConflict: 'token_address' }
+                    );
+
+                    // Start streaming this token's trades immediately.
+                    watchCurve(curveAddress, tokenAddress);
                 } catch (logErr) {
-                    console.error('Error processing log event:', logErr);
+                    console.error('Error processing launch log event:', logErr);
                 }
             }
         },
         onError: (error) => {
             console.error('Factory watchEvent error (RPC hiccup):', error);
-        }
-    });
-
-    // 2. THE BUY MOMENTUM CATCHER
-    const curveBuyEvent = parseAbiItem('event CurveBuy(address indexed token, address indexed buyer, uint256 tokensOut, uint256 bnbIn, uint256 fee, uint256 reserveAfter, uint256 soldAfter, uint256 timestamp)');
-
-    publicClient.watchEvent({
-        event: curveBuyEvent,
-        onLogs: async (logs) => {
-            for (const log of logs) {
-                try {
-                    const { token, bnbIn, buyer } = log.args;
-                    if (!token || !bnbIn || !buyer) continue;
-                    
-                    const txBlockNumber = Number(log.blockNumber);
-                    const ethVolume = Number(formatEther(bnbIn as bigint));
-                    console.log(`🟢 BUY DETECTED: ${ethVolume.toFixed(4)} ETH on token ${token}`);
-                    
-                    await updateMomentumInDatabase(token.toLowerCase(), true, ethVolume, txBlockNumber, buyer as string);
-                } catch (logErr) {
-                    console.error('Error processing log event:', logErr);
-                }
-            }
         },
-        onError: (error) => {
-            console.error('Router watchEvent error (RPC hiccup):', error);
-        }
     });
+
+    // Re-attach watchers for tokens already indexed before this boot.
+    await rehydrateCurveWatchers();
 
     // 3. THE LIVE BALANCE UPDATER (Runs every 10 seconds)
     setInterval(async () => {
         try {
-            const { data: recentTokens } = await supabase.from('launches').select('*').order('launch_id', { ascending: false }).limit(20);
+            const { data: recentTokens } = await supabase
+                .from('launches')
+                .select('*')
+                .order('launch_id', { ascending: false })
+                .limit(20);
             if (!recentTokens) return;
 
             for (const token of recentTokens) {
@@ -309,45 +482,72 @@ async function runIndexer() {
                         continue;
                     }
 
-                    const rawEth = await publicClient.getBalance({ address: token.amm_address as `0x${string}` });
-                    const currentLiq = parseFloat(formatEther(rawEth));
-                    
-                    // 2. If balance drops to 0 or was drained after accumulating liquidity, it graduated! Lock to 100%
-                    if (currentLiq === 0 && Number(token.liquidity_deposited) >= 2.0) {
-                        await supabase.from('launches').update({
-                            ...apiPayload,
-                            curve_progress: 100,
-                            liquidity_deposited: 4.0
-                        }).eq('launch_id', token.launch_id);
-                        continue;
-                    }
+                    // Read the real curve state instead of guessing from balance.
+                    let currentLiq = 0;
+                    let graduated = false;
+                    try {
+                        const curve = token.amm_address as `0x${string}`;
+                        const [principal, target, complete] = await Promise.all([
+                            publicClient.readContract({
+                                address: curve,
+                                abi: CURVE_ABI,
+                                functionName: 'pairPrincipal',
+                            }),
+                            publicClient.readContract({
+                                address: curve,
+                                abi: CURVE_ABI,
+                                functionName: 'targetPairUnits',
+                            }),
+                            publicClient.readContract({
+                                address: curve,
+                                abi: CURVE_ABI,
+                                functionName: 'complete',
+                            }),
+                        ]);
+                        currentLiq = Number(formatUnits(principal as bigint, 18));
+                        graduated = complete as boolean;
+                        const targetUnits = Number(formatUnits(target as bigint, 18)) || 4;
+                        const progress = graduated
+                            ? 100
+                            : Math.min(100, Math.max(0, (currentLiq / targetUnits) * 100));
 
-                    const progress = Math.min(100, Math.max(0, (currentLiq / 4.0) * 100));
-
-                    // Only update if progress actually moved forward OR we have fresh API data
-                    if (progress > Number(token.curve_progress || 0) || (token.volume_eth || 0) < currentLiq || Object.keys(apiPayload).length > 0) {
-                        const updatePayload: any = {
-                            ...apiPayload,
-                            liquidity_deposited: Number(currentLiq.toFixed(4)),
-                            curve_progress: Number(progress.toFixed(1))
-                        };
-
-                        // Only fall back to the balance heuristic when the API gave us no volume.
-                        if (apiPayload.volume_eth == null && (!token.volume_eth || token.volume_eth < currentLiq)) {
-                            updatePayload.volume_eth = Number(currentLiq.toFixed(4));
-                            updatePayload.buy_pct = 100;
-                            updatePayload.sell_pct = 0;
+                        if (progress > Number(token.curve_progress || 0) || Object.keys(apiPayload).length > 0) {
+                            const updatePayload: any = {
+                                ...apiPayload,
+                                liquidity_deposited: Number(currentLiq.toFixed(4)),
+                                curve_progress: Number(progress.toFixed(1)),
+                            };
+                            await supabase.from('launches').update(updatePayload).eq('launch_id', token.launch_id);
+                            console.log(
+                                `📈 SYNC: $${token.symbol} liq: ${currentLiq.toFixed(4)} (${progress.toFixed(1)}%)`
+                            );
                         }
-
-                        await supabase.from('launches').update(updatePayload).eq('launch_id', token.launch_id);
-                        console.log(`📈 SYNC: $${token.symbol} liq: ${currentLiq.toFixed(4)} ETH (${progress.toFixed(1)}%)`);
+                    } catch (curveErr) {
+                        // Fall back to the balance heuristic if the curve read fails.
+                        const rawEth = await publicClient.getBalance({
+                            address: token.amm_address as `0x${string}`,
+                        });
+                        currentLiq = parseFloat(formatUnits(rawEth, 18));
+                        const progress = Math.min(100, Math.max(0, (currentLiq / 4.0) * 100));
+                        if (progress > Number(token.curve_progress || 0) || Object.keys(apiPayload).length > 0) {
+                            await supabase
+                                .from('launches')
+                                .update({
+                                    ...apiPayload,
+                                    liquidity_deposited: Number(currentLiq.toFixed(4)),
+                                    curve_progress: Number(progress.toFixed(1)),
+                                })
+                                .eq('launch_id', token.launch_id);
+                        }
                     }
                 } else if (Object.keys(apiPayload).length > 0) {
                     // Non-ETH pairs: persist the API-derived market data.
                     await supabase.from('launches').update(apiPayload).eq('launch_id', token.launch_id);
                 }
             }
-        } catch (err) { }
+        } catch (err) {
+            /* swallow — transient DB/RPC hiccups must not kill the loop */
+        }
     }, 10000);
 }
 
@@ -355,8 +555,8 @@ runIndexer();
 
 const PORT = Number(process.env.PORT) || 3000;
 createServer((req, res) => {
-  res.writeHead(200, { 'Content-Type': 'text/plain' });
-  res.end('Vibe Signals Indexer is Live and Healthy!');
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('Vibe Signals Indexer is Live and Healthy!');
 }).listen(PORT, '0.0.0.0', () => {
-  console.log(`Health check listening on 0.0.0.0:${PORT}`);
+    console.log(`Health check listening on 0.0.0.0:${PORT}`);
 });
