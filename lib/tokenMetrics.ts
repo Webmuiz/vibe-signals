@@ -53,6 +53,124 @@ export interface RawVibeResponse {
   [key: string]: any;
 }
 
+/**
+ * Vibe Score v2 — transparent, weighted 0-100 launchpad token score.
+ *
+ * Formula:
+ *   VibeScore = clamp( round( Base × TrustMultiplier × MomentumMultiplier − Penalties ), 1, 100 )
+ *
+ *   Base = 0.30·S_curve + 0.25·S_momentum + 0.20·S_trust + 0.15·S_safety + 0.10·S_identity
+ *
+ * Developer red flags act as a CEILING multiplier (not a bonus), so a serial
+ * dumper can never exceed ~35 even with perfect momentum. Pure arithmetic,
+ * O(1), no I/O — safe to run for every card on every poll.
+ */
+export interface VibeScoreParams {
+  /** Sniper / MEV block-zero buyer count. */
+  blockZeroBuyers: number;
+  /** Token age in minutes. */
+  timeSinceLaunchMins: number;
+  /** Bonding curve progress, 0-100. */
+  curveProgress: number;
+  /** Diamond-hand holder percentage, 0-100. */
+  diamondPct: number;
+  /** 24h volume denominated in the pair asset (ETH-equivalent). */
+  volumeEth: number;
+  /** Buy pressure, 0-100. */
+  buyPct: number;
+  /** Whether the token has any social presence. */
+  hasSocials: boolean;
+  /** Creator bag as a percentage of total supply, 0-100. */
+  creatorHoldingPct: number;
+  /** Total launches by this developer (0 = unknown). */
+  totalLaunches: number;
+  /** Developer graduation rate, 0-100. */
+  graduationRate: number;
+  /** Number of past tokens this dev dumped pre-graduation. */
+  totalPreGradDumps: number;
+  /** Whether the dev has dumped at least one past token. */
+  isSerialDumper: boolean;
+}
+
+const clamp = (value: number, min: number, max: number) =>
+  Math.max(min, Math.min(max, value));
+
+/** Logarithmic saturation: fast early traction, diminishing returns late. */
+const saturate = (ratio: number) => 100 * Math.log10(1 + 9 * clamp(ratio, 0, 1));
+
+export function calculateVibeScore(params: VibeScoreParams): number {
+  const {
+    blockZeroBuyers,
+    timeSinceLaunchMins,
+    curveProgress,
+    diamondPct,
+    volumeEth,
+    buyPct,
+    hasSocials,
+    creatorHoldingPct,
+    totalLaunches,
+    graduationRate,
+    totalPreGradDumps,
+    isSerialDumper,
+  } = params;
+
+  // --- Sub-scores (each 0-100) -------------------------------------------
+  // S_curve: bonding curve progress (log-saturated).
+  const sCurve = saturate(curveProgress / 100);
+
+  // S_momentum: volume magnitude (saturates at 1 ETH) × buy-pressure quality.
+  const volScore = saturate(clamp(volumeEth, 0, 1) / 1);
+  const buyScore = clamp((buyPct - 50) * 2, 0, 100);
+  const sMomentum = 0.6 * volScore + 0.4 * buyScore;
+
+  // S_trust: developer track record (unknown dev = neutral 50, not punished).
+  const sTrust = totalLaunches === 0 ? 50 : clamp(graduationRate, 0, 100);
+
+  // S_safety: creator bag + sniper/MEV resistance + diamond hands.
+  const bagScore = clamp(100 - creatorHoldingPct * 4, 0, 100);
+  const sniperScore = clamp(100 - blockZeroBuyers * 5, 0, 100);
+  const diamondScore = clamp(diamondPct, 0, 100);
+  const sSafety = 0.45 * bagScore + 0.35 * sniperScore + 0.2 * diamondScore;
+
+  // S_identity: social presence.
+  const sIdentity = hasSocials ? 100 : 20;
+
+  // --- Weighted base (0-100) ---------------------------------------------
+  const base =
+    0.3 * sCurve +
+    0.25 * sMomentum +
+    0.2 * sTrust +
+    0.15 * sSafety +
+    0.1 * sIdentity;
+
+  // --- Trust multiplier: the developer discipline gate -------------------
+  let trustMultiplier = 1.0;
+  if (isSerialDumper) {
+    trustMultiplier = 0.35; // dumped before → hard cap ~35
+  } else if (totalLaunches >= 3 && graduationRate === 0) {
+    trustMultiplier = 0.25; // serial non-graduate → hard cap ~25
+  } else if (totalLaunches > 0) {
+    if (graduationRate >= 50) trustMultiplier = 1.0;
+    else if (graduationRate >= 20) trustMultiplier = 0.75;
+    else trustMultiplier = 0.55;
+  }
+
+  // --- Momentum multiplier: anti-pump guard ------------------------------
+  const momentumMultiplier =
+    timeSinceLaunchMins < 10 && curveProgress > 70 ? 0.7 : 1.0;
+
+  // --- Explicit penalties (post-multiplier) ------------------------------
+  let penalties = 0;
+  if (creatorHoldingPct > 10) penalties += 15;
+  if (blockZeroBuyers > 15) penalties += 15;
+  if (buyPct < 40 && volumeEth >= 0.01) penalties += 12;
+  if (totalPreGradDumps >= 2) penalties += 10;
+
+  // --- Final normalization -----------------------------------------------
+  const raw = base * trustMultiplier * momentumMultiplier - penalties;
+  return clamp(Math.round(raw), 1, 100);
+}
+
 const ERC20_SYMBOL_ABI = [
   { name: 'symbol', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'string' }] },
 ] as const;

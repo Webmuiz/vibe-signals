@@ -18,9 +18,11 @@ import {
   formatTimeLive,
   getUsdRateForPair,
   calculateTokenMetrics,
+  calculateVibeScore,
   normalizeVibeResponse,
   ERC20_SYMBOL_ABI,
   type LiveTokenMetrics,
+  type VibeScoreParams,
 } from "@/lib/tokenMetrics";
 
 const SIGNAL_TOKEN = "0xD4D41412033a72a0D1cCd0Cb02b666Cf771880B1" as `0x${string}`;
@@ -132,44 +134,6 @@ function getSafetyChecks(
           ? { label: `Safe (${creatorHoldingPct.toFixed(1)}% Supply)`, safe: true }
           : { label: `High Risk (${creatorHoldingPct.toFixed(1)}% Supply)`, safe: false },
   };
-}
-
-function calculateVibeScore(
-  blockZeroBuyers: number,
-  timeSinceLaunchMins: number,
-  curveProgress: number,
-  diamondPct: number,
-  volumeEth: number,
-  buyPct: number,
-  hasSocials: boolean = false,
-  creatorHoldingPct: number = 0
-) {
-  let score = 35; // Grounded baseline
-
-  // Volume & Momentum
-  if (volumeEth >= 0.1) score += 20;
-  else if (volumeEth >= 0.03) score += 15;
-  else if (volumeEth >= 0.005) score += 5;
-
-  // Buy Pressure
-  if (buyPct >= 80 && volumeEth >= 0.005) score += 15;
-  else if (buyPct >= 60 && volumeEth >= 0.005) score += 10;
-  if (buyPct < 40 && volumeEth >= 0.01) score -= 15;
-
-  // Curve Traction (Rewards early momentum)
-  if (curveProgress >= 50) score += 20;
-  else if (curveProgress >= 15) score += 15;
-  else if (curveProgress >= 3) score += 10;
-
-  // Identity / Socials
-  if (hasSocials) score += 15;
-
-  // Severe Penalties
-  if (creatorHoldingPct > 10) score -= 25;
-  if (blockZeroBuyers > 15) score -= 25;
-  if (timeSinceLaunchMins < 10 && curveProgress > 70) score -= 20;
-
-  return Math.max(1, Math.min(100, Math.round(score)));
 }
 
 const getSymbolUsdRate = (symbol: string) => {
@@ -490,6 +454,22 @@ export default function Home() {
       const resolvedEthDeposited = live ? live.ethDeposited : ethDeposited;
       const resolvedPairSymbol = live?.pairSymbol || db.pair_symbol || db.pairSymbol || "ETH";
 
+      const devProfile = getDevProfile(devAddress, dbTokens);
+      const vibeParams: VibeScoreParams = {
+        blockZeroBuyers: block0,
+        timeSinceLaunchMins: live?.timeSinceLaunchMins ?? timeSinceLaunchMins,
+        curveProgress: resolvedCurveProgress,
+        diamondPct: diamond,
+        volumeEth: Number(volumeEth),
+        buyPct,
+        hasSocials,
+        creatorHoldingPct,
+        totalLaunches: devProfile.launches,
+        graduationRate: devProfile.gradRate,
+        totalPreGradDumps: 0,
+        isSerialDumper: false,
+      };
+
       return {
         id: (db.launch_id || db.launchId || "0").toString(),
         name: live?.name || db.name || "Unknown",
@@ -511,18 +491,9 @@ export default function Home() {
         marketCapUsd: live?.marketCapUsd,
         marketCapIsEstimate: live ? live.priceUsd === 0 : true,
         volumeUsd: live?.volumeUsd,
-        score: calculateVibeScore(
-          block0,
-          live?.timeSinceLaunchMins ?? timeSinceLaunchMins,
-          resolvedCurveProgress,
-          diamond,
-          Number(volumeEth),
-          buyPct,
-          hasSocials,
-          creatorHoldingPct
-        ),
+        score: calculateVibeScore(vibeParams),
         hasSocials: hasSocials,
-        devProfile: getDevProfile(devAddress, dbTokens),
+        devProfile,
         safetyChecks: getSafetyChecks(0, hasSocials, null),
         momentum: {
           buyPct,
@@ -596,7 +567,22 @@ export default function Home() {
 
             const socials = launch.content?.socials || {};
             const hasSocials = !!(socials.x || socials.telegram || socials.website);
-            const vibeScore = calculateVibeScore(0, timeLiveMins, curveProgress, 50, totalVolume, buyRatio, hasSocials);
+            const onChainDevAddress = launch.launcherAddress || launch.creatorAddress || query;
+            const onChainDevProfile = getDevProfile(onChainDevAddress, dbTokens);
+            const vibeScore = calculateVibeScore({
+              blockZeroBuyers: 0,
+              timeSinceLaunchMins: timeLiveMins,
+              curveProgress,
+              diamondPct: 50,
+              volumeEth: totalVolume,
+              buyPct: buyRatio,
+              hasSocials,
+              creatorHoldingPct: 0,
+              totalLaunches: onChainDevProfile.launches,
+              graduationRate: onChainDevProfile.gradRate,
+              totalPreGradDumps: 0,
+              isSerialDumper: false,
+            });
 
             let resolvedSymbol = launch.pairSymbol;
             if (!resolvedSymbol) {
@@ -734,16 +720,20 @@ export default function Home() {
             pairSymbol: metrics.pairSymbol,
             symbol: metrics.symbol || prev?.symbol,
             devAddress: metrics.devAddress || prev?.devAddress,
-            score: calculateVibeScore(
-              prev?.blockZeroBuyers || 0,
-              metrics.timeSinceLaunchMins,
-              metrics.bondingCurveProgress,
-              prev?.diamondHandsHoldersPct || 50,
-              Number(metrics.volumeEth),
-              metrics.buyPct,
-              metrics.hasSocials,
-              0
-            ),
+            score: calculateVibeScore({
+              blockZeroBuyers: prev?.blockZeroBuyers || 0,
+              timeSinceLaunchMins: metrics.timeSinceLaunchMins,
+              curveProgress: metrics.bondingCurveProgress,
+              diamondPct: prev?.diamondHandsHoldersPct || 50,
+              volumeEth: Number(metrics.volumeEth),
+              buyPct: metrics.buyPct,
+              hasSocials: metrics.hasSocials,
+              creatorHoldingPct: 0,
+              totalLaunches: prev?.devProfile?.launches ?? 0,
+              graduationRate: prev?.devProfile?.gradRate ?? 0,
+              totalPreGradDumps: 0,
+              isSerialDumper: false,
+            }),
             hasSocials: metrics.hasSocials,
             socialLinks: metrics.socialLinks,
             poolAddress: poolAddr || prev?.poolAddress,
