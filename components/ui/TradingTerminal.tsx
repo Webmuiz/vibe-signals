@@ -19,6 +19,16 @@ interface TradingTerminalProps {
   receiptStatus: "success" | "reverted" | undefined;
   onExecuteApe: () => void;
   onExecuteSell: () => void;
+  /**
+   * True when the token has graduated off the bonding curve
+   * (`curve.complete() === true` or curve progress >= 100%). Graduated tokens
+   * no longer trade on the curve, so the terminal swaps the curve buy/sell
+   * actions for a single, always-clickable "Trade on vibe/vibe" action that
+   * opens the official DEX page in a new tab.
+   */
+  isGraduated?: boolean;
+  /** Official vibe/vibe token page URL, opened for graduated tokens. */
+  tradeUrl?: string;
 }
 
 export default function TradingTerminal({
@@ -38,7 +48,42 @@ export default function TradingTerminal({
   receiptStatus,
   onExecuteApe,
   onExecuteSell,
+  isGraduated = false,
+  tradeUrl,
 }: TradingTerminalProps) {
+  // Graduated tokens no longer trade on the bonding curve. Rather than leaving
+  // the buy/sell buttons dead (which reads as "frozen"), we surface a single,
+  // always-clickable action that opens the official vibe/vibe DEX page.
+  if (isGraduated) {
+    const href = tradeUrl || "https://testnet.vibevibe.fun";
+    return (
+      <div className="bg-[#0a0a0a] border border-zinc-800 rounded-xl overflow-hidden p-4 flex flex-col shadow-xl">
+        <div className="flex items-center justify-between mb-4">
+          <span className="text-xs font-bold uppercase tracking-wider text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 px-2.5 py-1 rounded-md">
+            🎓 Graduated
+          </span>
+          <span className="text-zinc-400 text-xs font-mono bg-zinc-900/50 px-2 py-1 rounded">
+            Bal: {Math.floor(tokenBalance).toLocaleString()} {symbol || "TKN"}
+          </span>
+        </div>
+
+        <p className="text-zinc-400 text-xs leading-relaxed mb-4">
+          This token has graduated off the bonding curve. Liquidity is locked in a
+          Uniswap v4 pool, so trading now happens on the vibe/vibe DEX.
+        </p>
+
+        <a
+          href={href}
+          target="_blank"
+          rel="noreferrer"
+          className="w-full py-3 bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-black text-sm uppercase rounded-lg shadow-[0_0_15px_rgba(16,185,129,0.25)] transition-all text-center block"
+        >
+          Trade on vibe/vibe ↗
+        </a>
+      </div>
+    );
+  }
+
   return (
     <div className="bg-[#0a0a0a] border border-zinc-800 rounded-xl overflow-hidden p-4 flex flex-col shadow-xl">
       {/* Header & Tabs */}

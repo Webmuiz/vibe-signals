@@ -234,7 +234,7 @@ const getSymbolUsdRate = (symbol: string) => {
 export default function Home() {
   const { login, logout, authenticated, ready } = usePrivy();
   const { address, isConnected } = useAccount();
-  const { sendTransaction, isPending: isTxPending, data: hash } = useSendTransaction();
+  const { sendTransaction, isPending: isTxPending, data: hash, reset: resetSendTransaction } = useSendTransaction();
   const { data: receipt, isLoading: isTxWaiting, isSuccess: isTxSuccess } = useWaitForTransactionReceipt({ hash });
 
   const [activeFilter, setActiveFilter] = useState<"all" | "alpha" | "graduating" | "risk">("all");
@@ -272,6 +272,25 @@ export default function Home() {
   useEffect(() => {
     activeTokenRef.current = selectedToken?.contractAddress || null;
   }, [selectedToken?.contractAddress]);
+
+  // Auto-dismiss the transaction status toast 5s after the tx settles
+  // (success or revert). Without this the "Confirming…/Confirmed/Reverted"
+  // banner lingered forever and made the trade box look stuck.
+  useEffect(() => {
+    if (!hash) return;
+    if (!isTxSuccess && receipt?.status !== "reverted") return;
+    const timer = setTimeout(() => {
+      resetSendTransaction();
+    }, 5000);
+    return () => clearTimeout(timer);
+  }, [hash, isTxSuccess, receipt?.status, resetSendTransaction]);
+
+  // Reset all transaction state whenever the user opens a different token, so
+  // a new detail drawer always starts with a clean UI slate (no stale hash or
+  // success/revert banner from the previously viewed token).
+  useEffect(() => {
+    resetSendTransaction();
+  }, [selectedToken?.contractAddress, resetSendTransaction]);
 
   const [liveRates, setLiveRates] = useState<Record<string, number>>({
     ETH: 2600, WETH: 2600, NVDA: 465, AAPL: 225, SPCX: 20, MSFT: 415, TSLA: 250,
@@ -1404,6 +1423,19 @@ export default function Home() {
     );
   }, [liveMetrics]);
 
+  // A token is treated as graduated when the API reports it as such OR the
+  // curve progress has reached 100%. Graduated tokens trade on the Uniswap v4
+  // pool, not the bonding curve, so the terminal swaps to a DEX link.
+  const isGraduated = !!selectedToken && (
+    (selectedToken as any).isGraduated === true ||
+    (selectedToken as any).lifecycle === "GRADUATED" ||
+    (selectedToken as any).graduated === true ||
+    Number(selectedToken.bondingCurveProgress ?? 0) >= 100
+  );
+  const vibeTradeUrl = selectedToken
+    ? `https://testnet.vibevibe.fun/token/${selectedToken.contractAddress}`
+    : undefined;
+
   const top5Pct = topHolders.reduce((acc, h) => acc + h.pct, 0);
   const devHolder = topHolders.find((h: any) => h.address.toLowerCase() === (selectedToken?.devAddress || "").toLowerCase());
   const creatorHoldingPct = devHolder ? devHolder.pct : 0;
@@ -1541,6 +1573,8 @@ export default function Home() {
                   receiptStatus={receipt?.status}
                   onExecuteApe={handleExecuteApe}
                   onExecuteSell={handleExecuteSell}
+                  isGraduated={isGraduated}
+                  tradeUrl={vibeTradeUrl}
                 />
 
                 <SafetyAuditPanel
