@@ -50,7 +50,7 @@ interface TokenCardProps {
   liveMetricsResolved?: boolean;
 }
 
-export default function TokenCard({
+function TokenCard({
   token,
   isConnected,
   hasAccess,
@@ -173,3 +173,41 @@ export default function TokenCard({
     </div>
   );
 }
+
+/**
+ * Custom comparator: only re-render when a value that is actually DISPLAYED
+ * changes. The 10s polling loop hands us fresh object references even when the
+ * underlying data is identical, which previously forced every card (and its
+ * Vibe Score) to re-render/flicker. `onSelect` is intentionally ignored here
+ * because the parent stabilises it with `useCallback`.
+ */
+function areTokenCardPropsEqual(prev: TokenCardProps, next: TokenCardProps): boolean {
+  if (prev.isConnected !== next.isConnected) return false;
+  if (prev.hasAccess !== next.hasAccess) return false;
+  if (prev.signalTokenAddress !== next.signalTokenAddress) return false;
+  if (prev.liveMetricsResolved !== next.liveMetricsResolved) return false;
+  if (prev.liveRates !== next.liveRates) return false;
+
+  const a = prev.token;
+  const b = next.token;
+  return (
+    a.id === b.id &&
+    a.name === b.name &&
+    a.ticker === b.ticker &&
+    a.contractAddress === b.contractAddress &&
+    a.score === b.score &&
+    a.bondingCurveProgress === b.bondingCurveProgress &&
+    a.ethDeposited === b.ethDeposited &&
+    a.pairSymbol === b.pairSymbol &&
+    a.timeSinceLaunchMins === b.timeSinceLaunchMins &&
+    a.marketCapUsd === b.marketCapUsd &&
+    a.marketCapIsEstimate === b.marketCapIsEstimate &&
+    a.volumeUsd === b.volumeUsd &&
+    a.cachedMarketCapFormatted === b.cachedMarketCapFormatted &&
+    a.momentum?.buyPct === b.momentum?.buyPct &&
+    a.momentum?.sellPct === b.momentum?.sellPct &&
+    a.momentum?.volumeEth === b.momentum?.volumeEth
+  );
+}
+
+export default React.memo(TokenCard, areTokenCardPropsEqual);

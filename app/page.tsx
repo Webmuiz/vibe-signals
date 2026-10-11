@@ -1,11 +1,11 @@
 "use client";
 
-import { useState, useMemo, useEffect, useRef } from "react";
+import { useState, useMemo, useEffect, useRef, useCallback, memo } from "react";
 import { usePrivy } from "@privy-io/react-auth";
 import { useAccount, useSendTransaction, useBalance, useReadContract, useWaitForTransactionReceipt } from "wagmi";
 import { isAddress, parseEther, parseUnits, createPublicClient, http, formatEther, encodeAbiParameters, parseAbiParameters } from "viem";
 import Header from "@/components/ui/Header";
-import TokenCard from "@/components/ui/TokenCard";
+import TokenCard, { type TokenCardData } from "@/components/ui/TokenCard";
 import SafetyAuditPanel from "@/components/ui/SafetyAuditPanel";
 import DeveloperProfilerPanel from "@/components/ui/DeveloperProfilerPanel";
 import CabalDetectorPanel from "@/components/ui/CabalDetectorPanel";
@@ -80,6 +80,23 @@ interface DBToken {
   block_zero_buyers?: number;
   sniper_retention_pct?: number;
   sniperRetentionPct?: number;
+}
+
+/**
+ * Shallow-compares two DBToken rows. Used by the 10s polling reconciler to
+ * decide whether a token actually changed; when it did not, the previous
+ * object reference is reused so downstream `useMemo`/`React.memo` boundaries
+ * stay referentially stable and the UI (incl. the Vibe Score) does not
+ * re-render/flicker on every poll tick.
+ */
+function shallowEqualToken(a: DBToken, b: DBToken): boolean {
+  const keys = new Set<string>([...Object.keys(a), ...Object.keys(b)]);
+  for (const key of keys) {
+    const av = (a as Record<string, unknown>)[key];
+    const bv = (b as Record<string, unknown>)[key];
+    if (av !== bv) return false;
+  }
+  return true;
 }
 
 function getDevProfile(devAddress: string, allTokens: DBToken[]) {
@@ -433,12 +450,33 @@ export default function Home() {
             const key = (t.tokenAddress || t.token_address || '').toLowerCase();
             if (key) byAddress.set(key, t);
           }
+
+          let changed = false;
           for (const row of rows) {
             const key = (row.tokenAddress || row.token_address || '').toLowerCase();
             if (!key) continue;
             const existing = byAddress.get(key);
-            byAddress.set(key, existing ? { ...existing, ...row } : row);
+            if (!existing) {
+              // Brand-new token — always a real change.
+              byAddress.set(key, row);
+              changed = true;
+              continue;
+            }
+            // Reconcile field-by-field and REUSE the previous object reference
+            // when every value is identical. This keeps `processedTokens` /
+            // `filteredTokens` referentially stable across the 10s poll, so
+            // memoized cards and the detail drawer do not re-render (and the
+            // Vibe Score does not flicker) when nothing actually changed.
+            const merged = { ...existing, ...row };
+            if (!shallowEqualToken(existing, merged)) {
+              byAddress.set(key, merged);
+              changed = true;
+            }
           }
+
+          // Preserve insertion order but avoid allocating a new array (and thus
+          // new element identities) when nothing changed.
+          if (!changed && byAddress.size === prev.length) return prev;
           return Array.from(byAddress.values());
         });
 
@@ -1132,6 +1170,51 @@ export default function Home() {
     } catch (err) { console.error(err); }
   };
 
+  // Memoized so the detail-drawer score only re-renders when the integer score
+  // actually changes — not when the parent replaces `selectedToken` with a new
+  // object reference on every 10s poll tick.
+  const VibeScoreDisplay = useMemo(
+    () =>
+      memo(function VibeScoreDisplay({ score }: { score: number }) {
+        const color =
+          score >= 70
+            ? "text-emerald-400"
+            : score >= 45
+              ? "text-yellow-400"
+              : "text-red-400";
+        return <span className={`text-3xl font-bold ${color}`}>{score}</span>;
+      }),
+    []
+  );
+
+  // Stable selection handler. Without this, a fresh inline arrow was created on
+  // every render, defeating the `React.memo` on TokenCard and re-rendering all
+  // cards (and their Vibe Scores) on each 10s poll.
+  const handleSelectToken = useCallback((selected: TokenCardData) => {
+    // Seed the detail view from the SAME cached live metrics the card is
+    // displaying, so there is no stale-state jump.
+    const live = liveMetrics[selected.contractAddress.toLowerCase()];
+    setSelectedToken(
+      live
+        ? {
+            ...selected,
+            ...live,
+            id: selected.id,
+            blockZeroBuyers: (selected as any).blockZeroBuyers ?? 0,
+            diamondHandsHoldersPct: (selected as any).diamondHandsHoldersPct ?? 50,
+            devProfile: (selected as any).devProfile,
+            safetyChecks: (selected as any).safetyChecks,
+            momentum: {
+              buyPct: live.buyPct,
+              sellPct: live.sellPct,
+              volumeEth: live.volumeEth,
+              volumeUsd: live.volumeUsd,
+            },
+          }
+        : selected
+    );
+  }, [liveMetrics]);
+
   const top5Pct = topHolders.reduce((acc, h) => acc + h.pct, 0);
   const devHolder = topHolders.find((h: any) => h.address.toLowerCase() === (selectedToken?.devAddress || "").toLowerCase());
   const creatorHoldingPct = devHolder ? devHolder.pct : 0;
@@ -1192,9 +1275,7 @@ export default function Home() {
               </div>
               <div className="text-right">
                 <span className="block text-sm text-zinc-400 mb-1">Vibe Score</span>
-                <span className={`text-3xl font-bold ${selectedToken.score >= 70 ? 'text-emerald-400' : selectedToken.score >= 45 ? 'text-yellow-400' : 'text-red-400'}`}>
-                  {selectedToken.score}
-                </span>
+                <VibeScoreDisplay score={selectedToken.score} />
               </div>
             </header>
 
@@ -1293,30 +1374,7 @@ export default function Home() {
                     hasAccess={hasAccess}
                     liveRates={liveRates}
                     liveMetricsResolved={!!liveMetrics[token.contractAddress.toLowerCase()]}
-                    onSelect={(selected) => {
-                      // Seed the detail view from the SAME cached live metrics
-                      // the card is displaying, so there is no stale-state jump.
-                      const live = liveMetrics[selected.contractAddress.toLowerCase()];
-                      setSelectedToken(
-                        live
-                          ? {
-                              ...selected,
-                              ...live,
-                              id: selected.id,
-                              blockZeroBuyers: (selected as any).blockZeroBuyers ?? 0,
-                              diamondHandsHoldersPct: (selected as any).diamondHandsHoldersPct ?? 50,
-                              devProfile: (selected as any).devProfile,
-                              safetyChecks: (selected as any).safetyChecks,
-                              momentum: {
-                                buyPct: live.buyPct,
-                                sellPct: live.sellPct,
-                                volumeEth: live.volumeEth,
-                                volumeUsd: live.volumeUsd,
-                              },
-                            }
-                          : selected
-                      );
-                    }}
+                    onSelect={handleSelectToken}
                     signalTokenAddress={SIGNAL_TOKEN}
                   />
                 ))}
