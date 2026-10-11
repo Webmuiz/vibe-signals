@@ -4,7 +4,6 @@ import { useState, useMemo, useEffect, useRef } from "react";
 import { usePrivy } from "@privy-io/react-auth";
 import { useAccount, useSendTransaction, useBalance, useReadContract, useWaitForTransactionReceipt } from "wagmi";
 import { isAddress, parseEther, parseUnits, createPublicClient, http, formatEther, encodeAbiParameters, parseAbiParameters } from "viem";
-import { createClient } from "@supabase/supabase-js";
 import Header from "@/components/ui/Header";
 import TokenCard from "@/components/ui/TokenCard";
 import SafetyAuditPanel from "@/components/ui/SafetyAuditPanel";
@@ -43,10 +42,6 @@ const publicClient = createPublicClient({
   transport: http('https://rpc.testnet.chain.robinhood.com')
 });
 
-// Initialize Supabase client
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
-const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
-const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 interface DBToken {
   cachedMarketCapFormatted?: string;
@@ -253,25 +248,21 @@ export default function Home() {
 
   const fetchDatabase = async () => {
     try {
-      const { data, error } = await supabase
-        .from('launches')
-        .select('*')
-        .order('launch_id', { ascending: false });
-
-      if (error) {
-        console.error('Supabase fetch error:', error);
+      const res = await fetch('/api/tokens', { cache: 'no-store' });
+      if (!res.ok) {
+        console.error('Turso fetch error:', res.status);
         return;
       }
-
-      if (data && data.length > 0) {
-        setDbTokens(data as DBToken[]);
+      const data: DBToken[] = await res.json();
+      if (Array.isArray(data) && data.length > 0) {
+        setDbTokens(data);
       }
     } catch (err) {
       console.error("Database sync failed", err);
     }
   };
 
-  // High-speed polling from our local JSON database API or Supabase
+  // High-speed polling from our local JSON database API or Turso
   useEffect(() => {
     fetchDatabase();
     const interval = setInterval(fetchDatabase, 3000); // Check for new tokens every 3 seconds
@@ -421,57 +412,54 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dbTokens.length]);
 
+  // Turso/libSQL has no realtime subscription channel, so we poll the
+  // `/api/tokens` route (which reads the same `launches` table) on an interval
+  // and reconcile inserts/updates into local state.
   useEffect(() => {
-    const channel = supabase
-      .channel('realtime-launches')
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'launches' },
-        (payload) => {
-          const newRecord = payload.new;
-          const formattedToken = {
-            launchId: newRecord.launch_id,
-            tokenAddress: newRecord.token_address,
-            ammAddress: newRecord.amm_address,
-            devAddress: newRecord.dev_address,
-            ethDeposited: newRecord.liquidity_deposited,
-            pairSymbol: newRecord.pair_symbol || 'ETH',
-            curveProgress: newRecord.curve_progress,
-            launchBlock: newRecord.launch_block,
-            timestamp: newRecord.created_at,
-            name: newRecord.name || `Token #${newRecord.launch_id}`,
-            ticker: newRecord.symbol ? `$${newRecord.symbol}` : '$TKN',
-          };
-          setDbTokens((prev) => [formattedToken as DBToken, ...prev]);
-        }
-      )
-      .on(
-        'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'launches' },
-        (payload) => {
-          const updated = payload.new;
-          if (activeTokenRef.current && activeTokenRef.current.toLowerCase() === updated.token_address?.toLowerCase()) {
-            setRefreshTrigger(prev => prev + 1);
-          }
-          setDbTokens((prev) =>
-            prev.map((token) =>
-              (token.tokenAddress || token.token_address)?.toLowerCase() === updated.token_address?.toLowerCase()
-                ? {
-                  ...token,
-                  curveProgress: updated.curve_progress,
-                  curve_progress: updated.curve_progress,
-                  ethDeposited: updated.liquidity_deposited,
-                  liquidity_deposited: updated.liquidity_deposited,
-                }
-                : token
-            )
-          );
-        }
-      )
-      .subscribe();
+    let cancelled = false;
 
+    const pollTokens = async () => {
+      try {
+        const res = await fetch('/api/tokens', { cache: 'no-store' });
+        if (!res.ok) return;
+        const rows: DBToken[] = await res.json();
+        if (cancelled || !Array.isArray(rows)) return;
+
+        setDbTokens((prev) => {
+          const byAddress = new Map<string, DBToken>();
+          for (const t of prev) {
+            const key = (t.tokenAddress || t.token_address || '').toLowerCase();
+            if (key) byAddress.set(key, t);
+          }
+          for (const row of rows) {
+            const key = (row.tokenAddress || row.token_address || '').toLowerCase();
+            if (!key) continue;
+            const existing = byAddress.get(key);
+            byAddress.set(key, existing ? { ...existing, ...row } : row);
+          }
+          return Array.from(byAddress.values());
+        });
+
+        if (
+          activeTokenRef.current &&
+          rows.some(
+            (r) =>
+              (r.tokenAddress || r.token_address || '').toLowerCase() ===
+              activeTokenRef.current!.toLowerCase()
+          )
+        ) {
+          setRefreshTrigger((prev) => prev + 1);
+        }
+      } catch {
+        /* transient network hiccup — retry on next tick */
+      }
+    };
+
+    pollTokens();
+    const interval = setInterval(pollTokens, 10000);
     return () => {
-      supabase.removeChannel(channel);
+      cancelled = true;
+      clearInterval(interval);
     };
   }, []);
 
@@ -700,7 +688,7 @@ export default function Home() {
             setOnChainToken(mappedToken);
             setSelectedToken(mappedToken);
 
-            // JIT INGESTION: persist the freshly-discovered token into Supabase
+            // JIT INGESTION: persist the freshly-discovered token into Turso
             // so it becomes a first-class grid entry (and survives reloads).
             // Fire-and-forget so a slow/failed write never blocks the UI.
             void (async () => {
@@ -717,14 +705,15 @@ export default function Home() {
                   symbol: launch.symbol || null,
                   created_at: launch.createdAt || new Date().toISOString(),
                 };
-                const { error: upsertError } = await supabase
-                  .from('launches')
-                  .upsert(row, { onConflict: 'token_address' });
-                if (upsertError) {
-                  console.warn('[JIT] Supabase upsert failed:', upsertError.message);
+                const res = await fetch(
+                  `/api/indexToken?address=${encodeURIComponent(launch.tokenAddress)}`,
+                  { method: 'GET', cache: 'no-store' }
+                );
+                if (!res.ok) {
+                  console.warn('[JIT] Turso index failed:', res.status);
                 } else {
                   // Optimistically surface it in the grid immediately; the
-                  // realtime INSERT/UPDATE subscription will reconcile it.
+                  // polling loop will reconcile it.
                   setDbTokens((prev) => {
                     const exists = prev.some(
                       (t) => (t.token_address || t.tokenAddress || '').toLowerCase() === launch.tokenAddress.toLowerCase()
@@ -734,7 +723,7 @@ export default function Home() {
                   });
                 }
               } catch (upsertErr) {
-                console.warn('[JIT] Supabase upsert threw:', upsertErr);
+                console.warn('[JIT] Turso index threw:', upsertErr);
               }
             })();
           } else {

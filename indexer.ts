@@ -15,7 +15,7 @@ import {
     decodeEventLog,
     getAddress,
 } from 'viem';
-import { createClient } from '@supabase/supabase-js';
+import { createClient } from '@libsql/client';
 
 process.on('uncaughtException', (err) => {
     console.error('Unhandled Exception trapped:', err);
@@ -24,10 +24,10 @@ process.on('unhandledRejection', (reason) => {
     console.error('Unhandled Rejection trapped:', reason);
 });
 
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const SUPABASE_SECRET_KEY = process.env.SUPABASE_SECRET_KEY!;
+const TURSO_DATABASE_URL = process.env.TURSO_DATABASE_URL!;
+const TURSO_AUTH_TOKEN = process.env.TURSO_AUTH_TOKEN!;
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_SECRET_KEY);
+const db = createClient({ url: TURSO_DATABASE_URL, authToken: TURSO_AUTH_TOKEN });
 
 // ---------------------------------------------------------------------------
 // Chain + contract addresses (verified against vibevibe.md, Robinhood Chain
@@ -217,11 +217,21 @@ async function updateMomentumInDatabase(
     txBlockNumber: number,
     trader: string
 ) {
-    const { data: token } = await supabase
-        .from('launches')
-        .select('volume_eth, buy_count, sell_count, launch_block, block_zero_buyers, dev_address')
-        .eq('token_address', tokenAddress.toLowerCase())
-        .single();
+    const tokenResult = await db.execute({
+        sql: `SELECT volume_eth, buy_count, sell_count, launch_block, block_zero_buyers, dev_address
+              FROM launches WHERE token_address = ? LIMIT 1`,
+        args: [tokenAddress.toLowerCase()],
+    });
+    const token = tokenResult.rows[0] as unknown as
+        | {
+              volume_eth: number | null;
+              buy_count: number | null;
+              sell_count: number | null;
+              launch_block: number | null;
+              block_zero_buyers: number | null;
+              dev_address: string | null;
+          }
+        | undefined;
 
     if (!token) return;
 
@@ -244,17 +254,21 @@ async function updateMomentumInDatabase(
     const buyPct = totalTrades > 0 ? Math.round((newBuyCount / totalTrades) * 100) : 50;
     const sellPct = 100 - buyPct;
 
-    await supabase
-        .from('launches')
-        .update({
-            volume_eth: newVolume,
-            buy_count: newBuyCount,
-            sell_count: newSellCount,
-            buy_pct: buyPct,
-            sell_pct: sellPct,
-            block_zero_buyers: newBlockZeroBuyers,
-        })
-        .eq('token_address', tokenAddress.toLowerCase());
+    await db.execute({
+        sql: `UPDATE launches SET
+                volume_eth = ?, buy_count = ?, sell_count = ?,
+                buy_pct = ?, sell_pct = ?, block_zero_buyers = ?
+              WHERE token_address = ?`,
+        args: [
+            newVolume,
+            newBuyCount,
+            newSellCount,
+            buyPct,
+            sellPct,
+            newBlockZeroBuyers,
+            tokenAddress.toLowerCase(),
+        ],
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -332,12 +346,16 @@ function watchCurve(curveAddress: string, tokenAddress: string) {
  */
 async function rehydrateCurveWatchers() {
     try {
-        const { data: tokens } = await supabase
-            .from('launches')
-            .select('token_address, amm_address')
-            .order('launch_id', { ascending: false })
-            .limit(200);
-        if (!tokens) return;
+        const tokensResult = await db.execute({
+            sql: `SELECT token_address, amm_address FROM launches
+                  ORDER BY launch_id DESC LIMIT 200`,
+            args: [],
+        });
+        const tokens = tokensResult.rows as unknown as Array<{
+            token_address: string | null;
+            amm_address: string | null;
+        }>;
+        if (!tokens.length) return;
         for (const t of tokens) {
             if (t.amm_address && t.token_address) {
                 watchCurve(t.amm_address, t.token_address);
@@ -347,6 +365,22 @@ async function rehydrateCurveWatchers() {
     } catch (err) {
         console.error('Failed to rehydrate curve watchers:', err);
     }
+}
+
+/**
+ * Builds and runs a parameterized `UPDATE launches SET ... WHERE launch_id = ?`
+ * from a partial column map. Only the provided columns are touched, mirroring
+ * the old Supabase `.update(payload).eq('launch_id', id)` behaviour.
+ */
+async function updateLaunchById(launchId: number | bigint, payload: Record<string, any>) {
+    const entries = Object.entries(payload).filter(([, v]) => v !== undefined);
+    if (entries.length === 0) return;
+    const setClause = entries.map(([col]) => `${col} = ?`).join(', ');
+    const args = entries.map(([, v]) => v);
+    await db.execute({
+        sql: `UPDATE launches SET ${setClause} WHERE launch_id = ?`,
+        args: [...args, launchId],
+    });
 }
 
 async function runIndexer() {
@@ -417,25 +451,41 @@ async function runIndexer() {
 
                     console.log(`🚨 CLOUD SYNC: [#${launchId}] ${tokenName} ($${tokenSymbol})`);
 
-                    await supabase.from('launches').upsert(
-                        {
-                            launch_id: launchId,
-                            token_address: tokenAddress,
-                            amm_address: curveAddress,
-                            dev_address: devAddress,
-                            pair_symbol: live?.pairSymbol || (isNativeEth ? 'ETH' : 'STOCK'),
-                            liquidity_deposited: live?.liquidityDeposited ?? 0,
-                            curve_progress: live?.curveProgress ?? 0,
-                            launch_block: Number(log.blockNumber),
-                            name: tokenName,
-                            symbol: tokenSymbol,
-                            has_socials: hasSocials,
-                            // Backfill real market data so Supabase converges with the API.
-                            cachedMarketCapFormatted: live?.marketCapFormatted ?? null,
-                            volume_eth: live?.volumeEth ?? 0,
-                        },
-                        { onConflict: 'token_address' }
-                    );
+                    await db.execute({
+                        sql: `INSERT INTO launches (
+                                launch_id, token_address, amm_address, dev_address, pair_symbol,
+                                liquidity_deposited, curve_progress, launch_block, name, symbol,
+                                has_socials, cachedMarketCapFormatted, volume_eth
+                              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                              ON CONFLICT(token_address) DO UPDATE SET
+                                launch_id = excluded.launch_id,
+                                amm_address = excluded.amm_address,
+                                dev_address = excluded.dev_address,
+                                pair_symbol = excluded.pair_symbol,
+                                liquidity_deposited = excluded.liquidity_deposited,
+                                curve_progress = excluded.curve_progress,
+                                launch_block = excluded.launch_block,
+                                name = excluded.name,
+                                symbol = excluded.symbol,
+                                has_socials = excluded.has_socials,
+                                cachedMarketCapFormatted = excluded.cachedMarketCapFormatted,
+                                volume_eth = excluded.volume_eth`,
+                        args: [
+                            launchId,
+                            tokenAddress,
+                            curveAddress,
+                            devAddress,
+                            live?.pairSymbol || (isNativeEth ? 'ETH' : 'STOCK'),
+                            live?.liquidityDeposited ?? 0,
+                            live?.curveProgress ?? 0,
+                            Number(log.blockNumber),
+                            tokenName,
+                            tokenSymbol,
+                            hasSocials ? 1 : 0,
+                            live?.marketCapFormatted ?? null,
+                            live?.volumeEth ?? 0,
+                        ],
+                    });
 
                     // Start streaming this token's trades immediately.
                     watchCurve(curveAddress, tokenAddress);
@@ -455,12 +505,12 @@ async function runIndexer() {
     // 3. THE LIVE BALANCE UPDATER (Runs every 10 seconds)
     setInterval(async () => {
         try {
-            const { data: recentTokens } = await supabase
-                .from('launches')
-                .select('*')
-                .order('launch_id', { ascending: false })
-                .limit(20);
-            if (!recentTokens) return;
+            const recentResult = await db.execute({
+                sql: `SELECT * FROM launches ORDER BY launch_id DESC LIMIT 20`,
+                args: [],
+            });
+            const recentTokens = recentResult.rows as unknown as Array<Record<string, any>>;
+            if (!recentTokens.length) return;
 
             for (const token of recentTokens) {
                 // Backfill REAL market data from the API for every recent token,
@@ -477,7 +527,7 @@ async function runIndexer() {
                     // 1. If already marked as graduated (>= 100%), still persist API data then skip.
                     if (Number(token.curve_progress) >= 100) {
                         if (Object.keys(apiPayload).length > 0) {
-                            await supabase.from('launches').update(apiPayload).eq('launch_id', token.launch_id);
+                            await updateLaunchById(token.launch_id, apiPayload);
                         }
                         continue;
                     }
@@ -517,7 +567,7 @@ async function runIndexer() {
                                 liquidity_deposited: Number(currentLiq.toFixed(4)),
                                 curve_progress: Number(progress.toFixed(1)),
                             };
-                            await supabase.from('launches').update(updatePayload).eq('launch_id', token.launch_id);
+                            await updateLaunchById(token.launch_id, updatePayload);
                             console.log(
                                 `📈 SYNC: $${token.symbol} liq: ${currentLiq.toFixed(4)} (${progress.toFixed(1)}%)`
                             );
@@ -530,19 +580,16 @@ async function runIndexer() {
                         currentLiq = parseFloat(formatUnits(rawEth, 18));
                         const progress = Math.min(100, Math.max(0, (currentLiq / 4.0) * 100));
                         if (progress > Number(token.curve_progress || 0) || Object.keys(apiPayload).length > 0) {
-                            await supabase
-                                .from('launches')
-                                .update({
-                                    ...apiPayload,
-                                    liquidity_deposited: Number(currentLiq.toFixed(4)),
-                                    curve_progress: Number(progress.toFixed(1)),
-                                })
-                                .eq('launch_id', token.launch_id);
+                            await updateLaunchById(token.launch_id, {
+                                ...apiPayload,
+                                liquidity_deposited: Number(currentLiq.toFixed(4)),
+                                curve_progress: Number(progress.toFixed(1)),
+                            });
                         }
                     }
                 } else if (Object.keys(apiPayload).length > 0) {
                     // Non-ETH pairs: persist the API-derived market data.
-                    await supabase.from('launches').update(apiPayload).eq('launch_id', token.launch_id);
+                    await updateLaunchById(token.launch_id, apiPayload);
                 }
             }
         } catch (err) {

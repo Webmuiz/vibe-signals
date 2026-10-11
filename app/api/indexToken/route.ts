@@ -1,10 +1,10 @@
 import { NextResponse } from 'next/server';
 import { createPublicClient, http, formatUnits, parseAbi, getAddress } from 'viem';
-import { createClient } from '@supabase/supabase-js';
+import { createClient } from '@libsql/client';
 
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const SUPABASE_SECRET_KEY = process.env.SUPABASE_SECRET_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-const supabase = createClient(SUPABASE_URL, SUPABASE_SECRET_KEY);
+const TURSO_DATABASE_URL = process.env.TURSO_DATABASE_URL!;
+const TURSO_AUTH_TOKEN = process.env.TURSO_AUTH_TOKEN!;
+const db = createClient({ url: TURSO_DATABASE_URL, authToken: TURSO_AUTH_TOKEN });
 
 const publicClient = createPublicClient({
     transport: http('https://rpc.testnet.chain.robinhood.com'),
@@ -291,7 +291,7 @@ export async function GET(request: Request) {
             }
         }
 
-        // 7. Upsert into Supabase.
+        // 7. Upsert into Turso (libSQL).
         const dbPayload = {
             launch_id: launchId,
             token_address: tokenAddress,
@@ -311,7 +311,47 @@ export async function GET(request: Request) {
             sell_pct: sellPct,
         };
 
-        await supabase.from('launches').upsert(dbPayload, { onConflict: 'token_address' });
+        await db.execute({
+            sql: `INSERT INTO launches (
+                    launch_id, token_address, amm_address, dev_address, pair_symbol,
+                    liquidity_deposited, curve_progress, launch_block, name, symbol,
+                    created_at, volume_eth, buy_count, sell_count, buy_pct, sell_pct
+                  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                  ON CONFLICT(token_address) DO UPDATE SET
+                    launch_id = excluded.launch_id,
+                    amm_address = excluded.amm_address,
+                    dev_address = excluded.dev_address,
+                    pair_symbol = excluded.pair_symbol,
+                    liquidity_deposited = excluded.liquidity_deposited,
+                    curve_progress = excluded.curve_progress,
+                    launch_block = excluded.launch_block,
+                    name = excluded.name,
+                    symbol = excluded.symbol,
+                    created_at = excluded.created_at,
+                    volume_eth = excluded.volume_eth,
+                    buy_count = excluded.buy_count,
+                    sell_count = excluded.sell_count,
+                    buy_pct = excluded.buy_pct,
+                    sell_pct = excluded.sell_pct`,
+            args: [
+                dbPayload.launch_id,
+                dbPayload.token_address,
+                dbPayload.amm_address,
+                dbPayload.dev_address,
+                dbPayload.pair_symbol,
+                dbPayload.liquidity_deposited,
+                dbPayload.curve_progress,
+                dbPayload.launch_block,
+                dbPayload.name,
+                dbPayload.symbol,
+                dbPayload.created_at,
+                dbPayload.volume_eth,
+                dbPayload.buy_count,
+                dbPayload.sell_count,
+                dbPayload.buy_pct,
+                dbPayload.sell_pct,
+            ],
+        });
 
         return NextResponse.json({
             success: true,

@@ -1,30 +1,30 @@
 import { NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { createClient } from '@libsql/client';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
     try {
         // Initialize inside the function so it doesn't run during build evaluation
-        const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
-        const SUPABASE_PUBLISHABLE_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+        const TURSO_DATABASE_URL = process.env.TURSO_DATABASE_URL;
+        const TURSO_AUTH_TOKEN = process.env.TURSO_AUTH_TOKEN;
 
-        if (!SUPABASE_URL || !SUPABASE_PUBLISHABLE_KEY) {
-            console.error("Missing Supabase credentials");
+        if (!TURSO_DATABASE_URL) {
+            console.error("Missing Turso credentials");
             return NextResponse.json([]);
         }
 
-        const supabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
+        const client = createClient({
+            url: TURSO_DATABASE_URL,
+            authToken: TURSO_AUTH_TOKEN,
+        });
 
-        const { data, error } = await supabase
-            .from('launches')
-            .select('*')
-            .order('launch_id', { ascending: false })
-            .limit(50);
+        const result = await client.execute({
+            sql: 'SELECT * FROM launches ORDER BY launch_id DESC LIMIT 50',
+            args: [],
+        });
 
-        if (error) throw error;
-
-        const formattedData = data.map(db => ({
+        const formattedData = result.rows.map((db) => ({
             launchId: db.launch_id,
             tokenAddress: db.token_address,
             ammAddress: db.amm_address,
@@ -40,7 +40,7 @@ export async function GET() {
 
         return NextResponse.json(formattedData);
     } catch (error) {
-        console.error("Failed to read Supabase:", error);
+        console.error("Failed to read Turso:", error);
         return NextResponse.json([]);
     }
 }
