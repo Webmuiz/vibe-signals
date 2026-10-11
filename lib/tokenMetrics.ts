@@ -78,6 +78,38 @@ export async function normalizeVibeResponse(
   const stats = json?.data?.marketStats;
   const feeEvents = json?.data?.feeEvents || [];
 
+  // --- Degraded-payload guard ---
+  // If the proxy returned an error object (no `data`), or a `data` block with
+  // no launch/token identity, we must NOT synthesize zeros. Instead, preserve
+  // the caller's last-known-good fallback so the UI keeps showing real numbers.
+  const hasUsableData = !!(json?.data && (json.data.launch || json.data.tokenAddress));
+  if (!hasUsableData && fallback) {
+    return {
+      contractAddress: (fallback.contractAddress || '').toLowerCase(),
+      name: fallback.name || 'Unknown',
+      ticker: fallback.ticker || 'TKN',
+      symbol: fallback.symbol || '',
+      pairSymbol: fallback.pairSymbol || 'ETH',
+      bondingCurveProgress: fallback.bondingCurveProgress ?? 0,
+      ethDeposited: fallback.ethDeposited || '0.0000 / 4.0',
+      marketCapUsd: fallback.marketCapUsd || '$0.00',
+      marketCapRaw: fallback.marketCapRaw ?? 0,
+      volumeEth: fallback.volumeEth || '0.0000',
+      volumeUsd: fallback.volumeUsd || '$0.00',
+      buyPct: fallback.buyPct ?? 50,
+      sellPct: fallback.sellPct ?? 50,
+      priceUsd: fallback.priceUsd ?? 0,
+      hasSocials: fallback.hasSocials ?? false,
+      socialLinks: fallback.socialLinks || {},
+      devAddress: fallback.devAddress || '',
+      ammAddress: fallback.ammAddress || '',
+      timeSinceLaunchMins: fallback.timeSinceLaunchMins ?? 0,
+      isGraduated: fallback.isGraduated ?? false,
+      imageUri: fallback.imageUri,
+      isLegacy: fallback.isLegacy ?? false,
+    };
+  }
+
   const contractAddress = (launch.tokenAddress || fallback?.contractAddress || '').toLowerCase();
 
   // --- Pair symbol resolution ---

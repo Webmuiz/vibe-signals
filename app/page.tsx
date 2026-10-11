@@ -324,7 +324,32 @@ export default function Home() {
     inFlightRef.current.add(key);
     try {
       const res = await fetch(`/api/proxyVibe?address=${key}&t=${Date.now()}`, { cache: 'no-store' });
-      if (!res.ok) return;
+
+      if (!res.ok) {
+        // Upstream unreachable / timed out. Do NOT overwrite the cache with
+        // zeros — keep whatever real metrics we already have, and only seed a
+        // fallback-derived entry if this token has never been resolved.
+        const body = await res.json().catch(() => null);
+        console.warn(
+          `[liveMetrics] proxyVibe ${res.status} for ${key}:`,
+          body?.reason || body?.error || 'unknown'
+        );
+        setLiveMetrics((prev) => {
+          if (prev[key]) return prev; // preserve last-known-good real data
+          if (!fallback) return prev;
+          return {
+            ...prev,
+            [key]: {
+              ...(fallback as LiveTokenMetrics),
+              contractAddress: key,
+              // Mark as unresolved so the UI can show an estimate, not a fake $0.
+              priceUsd: fallback.priceUsd ?? 0,
+            },
+          };
+        });
+        return;
+      }
+
       const json = await res.json();
       const normalized = await normalizeVibeResponse(
         json,
@@ -344,7 +369,8 @@ export default function Home() {
       );
       setLiveMetrics((prev) => ({ ...prev, [key]: normalized }));
     } catch (err) {
-      console.error('Live metrics fetch failed', err);
+      // Network-level failure (offline, DNS, CORS). Preserve existing cache.
+      console.error(`[liveMetrics] fetch failed for ${key}:`, err);
     } finally {
       inFlightRef.current.delete(key);
     }
@@ -648,6 +674,19 @@ export default function Home() {
       setIsSyncingLive(true);
       fetch(`/api/proxyVibe?address=${selectedToken.contractAddress}&t=${Date.now()}`, { cache: 'no-store' })
         .then(async res => {
+          if (!isMounted) return;
+
+          // Guard against error payloads (404/502/504). Parsing an error body
+          // and feeding it to the normalizer would zero out every metric.
+          if (!res.ok) {
+            const body = await res.json().catch(() => null);
+            console.warn(
+              `[detail] proxyVibe ${res.status} for ${selectedToken.contractAddress}:`,
+              body?.reason || body?.error || 'unknown'
+            );
+            return;
+          }
+
           const json = await res.json();
           if (!isMounted) return;
 

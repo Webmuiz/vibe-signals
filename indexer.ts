@@ -23,7 +23,7 @@ const ERC20_ABI = [
 ] as const;
 
 const robinhoodTestnet = defineChain({
-    id: 1,
+    id: 46630,
     name: 'Robinhood Testnet',
     network: 'robinhood-testnet',
     nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
@@ -35,6 +35,120 @@ const publicClient = createPublicClient({ chain: robinhoodTestnet, transport: ht
 const FACTORY_ADDRESS = "0xe794217880011f9cA6961340eD5c16EC9559Fea0";
 const ROUTER_ADDRESS = "0x89944BC9D3b20764BeA771CFAf9711a8Fb839e72";
 const CREATION_TOPIC = "0xa7e8032bfd07a9fbcde50eabe91eb2901faee6dbddd9cced579491d9b07ef5c8";
+
+// Base URL for our own proxy route. Overridable via env so the indexer can
+// point at localhost during development or the deployed app in production.
+const PROXY_BASE_URL = process.env.PROXY_BASE_URL || 'https://vibe-signals.vercel.app';
+
+interface LiveApiMetrics {
+    marketCapFormatted: string | null;
+    volumeEth: number | null;
+    hasSocials: boolean;
+    pairSymbol: string | null;
+    curveProgress: number | null;
+    liquidityDeposited: number | null;
+}
+
+/**
+ * Fetches REAL market data for a token from our `/api/proxyVibe` route and
+ * extracts the values we persist back into Supabase. This is what makes the
+ * database converge with the live API over time.
+ *
+ * Returns nulls for any field the API did not provide, so callers can avoid
+ * clobbering existing values with undefined.
+ */
+async function fetchLiveApiMetrics(tokenAddress: string): Promise<LiveApiMetrics | null> {
+    try {
+        const res = await fetch(`${PROXY_BASE_URL}/api/proxyVibe?address=${tokenAddress}`, { cache: 'no-store' });
+        if (!res.ok) return null;
+        const json = await res.json();
+        const launch = json?.data?.launch || (json?.data?.tokenAddress ? json.data : null);
+        if (!launch) return null;
+
+        const stats = json?.data?.marketStats;
+        const ethPriceUsd = Number(json?.data?.ethPriceUsd) || 0;
+
+        // --- Pair symbol ---
+        const pairSymbol: string | null = launch.pairSymbol || null;
+
+        // --- Decimals for synthetic pairs (e.g. USDG = 6) ---
+        const targetRaw = Number(launch.targetPairUnits || launch.curve?.netTargetWei || 4e18);
+        const currentRaw = Number(launch.curve?.pairReserveUnits || launch.curve?.netRaisedWei || 0);
+        const pDecimals = targetRaw > 0 && targetRaw < 1e14 ? 6 : 18;
+        const pDivisor = Math.pow(10, pDecimals);
+
+        // --- Curve progress + liquidity ---
+        const isGraduated =
+            launch.lifecycle === 'GRADUATED' ||
+            launch.graduated === true ||
+            launch.curve?.lifecycle === 'GRADUATED' ||
+            !!launch.graduation ||
+            !!launch.poolAddress ||
+            !!launch.graduationPoolAddress ||
+            !!launch.pool?.address;
+
+        const currentPairUnits = currentRaw / pDivisor;
+        const targetPairUnits = targetRaw / pDivisor;
+        let curveProgress: number | null = isGraduated
+            ? 100
+            : launch.curve?.progressBps != null
+                ? launch.curve.progressBps / 100
+                : Math.min(100, Math.max(0, (currentPairUnits / targetPairUnits) * 100));
+        if (!isGraduated && curveProgress > 0 && curveProgress < 0.1) curveProgress = 0.1;
+
+        const liquidityDeposited = isGraduated ? 4.0 : Number(currentPairUnits.toFixed(4));
+
+        // --- Market cap (real price first) ---
+        const directPriceUsd =
+            launch.priceUsd || launch.analytics?.priceUsd || launch.curve?.priceUsd || stats?.priceUsd;
+        let lastPriceWei =
+            stats?.priceWeiPerToken || stats?.lastPriceWeiPerToken || launch.analytics?.lastPriceWeiPerToken || 0;
+        if ((!lastPriceWei || Number(lastPriceWei) === 0) && json?.data?.marketTrades?.[0]) {
+            lastPriceWei = json.data.marketTrades[0].executionPricePairUnitsPerToken;
+        }
+
+        let marketCapRaw = 0;
+        if (directPriceUsd && Number(directPriceUsd) > 0) {
+            marketCapRaw = Number(directPriceUsd) * 1_000_000_000;
+        } else if (Number(lastPriceWei) > 0 && ethPriceUsd > 0) {
+            const pricePairUnits = Number(lastPriceWei) / pDivisor;
+            marketCapRaw = pricePairUnits * 1_000_000_000 * ethPriceUsd;
+        }
+
+        const marketCapFormatted =
+            marketCapRaw > 0
+                ? marketCapRaw.toLocaleString('en-US', { style: 'currency', currency: 'USD' })
+                : null;
+
+        // --- 24h volume (real) ---
+        let volumeEth: number | null = null;
+        if (stats) {
+            const buyVol = Number(stats.buyVolume24hPairUnits || 0) / pDivisor;
+            const sellVol = Number(stats.sellVolume24hPairUnits || 0) / pDivisor;
+            const totalVol = buyVol + sellVol;
+            if (totalVol > 0) volumeEth = Number(totalVol.toFixed(4));
+        } else if (launch.analytics?.volume24hWei) {
+            const volWei = Number(launch.analytics.volume24hWei);
+            if (volWei > 0) volumeEth = Number((volWei / pDivisor).toFixed(4));
+        }
+
+        // --- Socials ---
+        const socials = launch.content?.socials || {};
+        const hasSocials = !!(socials.x || socials.telegram || socials.website);
+
+        return {
+            marketCapFormatted,
+            volumeEth,
+            hasSocials,
+            pairSymbol,
+            curveProgress,
+            liquidityDeposited,
+        };
+    } catch (err) {
+        console.log(`⚠ Could not fetch live API metrics for ${tokenAddress}`);
+        return null;
+    }
+}
 
 // --- DB HELPER FUNCTION ---
 async function updateMomentumInDatabase(tokenAddress: string, isBuy: boolean, ethVolume: number, txBlockNumber: number, buyerAddress: string) {
@@ -106,20 +220,13 @@ async function runIndexer() {
                             tokenSymbol = await publicClient.readContract({ address: tokenAddress as `0x${string}`, abi: ERC20_ABI, functionName: "symbol" }) as string;
                         } catch (e) { console.log("⚠ Could not read token metadata"); }
 
-                        let hasSocials = false;
-                        try {
-                            // 2-second delay to let VibeVibe's off-chain DB catch up
-                            await new Promise(r => setTimeout(r, 2000));
-                            const res = await fetch(`https://vibe-signals.vercel.app/api/proxyVibe?address=${tokenAddress}`);
-                            if (res.ok) {
-                                const json = await res.json();
-                                const socials = json.data?.launch?.content?.socials || {};
-                                hasSocials = !!(socials.x || socials.telegram || socials.website);
-                                if (hasSocials) console.log(`🔗 Socials verified for ${tokenSymbol}`);
-                            }
-                        } catch (e) {
-                            console.log(`⚠ Could not fetch socials for ${tokenSymbol}`);
-                        }
+                        // 2-second delay to let VibeVibe's off-chain DB catch up,
+                        // then pull REAL market data (socials, market cap, volume).
+                        await new Promise(r => setTimeout(r, 2000));
+                        const live = await fetchLiveApiMetrics(tokenAddress);
+
+                        const hasSocials = live?.hasSocials ?? false;
+                        if (hasSocials) console.log(`🔗 Socials verified for ${tokenSymbol}`);
 
                         console.log(`🚨 CLOUD SYNC: [#${launchId}] ${tokenName} ($${tokenSymbol})`);
 
@@ -128,13 +235,16 @@ async function runIndexer() {
                             token_address: tokenAddress,
                             amm_address: ammAddress,
                             dev_address: devAddress,
-                            pair_symbol: isNativeEth ? 'ETH' : 'STOCK',
-                            liquidity_deposited: 0,
-                            curve_progress: 0,
+                            pair_symbol: live?.pairSymbol || (isNativeEth ? 'ETH' : 'STOCK'),
+                            liquidity_deposited: live?.liquidityDeposited ?? 0,
+                            curve_progress: live?.curveProgress ?? 0,
                             launch_block: Number(log.blockNumber),
                             name: tokenName,
                             symbol: tokenSymbol,
-                            has_socials: hasSocials
+                            has_socials: hasSocials,
+                            // Backfill real market data so Supabase converges with the API.
+                            cachedMarketCapFormatted: live?.marketCapFormatted ?? null,
+                            volume_eth: live?.volumeEth ?? 0,
                         }, { onConflict: 'token_address' });
                     }
                 } catch (logErr) {
@@ -180,9 +290,24 @@ async function runIndexer() {
             if (!recentTokens) return;
 
             for (const token of recentTokens) {
+                // Backfill REAL market data from the API for every recent token,
+                // regardless of pair type, so Supabase converges with the live API.
+                const live = await fetchLiveApiMetrics(token.token_address);
+                const apiPayload: Record<string, any> = {};
+                if (live) {
+                    if (live.marketCapFormatted) apiPayload.cachedMarketCapFormatted = live.marketCapFormatted;
+                    if (live.volumeEth != null) apiPayload.volume_eth = live.volumeEth;
+                    if (live.hasSocials) apiPayload.has_socials = true;
+                }
+
                 if (token.pair_symbol === 'ETH') {
-                    // 1. If already marked as graduated (>= 100%), skip it completely
-                    if (Number(token.curve_progress) >= 100) continue;
+                    // 1. If already marked as graduated (>= 100%), still persist API data then skip.
+                    if (Number(token.curve_progress) >= 100) {
+                        if (Object.keys(apiPayload).length > 0) {
+                            await supabase.from('launches').update(apiPayload).eq('launch_id', token.launch_id);
+                        }
+                        continue;
+                    }
 
                     const rawEth = await publicClient.getBalance({ address: token.amm_address as `0x${string}` });
                     const currentLiq = parseFloat(formatEther(rawEth));
@@ -190,6 +315,7 @@ async function runIndexer() {
                     // 2. If balance drops to 0 or was drained after accumulating liquidity, it graduated! Lock to 100%
                     if (currentLiq === 0 && Number(token.liquidity_deposited) >= 2.0) {
                         await supabase.from('launches').update({
+                            ...apiPayload,
                             curve_progress: 100,
                             liquidity_deposited: 4.0
                         }).eq('launch_id', token.launch_id);
@@ -198,14 +324,16 @@ async function runIndexer() {
 
                     const progress = Math.min(100, Math.max(0, (currentLiq / 4.0) * 100));
 
-                    // Only update if progress actually moved forward
-                    if (progress > Number(token.curve_progress || 0) || (token.volume_eth || 0) < currentLiq) {
+                    // Only update if progress actually moved forward OR we have fresh API data
+                    if (progress > Number(token.curve_progress || 0) || (token.volume_eth || 0) < currentLiq || Object.keys(apiPayload).length > 0) {
                         const updatePayload: any = {
+                            ...apiPayload,
                             liquidity_deposited: Number(currentLiq.toFixed(4)),
                             curve_progress: Number(progress.toFixed(1))
                         };
 
-                        if (!token.volume_eth || token.volume_eth < currentLiq) {
+                        // Only fall back to the balance heuristic when the API gave us no volume.
+                        if (apiPayload.volume_eth == null && (!token.volume_eth || token.volume_eth < currentLiq)) {
                             updatePayload.volume_eth = Number(currentLiq.toFixed(4));
                             updatePayload.buy_pct = 100;
                             updatePayload.sell_pct = 0;
@@ -214,6 +342,9 @@ async function runIndexer() {
                         await supabase.from('launches').update(updatePayload).eq('launch_id', token.launch_id);
                         console.log(`📈 SYNC: $${token.symbol} liq: ${currentLiq.toFixed(4)} ETH (${progress.toFixed(1)}%)`);
                     }
+                } else if (Object.keys(apiPayload).length > 0) {
+                    // Non-ETH pairs: persist the API-derived market data.
+                    await supabase.from('launches').update(apiPayload).eq('launch_id', token.launch_id);
                 }
             }
         } catch (err) { }
