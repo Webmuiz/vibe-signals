@@ -218,7 +218,7 @@ async function updateMomentumInDatabase(
     trader: string
 ) {
     const tokenResult = await db.execute({
-        sql: `SELECT volume_eth, buy_count, sell_count, launch_block, block_zero_buyers, dev_address
+        sql: `SELECT volume_eth, buy_count, sell_count, launch_block, block_zero_buyers, dev_address, sniper_wallets
               FROM launches WHERE token_address = ? LIMIT 1`,
         args: [tokenAddress.toLowerCase()],
     });
@@ -230,6 +230,7 @@ async function updateMomentumInDatabase(
               launch_block: number | null;
               block_zero_buyers: number | null;
               dev_address: string | null;
+              sniper_wallets: string | null;
           }
         | undefined;
 
@@ -237,12 +238,40 @@ async function updateMomentumInDatabase(
 
     const pairVolume = Number(formatUnits(pairAmount, 18));
 
+    // Parse the persisted set of unique sniper wallets. Stored as a JSON array
+    // string so we can dedupe without a second table.
+    let sniperWallets: string[] = [];
+    if (token.sniper_wallets) {
+        try {
+            const parsed = JSON.parse(token.sniper_wallets);
+            if (Array.isArray(parsed)) sniperWallets = parsed.map((w) => String(w).toLowerCase());
+        } catch {
+            sniperWallets = [];
+        }
+    }
+
+    const traderLower = trader.toLowerCase();
+    const devLower = (token.dev_address || '').toLowerCase();
+
+    // A block-0 sniper is a BUY in the exact launch block by a wallet that is
+    // neither the developer's pre-buy nor the zap router (which is a routing
+    // contract, never a real trader). We only count each wallet ONCE.
+    const isBlockZeroBuy =
+        isBuy &&
+        token.launch_block != null &&
+        txBlockNumber === token.launch_block &&
+        traderLower !== '' &&
+        traderLower !== devLower &&
+        traderLower !== ZAP_ROUTER;
+
     let newBlockZeroBuyers = token.block_zero_buyers || 0;
-    if (isBuy && token.launch_block && txBlockNumber === token.launch_block) {
-        // Filter out the developer's pre-buy
-        if (trader.toLowerCase() !== (token.dev_address || '').toLowerCase()) {
-            newBlockZeroBuyers += 1;
-            console.log(`🎯 SNIPER DETECTED: Block 0 buy by ${trader} on ${tokenAddress}`);
+    if (isBlockZeroBuy) {
+        if (!sniperWallets.includes(traderLower)) {
+            sniperWallets.push(traderLower);
+            newBlockZeroBuyers = sniperWallets.length;
+            console.log(
+                `🎯 SNIPER DETECTED: Block 0 buy by ${traderLower} on ${tokenAddress} (unique snipers: ${newBlockZeroBuyers})`
+            );
         }
     }
 
@@ -257,7 +286,7 @@ async function updateMomentumInDatabase(
     await db.execute({
         sql: `UPDATE launches SET
                 volume_eth = ?, buy_count = ?, sell_count = ?,
-                buy_pct = ?, sell_pct = ?, block_zero_buyers = ?
+                buy_pct = ?, sell_pct = ?, block_zero_buyers = ?, sniper_wallets = ?
               WHERE token_address = ?`,
         args: [
             newVolume,
@@ -266,6 +295,7 @@ async function updateMomentumInDatabase(
             buyPct,
             sellPct,
             newBlockZeroBuyers,
+            JSON.stringify(sniperWallets),
             tokenAddress.toLowerCase(),
         ],
     });

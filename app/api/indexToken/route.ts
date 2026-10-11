@@ -45,6 +45,7 @@ const TOKEN_ABI = parseAbi([
     'function decimals() view returns (uint8)',
     'function transfersUnlocked() view returns (bool)',
     'function baseTaxBps() view returns (uint256)',
+    'function balanceOf(address account) view returns (uint256)',
 ]);
 
 // The zap router is what the vibe/vibe website uses for non-ETH pairs and
@@ -86,6 +87,84 @@ async function findLaunchEvent(token: `0x${string}`) {
         fromBlock = toBlock > LOG_CHUNK_SIZE ? toBlock - LOG_CHUNK_SIZE : 0n;
     }
     return null;
+}
+
+/**
+ * Identifies the UNIQUE block-0 snipers for a token and measures how many of
+ * them still hold tokens (retention).
+ *
+ * A sniper is a wallet that bought on the curve in the exact launch block,
+ * excluding the developer's pre-buy and the zap router. Retention is measured
+ * by reading each sniper's CURRENT ERC-20 balance of the launched token:
+ *   - balance > 0  → still holding (retained)
+ *   - balance == 0 → fully dumped
+ *
+ * Returns `retentionPct` (0-100). When there are no snipers we return 100
+ * (nothing was dumped) rather than NaN.
+ */
+async function calculateSniperRetention(
+    token: `0x${string}`,
+    curve: `0x${string}`,
+    launchBlock: number,
+    devAddress: string
+): Promise<{ totalSnipers: number; holdingSnipers: number; retentionPct: number; sniperWallets: string[] }> {
+    const sniperWallets = new Set<string>();
+
+    // Only the launch block itself matters for block-0 sniping, so we scan a
+    // single, tight range instead of the whole history (keeps RPC usage low).
+    try {
+        const buys = await publicClient.getContractEvents({
+            address: curve,
+            abi: CURVE_ABI,
+            eventName: 'CurveBuy',
+            fromBlock: BigInt(launchBlock),
+            toBlock: BigInt(launchBlock),
+        });
+
+        for (const b of buys) {
+            const { recipient, buyer } = b.args as { recipient?: string; buyer?: string };
+            // The real wallet is `recipient`; `buyer` is often the zap router.
+            const trader = (recipient || buyer || '').toLowerCase();
+            if (!trader) continue;
+            if (trader === ZAP_ROUTER_LOWER) continue;
+            if (trader === devAddress.toLowerCase()) continue;
+            sniperWallets.add(trader);
+        }
+    } catch (err) {
+        console.warn(`Could not scan block-0 buys for ${token}:`, err);
+    }
+
+    const wallets = Array.from(sniperWallets);
+    const totalSnipers = wallets.length;
+
+    // Edge case: no snipers → nothing dumped → 100% retained.
+    if (totalSnipers === 0) {
+        return { totalSnipers: 0, holdingSnipers: 0, retentionPct: 100, sniperWallets: [] };
+    }
+
+    // Read current balances in parallel. A failed read is treated as "dumped"
+    // only if it definitively returns 0; on error we conservatively assume the
+    // wallet still holds (so a transient RPC hiccup doesn't fake a dump).
+    const balances = await Promise.all(
+        wallets.map(async (wallet) => {
+            try {
+                const bal = (await publicClient.readContract({
+                    address: token,
+                    abi: TOKEN_ABI,
+                    functionName: 'balanceOf',
+                    args: [wallet as `0x${string}`],
+                })) as bigint;
+                return bal > 0n;
+            } catch {
+                return true; // assume holding on read failure
+            }
+        })
+    );
+
+    const holdingSnipers = balances.filter(Boolean).length;
+    const retentionPct = Math.round((holdingSnipers / totalSnipers) * 100);
+
+    return { totalSnipers, holdingSnipers, retentionPct, sniperWallets: wallets };
 }
 
 /**
@@ -277,6 +356,14 @@ export async function GET(request: Request) {
             BigInt(launchBlock)
         );
 
+        // 6b. Real sniper retention: unique block-0 buyers still holding.
+        const retention = await calculateSniperRetention(
+            checksummedToken,
+            curveAddress,
+            launchBlock,
+            devAddress
+        );
+
         const totalTrades = buyCount + sellCount;
         const buyPct = totalTrades > 0 ? Math.round((buyCount / totalTrades) * 100) : 50;
         const sellPct = 100 - buyPct;
@@ -309,14 +396,18 @@ export async function GET(request: Request) {
             sell_count: sellCount,
             buy_pct: buyPct,
             sell_pct: sellPct,
+            block_zero_buyers: retention.totalSnipers,
+            sniper_wallets: JSON.stringify(retention.sniperWallets),
+            sniper_retention_pct: retention.retentionPct,
         };
 
         await db.execute({
             sql: `INSERT INTO launches (
                     launch_id, token_address, amm_address, dev_address, pair_symbol,
                     liquidity_deposited, curve_progress, launch_block, name, symbol,
-                    created_at, volume_eth, buy_count, sell_count, buy_pct, sell_pct
-                  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    created_at, volume_eth, buy_count, sell_count, buy_pct, sell_pct,
+                    block_zero_buyers, sniper_wallets, sniper_retention_pct
+                  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                   ON CONFLICT(token_address) DO UPDATE SET
                     launch_id = excluded.launch_id,
                     amm_address = excluded.amm_address,
@@ -332,7 +423,10 @@ export async function GET(request: Request) {
                     buy_count = excluded.buy_count,
                     sell_count = excluded.sell_count,
                     buy_pct = excluded.buy_pct,
-                    sell_pct = excluded.sell_pct`,
+                    sell_pct = excluded.sell_pct,
+                    block_zero_buyers = excluded.block_zero_buyers,
+                    sniper_wallets = excluded.sniper_wallets,
+                    sniper_retention_pct = excluded.sniper_retention_pct`,
             args: [
                 dbPayload.launch_id,
                 dbPayload.token_address,
@@ -350,12 +444,20 @@ export async function GET(request: Request) {
                 dbPayload.sell_count,
                 dbPayload.buy_pct,
                 dbPayload.sell_pct,
+                dbPayload.block_zero_buyers,
+                dbPayload.sniper_wallets,
+                dbPayload.sniper_retention_pct,
             ],
         });
 
         return NextResponse.json({
             success: true,
             token: dbPayload,
+            sniperRetention: {
+                totalSnipers: retention.totalSnipers,
+                holdingSnipers: retention.holdingSnipers,
+                retentionPct: retention.retentionPct,
+            },
         });
     } catch (error) {
         console.error('JIT Indexing error:', error);

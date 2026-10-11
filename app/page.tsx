@@ -78,6 +78,8 @@ interface DBToken {
   creator_holding_pct?: number;
   creatorHoldingPct?: number;
   block_zero_buyers?: number;
+  sniper_retention_pct?: number;
+  sniperRetentionPct?: number;
 }
 
 function getDevProfile(devAddress: string, allTokens: DBToken[]) {
@@ -477,13 +479,17 @@ export default function Home() {
       const devAddress = db.dev_address || db.devAddress || "";
       const ammAddress = db.amm_address || db.ammAddress || "";
 
-      let seed = 0;
-      for (let j = 0; j < contractAddress.length; j++) {
-        seed += contractAddress.charCodeAt(j);
-      }
-
       const block0 = Number(db.block_zero_buyers ?? 0);
-      const diamond = (seed % 60) + 10;
+
+      // REAL sniper retention: percentage of block-0 snipers still holding.
+      // Persisted by the indexer / indexToken route. When the field is absent
+      // (legacy rows) we default to 100% retained (0% dumped) rather than
+      // fabricating a value from the address hash.
+      const rawRetention = db.sniper_retention_pct ?? db.sniperRetentionPct;
+      const diamond =
+        rawRetention == null || Number.isNaN(Number(rawRetention))
+          ? 100
+          : Math.max(0, Math.min(100, Number(rawRetention)));
 
       const isGraduated = (db as any).lifecycle === "GRADUATED" || (db as any).graduated === true || Number(db.curve_progress ?? db.curveProgress ?? db.bondingCurveProgress ?? 0) >= 100;
       let bondingCurveProgress = isGraduated ? 100 : Number(db.curve_progress ?? db.curveProgress ?? db.bondingCurveProgress ?? 0);

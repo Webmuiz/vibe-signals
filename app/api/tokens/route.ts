@@ -35,7 +35,9 @@ export async function GET() {
             launchBlock: db.launch_block,
             timestamp: db.created_at,
             name: db.name || `Token #${db.launch_id}`,
-            ticker: db.symbol ? `$${db.symbol}` : '\$TKN'
+            ticker: db.symbol ? `$${db.symbol}` : '\$TKN',
+            block_zero_buyers: db.block_zero_buyers,
+            sniper_retention_pct: db.sniper_retention_pct,
         }));
 
         return NextResponse.json(formattedData);
