@@ -286,8 +286,16 @@ export default function Home() {
     const key = contractAddress.toLowerCase();
     if (!key || inFlightRef.current.has(key)) return;
     inFlightRef.current.add(key);
+    // Hard client-side ceiling so a slow/blocked proxy can never leave a card
+    // stuck on the synthetic fallback. The proxy itself now responds in <3s
+    // (oracle is non-blocking), so 12s is a generous safety net.
+    const controller = new AbortController();
+    const clientTimeout = setTimeout(() => controller.abort(), 12000);
     try {
-      const res = await fetch(`/api/proxyVibe?address=${key}&t=${Date.now()}`, { cache: 'no-store' });
+      const res = await fetch(`/api/proxyVibe?address=${key}&t=${Date.now()}`, {
+        cache: 'no-store',
+        signal: controller.signal,
+      });
 
       if (!res.ok) {
         // Upstream unreachable / timed out. Do NOT overwrite the cache with
@@ -295,7 +303,7 @@ export default function Home() {
         // fallback-derived entry if this token has never been resolved.
         const body = await res.json().catch(() => null);
         console.warn(
-          `[liveMetrics] proxyVibe ${res.status} for ${key}:`,
+          `[liveMetrics] proxyVibe HTTP ${res.status} for ${key}:`,
           body?.reason || body?.error || 'unknown'
         );
         setLiveMetrics((prev) => {
@@ -332,10 +340,13 @@ export default function Home() {
         }
       );
       setLiveMetrics((prev) => ({ ...prev, [key]: normalized }));
-    } catch (err) {
-      // Network-level failure (offline, DNS, CORS). Preserve existing cache.
-      console.error(`[liveMetrics] fetch failed for ${key}:`, err);
+    } catch (err: any) {
+      // Network-level failure (offline, DNS, CORS) or client timeout.
+      // Preserve existing cache so we never zero out real data.
+      const reason = err?.name === 'AbortError' ? 'client timeout (12s)' : err?.message || String(err);
+      console.error(`[liveMetrics] fetch failed for ${key}: ${reason}`);
     } finally {
+      clearTimeout(clientTimeout);
       inFlightRef.current.delete(key);
     }
   };

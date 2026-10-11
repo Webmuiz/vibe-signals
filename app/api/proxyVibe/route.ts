@@ -7,6 +7,11 @@ const VIBE_API_BASE = process.env.VIBE_API_BASE || 'https://testnet.vibevibe.fun
 // with a clear 504 instead of hanging until the platform kills the function.
 const UPSTREAM_TIMEOUT_MS = Number(process.env.VIBE_TIMEOUT_MS) || 8000;
 
+// The ETH oracle is BEST-EFFORT only. It must never block the launch/market
+// response, so it gets its own short timeout and is raced against a fallback.
+const ORACLE_TIMEOUT_MS = Number(process.env.VIBE_ORACLE_TIMEOUT_MS) || 2500;
+const FALLBACK_ETH_USD = 2600;
+
 const UPSTREAM_HEADERS = {
   'User-Agent':
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -75,11 +80,13 @@ export async function GET(request: Request) {
     const launchUrl = `${VIBE_API_BASE}/api/v1/chains/46630/${path}/${address}`;
     const marketUrl = `${VIBE_API_BASE}/api/v1/chains/46630/${path}/${address}/market?limit=2`;
 
-    // Launch + market are required; the ETH oracle is best-effort.
+    // Launch + market are REQUIRED. The ETH oracle is best-effort and is
+    // fetched with a short timeout so a slow/blocked Coinbase endpoint can
+    // never delay the real launch/market data the UI depends on.
     const [launchRes, marketRes, ethRes] = await Promise.all([
       fetchWithTimeout(launchUrl, UPSTREAM_TIMEOUT_MS),
       fetchWithTimeout(marketUrl, UPSTREAM_TIMEOUT_MS),
-      fetchWithTimeout('https://api.coinbase.com/v2/prices/ETH-USD/spot', UPSTREAM_TIMEOUT_MS),
+      fetchWithTimeout('https://api.coinbase.com/v2/prices/ETH-USD/spot', ORACLE_TIMEOUT_MS),
     ]);
 
     if (!launchRes.ok) {
@@ -100,11 +107,13 @@ export async function GET(request: Request) {
     const data = launchRes.json;
     const marketData = marketRes.ok ? marketRes.json : null;
 
-    let ethPriceUsd = 2600;
+    let ethPriceUsd = FALLBACK_ETH_USD;
     if (ethRes.ok && ethRes.json?.data?.amount) {
       ethPriceUsd = Number(ethRes.json.data.amount);
     } else if (!ethRes.ok) {
-      console.warn(`[proxyVibe] ETH oracle unavailable (${ethRes.reason}): ${ethRes.detail}`);
+      console.warn(
+        `[proxyVibe] ETH oracle unavailable (${ethRes.reason}) — using fallback $${FALLBACK_ETH_USD}: ${ethRes.detail}`
+      );
     }
 
     if (data && data.data) {
