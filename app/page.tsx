@@ -175,6 +175,13 @@ export default function Home() {
   const [liveMetrics, setLiveMetrics] = useState<Record<string, LiveTokenMetrics>>({});
   const liveMetricsRef = useRef<Record<string, LiveTokenMetrics>>({});
   const inFlightRef = useRef<Set<string>>(new Set());
+  // Mirror of the oracle rates so background pollers always read the freshest
+  // prices WITHOUT the polling effects having to re-subscribe on every sync.
+  const liveRatesRef = useRef<Record<string, number>>({});
+  // Tracks which tokens have ever received real API metrics. Used to decide
+  // whether a poll is an initial load (show syncing/blur) or a background
+  // refresh (update silently, never re-trigger the blur).
+  const resolvedOnceRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     activeTokenRef.current = selectedToken?.contractAddress || null;
@@ -277,6 +284,12 @@ export default function Home() {
     liveMetricsRef.current = liveMetrics;
   }, [liveMetrics]);
 
+  // Keep a ref mirror of the oracle rates so background pollers always use the
+  // freshest prices without forcing their intervals to restart on every sync.
+  useEffect(() => {
+    liveRatesRef.current = liveRates;
+  }, [liveRates]);
+
   /**
    * Fetches REAL market metrics for a single token from `/api/proxyVibe` and
    * stores the normalized result in `liveMetrics`. This is the shared source
@@ -323,9 +336,11 @@ export default function Home() {
       }
 
       const json = await res.json();
+      // Read the freshest oracle rates from the ref so this poller never needs
+      // to re-subscribe when `liveRates` changes.
       const normalized = await normalizeVibeResponse(
         json,
-        liveRates,
+        liveRatesRef.current,
         { ...fallback, contractAddress: key },
         async (addr) => {
           try {
@@ -339,7 +354,40 @@ export default function Home() {
           }
         }
       );
+
+      // Mark this token as resolved so the card's blur is permanently lifted
+      // and never re-triggered by subsequent background refreshes.
+      resolvedOnceRef.current.add(key);
+
       setLiveMetrics((prev) => ({ ...prev, [key]: normalized }));
+
+      // Keep the detail view in lock-step with the grid: if the token the user
+      // is currently viewing was just refreshed by the grid poller, publish the
+      // same numbers into `selectedToken` so both surfaces never drift.
+      if (activeTokenRef.current?.toLowerCase() === key) {
+        setSelectedToken((prev: any) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            bondingCurveProgress: normalized.bondingCurveProgress,
+            ethDeposited: normalized.ethDeposited,
+            pairSymbol: normalized.pairSymbol,
+            symbol: normalized.symbol || prev.symbol,
+            devAddress: normalized.devAddress || prev.devAddress,
+            hasSocials: normalized.hasSocials,
+            socialLinks: normalized.socialLinks,
+            marketCapUsd: normalized.marketCapUsd,
+            volumeEth: normalized.volumeEth,
+            volumeUsd: normalized.volumeUsd,
+            momentum: {
+              buyPct: normalized.buyPct,
+              sellPct: normalized.sellPct,
+              volumeEth: normalized.volumeEth,
+              volumeUsd: normalized.volumeUsd,
+            },
+          };
+        });
+      }
     } catch (err: any) {
       // Network-level failure (offline, DNS, CORS) or client timeout.
       // Preserve existing cache so we never zero out real data.
@@ -353,6 +401,11 @@ export default function Home() {
 
   // Poll real metrics for every visible token so the homepage cards always
   // reflect the same numbers the detail view will show.
+  //
+  // NOTE: this effect intentionally does NOT depend on `liveRates` — the poller
+  // reads rates via `liveRatesRef`, so an oracle sync no longer tears down and
+  // restarts the interval (which previously caused a burst of refetches and
+  // visible card churn every 45s).
   useEffect(() => {
     if (dbTokens.length === 0) return;
     const addresses = dbTokens
@@ -366,7 +419,7 @@ export default function Home() {
     }, 15000);
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dbTokens.length, liveRates]);
+  }, [dbTokens.length]);
 
   useEffect(() => {
     const channel = supabase
@@ -668,7 +721,13 @@ export default function Home() {
     let isMounted = true;
 
     const fetchLiveToken = () => {
-      setIsSyncingLive(true);
+      const detailKey = selectedToken.contractAddress.toLowerCase();
+      // Only surface the "Syncing..." state on the FIRST load for this token.
+      // Background refreshes update silently so the telemetry panel never
+      // flashes placeholders (or re-triggers the card blur) every 5 seconds.
+      if (!resolvedOnceRef.current.has(detailKey)) {
+        setIsSyncingLive(true);
+      }
       fetch(`/api/proxyVibe?address=${selectedToken.contractAddress}&t=${Date.now()}`, { cache: 'no-store' })
         .then(async res => {
           if (!isMounted) return;
@@ -691,7 +750,7 @@ export default function Home() {
           // derive every shared metric from identical logic.
           const metrics = await normalizeVibeResponse(
             json,
-            liveRates,
+            liveRatesRef.current,
             {
               contractAddress: selectedToken.contractAddress,
               name: selectedToken.name,
@@ -715,6 +774,10 @@ export default function Home() {
               }
             }
           );
+
+          // Mark resolved so the card blur is lifted permanently and future
+          // background refreshes never re-trigger the syncing state.
+          resolvedOnceRef.current.add(metrics.contractAddress);
 
           // Publish to the shared cache so the homepage card for this token
           // immediately reflects the same numbers.
@@ -767,7 +830,14 @@ export default function Home() {
           }));
         })
         .catch(console.error)
-        .finally(() => setIsSyncingLive(false));
+        .finally(() => {
+          // Only clear the syncing flag if this fetch was the initial load for
+          // this token. Background refreshes never set it, so they must not
+          // clear it either (avoids clobbering a concurrent initial load).
+          if (!resolvedOnceRef.current.has(detailKey)) {
+            setIsSyncingLive(false);
+          }
+        });
     };
 
     fetchLiveToken();
@@ -872,6 +942,9 @@ export default function Home() {
     return () => {
       isMounted = false;
       clearInterval(interval);
+      // Reset the syncing indicator on token switch / unmount so a pending
+      // initial load can never leave the panel stuck in "Syncing...".
+      setIsSyncingLive(false);
     };
   }, [selectedToken?.contractAddress, refreshTrigger]);
 
@@ -1071,6 +1144,7 @@ export default function Home() {
                     isConnected={isConnected}
                     hasAccess={hasAccess}
                     liveRates={liveRates}
+                    liveMetricsResolved={!!liveMetrics[token.contractAddress.toLowerCase()]}
                     onSelect={(selected) => {
                       // Seed the detail view from the SAME cached live metrics
                       // the card is displaying, so there is no stale-state jump.
