@@ -1009,6 +1009,13 @@ export default function Home() {
     if (!selectedToken?.contractAddress) return;
     let isMounted = true;
 
+    // Reset the resolved profiler stats on token switch. Without this, the
+    // panel would display the PREVIOUS token's launches/graduation rate until
+    // the new profiler fetch resolves — and indefinitely if that fetch fails.
+    // Clearing to null makes the panel fall back to the selected token's own
+    // `devProfile` (grid-derived) until fresh, authoritative data arrives.
+    setDevStats(null);
+
     /**
      * Hydrates the telemetry panel from on-chain/contract metrics when the
      * proxy is slow, times out, or returns a partial payload. This is the

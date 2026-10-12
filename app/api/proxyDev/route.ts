@@ -24,26 +24,78 @@ interface VibePage {
 interface VibeResponse {
   data?: {
     items?: any[];
+    /**
+     * Some V6 endpoints return the launch list under `launches` instead of
+     * `items`. The parser must accept BOTH shapes or it silently drops the
+     * entire payload and reports a bogus "0 launches" profile.
+     */
+    launches?: any[];
     page?: VibePage;
   };
 }
 
 /**
- * Fetches a single page from an upstream VibeVibe endpoint. Returns null when
- * the request fails or the response is not OK, so callers can distinguish a
+ * Extracts the launch array from an upstream payload, tolerating both the
+ * `data.items` and `data.launches` response shapes. Returns an empty array when
+ * neither is present (a genuinely empty page), never `undefined`.
+ */
+function extractItems(payload: VibeResponse | null): any[] {
+  if (!payload?.data) return [];
+  if (Array.isArray(payload.data.items)) return payload.data.items;
+  if (Array.isArray(payload.data.launches)) return payload.data.launches;
+  return [];
+}
+
+/**
+ * Fetches a single page from an upstream VibeVibe endpoint.
+ *
+ * Resilience: the upstream intermittently returns HTTP 503 with a
+ * `BOARD_BUSY` body under load. A single retry (after a short backoff) rides
+ * out that transient condition. Non-OK responses are logged explicitly so a
+ * silent upstream failure can never masquerade as an empty developer profile.
+ *
+ * Returns null when the request ultimately fails, so callers can distinguish a
  * genuine empty page from a transient upstream failure.
  */
 async function fetchPage(
   url: string,
   headers: Record<string, string>
 ): Promise<VibeResponse | null> {
-  try {
-    const res = await fetch(url, { headers, cache: 'no-store' });
-    if (!res.ok) return null;
-    return (await res.json()) as VibeResponse;
-  } catch {
-    return null;
+  const MAX_ATTEMPTS = 2; // initial attempt + one retry
+
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      const res = await fetch(url, { headers, cache: 'no-store' });
+      if (res.ok) {
+        return (await res.json()) as VibeResponse;
+      }
+
+      // Explicit, non-silent upstream error logging.
+      console.error(
+        `[proxyDev] Upstream error: ${res.status} ${res.statusText} (attempt ${attempt}/${MAX_ATTEMPTS}) ${url}`
+      );
+
+      // Retry once on 503 BOARD_BUSY (and any other 5xx) — these are transient.
+      const isRetryable = res.status === 503 || res.status >= 500;
+      if (isRetryable && attempt < MAX_ATTEMPTS) {
+        await new Promise((resolve) => setTimeout(resolve, 400));
+        continue;
+      }
+      return null;
+    } catch (err) {
+      console.error(
+        `[proxyDev] Upstream fetch threw (attempt ${attempt}/${MAX_ATTEMPTS}) ${url}:`,
+        err
+      );
+      if (attempt < MAX_ATTEMPTS) {
+        await new Promise((resolve) => setTimeout(resolve, 400));
+        continue;
+      }
+      return null;
+    }
   }
+
+  return null;
 }
 
 /**
@@ -74,8 +126,9 @@ async function fetchAllPages(
     }
     if (pageCount === 0) firstPageOk = true;
 
-    const pageItems = page.data?.items;
-    if (Array.isArray(pageItems)) items.push(...pageItems);
+    // Accept both `data.items` and `data.launches` payload shapes.
+    const pageItems = extractItems(page);
+    if (pageItems.length > 0) items.push(...pageItems);
 
     const pageMeta = page.data?.page;
     const nextCursor = pageMeta?.nextCursor ?? null;
@@ -115,7 +168,7 @@ async function fetchLaunchesWithFallback(
   // Retry with the standard non-cursor query before giving up.
   const plain = await fetchPage(buildPlainUrl(), headers);
   if (plain !== null) {
-    const plainItems = Array.isArray(plain.data?.items) ? plain.data!.items! : [];
+    const plainItems = extractItems(plain);
     // Prefer whichever attempt actually returned data; otherwise report the
     // plain query's (possibly empty but successful) result.
     if (plainItems.length > 0 || paginated.items.length === 0) {
@@ -129,13 +182,18 @@ async function fetchLaunchesWithFallback(
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
-  const address = searchParams.get('address');
 
-  if (!address) return NextResponse.json({ error: 'Missing address' }, { status: 400 });
+  // Normalize the requested developer address IMMEDIATELY: trim whitespace and
+  // lowercase. The upstream indexes are case-sensitive, so a checksummed
+  // (mixed-case) or padded input would silently return zero launches and
+  // undercount the profiler. Every downstream comparison and upstream call uses
+  // this single canonical value.
+  const targetDev = (searchParams.get('address') || '').trim().toLowerCase();
+
+  if (!targetDev) return NextResponse.json({ error: 'Missing address' }, { status: 400 });
 
   try {
     const headers = { 'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0' };
-    const targetDev = address.toLowerCase();
 
     // 1. Fetch all launches created by this wallet.
     //
@@ -188,39 +246,44 @@ export async function GET(request: Request) {
     // V6 `lifecycle` / `graduated` fields the graduation math depends on).
     const combinedItems: any[] = [...v6Launches.items, ...legacyLaunches.items];
 
-    // NORMALIZE THE CREATOR FIELD. V6 items carry `launcherAddress`; legacy
-    // items carry `creatorAddress`. Every downstream consumer (the Discipline
-    // scanner, the returned `items` payload, the frontend profiler) reads
-    // `creatorAddress`, so we project `launcherAddress` onto it here. Without
-    // this mapping the V6 tokens reach the scanner with an undefined creator and
-    // are silently dropped, producing the "0 launches" symptom.
+    // NORMALIZE THE CREATOR + TOKEN ADDRESS FIELDS.
+    //
+    // Creator: V6 items carry `launcherAddress`; legacy items carry
+    // `creatorAddress`. Every downstream consumer reads `creatorAddress`, so we
+    // project `launcherAddress` onto it here. Without this mapping V6 tokens
+    // reach the scanner with an undefined creator and are silently dropped,
+    // producing the "0 launches" symptom.
+    //
+    // Token address: some payloads expose the contract under `address` rather
+    // than `tokenAddress`. We canonicalize onto `tokenAddress` (lowercased) so
+    // deduplication and set membership are consistent across both surfaces.
     const normalizedItems: any[] = combinedItems
-      .filter((item: any) => item && item.tokenAddress)
+      .filter((item: any) => item && (item.tokenAddress || item.address))
       .map((item: any) => {
         const creator = String(
           item.launcherAddress || item.creatorAddress || ''
         ).toLowerCase();
+        const tokenAddress = String(item.tokenAddress || item.address || '').toLowerCase();
         return {
           ...item,
-          // Canonical internal key consumed downstream.
+          // Canonical internal keys consumed downstream.
+          tokenAddress,
           creatorAddress: creator,
           // Preserve the V6-native field for any consumer that still reads it.
           launcherAddress: item.launcherAddress || creator,
         };
       });
 
-    // Deduplicate by lowercased token address. Items without a tokenAddress are
-    // dropped rather than allowed to throw (a single malformed item must not
-    // 500 the whole profiler response).
     // Deduplicate by lowercased token address. When a token appears on BOTH
     // surfaces we MERGE the two records rather than letting one clobber the
     // other: the V6 record is the base (it carries `lifecycle` / `graduated` /
     // `curve`), and any legacy-only fields are layered underneath so no data is
-    // lost. This is what guarantees the legacy array is never ignored when V6
-    // also succeeds.
+    // lost. This guarantees the legacy array is never ignored when V6 also
+    // succeeds, while V6 retains precedence for shared tokens.
     const dedupMap = new Map<string, any>();
     normalizedItems.forEach((item: any) => {
-      const key = String(item.tokenAddress).toLowerCase();
+      const key = String(item.tokenAddress || item.address || '').toLowerCase();
+      if (!key) return; // malformed item — never let it throw / 500 the response
       const existing = dedupMap.get(key);
       if (!existing) {
         dedupMap.set(key, item);
@@ -240,22 +303,27 @@ export async function GET(request: Request) {
       return launcher === targetDev;
     });
 
-    const createdTokenSet = new Set(createdTokens.map((t: any) => t.tokenAddress.toLowerCase()));
+    const createdTokenSet = new Set(
+      createdTokens.map((t: any) => String(t.tokenAddress || t.address || '').toLowerCase())
+    );
     // Graduation is evaluated through the SHARED predicate so V6 (`lifecycle` /
     // `graduated`) and legacy (`curve_progress >= 100`) tokens are both counted.
-    // Previously only the V6 fields were checked, which reported a 0% rate for
-    // graduated V6 tokens whose graduation was expressed via `curve_progress`.
+    // It runs over the MERGED + DEDUPLICATED dataset, so a token that appears on
+    // both surfaces is counted exactly once and V6 graduation fields take
+    // precedence. Previously only the V6 fields were checked, which reported a
+    // 0% rate for graduated tokens whose graduation was expressed via
+    // `curve_progress`.
     const graduatedTokenSet = new Set(
       createdTokens
         .filter((item: any) => isTokenGraduated(item))
-        .map((t: any) => t.tokenAddress.toLowerCase())
+        .map((t: any) => String(t.tokenAddress || t.address || '').toLowerCase())
     );
 
     // Graduation timestamps, used to strictly isolate pre-graduation sells when
     // the event itself does not carry a `route` field.
     const graduationTimestampByToken = new Map<string, number>();
     createdTokens.forEach((item: any) => {
-      const addr = (item.tokenAddress || '').toLowerCase();
+      const addr = String(item.tokenAddress || item.address || '').toLowerCase();
       const ts = item.graduatedAt || item.graduationTimestamp || item.graduation?.timestamp;
       if (addr && ts != null) {
         const parsed = typeof ts === 'number' ? ts : Date.parse(String(ts));
