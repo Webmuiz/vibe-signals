@@ -59,6 +59,12 @@ interface TokenCardProps {
    * user never sees the synthetic Supabase fallback values mid-load.
    */
   liveMetricsResolved?: boolean;
+  /**
+   * Whether the ETH/quote oracle price has been loaded at least once. Until it
+   * has, any USD value is computed against a hard-coded seed rate and MUST NOT
+   * be rendered — the card shows "Syncing..." instead.
+   */
+  oracleReady?: boolean;
 }
 
 /**
@@ -137,6 +143,7 @@ function TokenCard({
   onSelect,
   signalTokenAddress,
   liveMetricsResolved = true,
+  oracleReady = false,
 }: TokenCardProps) {
   const scoreColor =
     token.score >= 70
@@ -146,6 +153,14 @@ function TokenCard({
         : "text-red-400 border-red-400/30 bg-red-400/10";
 
   const unlocked = isConnected && hasAccess;
+
+  // STRICT SYNCING GATE. A USD metric may only render when:
+  //   1. the oracle price is loaded (otherwise the value is computed against a
+  //      hard-coded seed rate and would jump when the real price arrives), AND
+  //   2. the real API-derived metrics have resolved for this token.
+  // Until both hold we render a muted "Syncing..." placeholder and NEVER a
+  // partial/synthetic calculation.
+  const showSyncing = !oracleReady || !liveMetricsResolved;
 
   // Sparkline is derived purely from stable, displayed inputs. `useMemo` keeps
   // the generated path referentially stable across re-renders so it never
@@ -251,26 +266,28 @@ function TokenCard({
               <span className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider block mb-1">
                 {token.marketCapIsEstimate ? 'M.Cap (Est)' : 'M.Cap'}
               </span>
-              <span
-                className={`text-sm font-bold text-zinc-300 transition-all duration-300 ${!liveMetricsResolved ? 'blur-sm opacity-50 select-none' : ''}`}
-              >
-                {token.marketCapUsd
-                  ? `${token.marketCapIsEstimate ? '~' : ''}${formatCompactUsd(token.marketCapUsd)}`
-                  : token.cachedMarketCapFormatted
-                    ? formatCompactUsd(token.cachedMarketCapFormatted)
-                    : liveMetricsResolved
-                      ? `~${formatCompactUsd(calculateTokenMetrics(token.bondingCurveProgress, token.ethDeposited, token.pairSymbol, liveRates).marketCapFormatted)}`
-                      : '...'}
+              <span className="text-sm font-bold text-zinc-300 transition-all duration-300">
+                {showSyncing ? (
+                  <span className="text-gray-400 animate-pulse">Syncing...</span>
+                ) : token.marketCapUsd ? (
+                  `${token.marketCapIsEstimate ? '~' : ''}${formatCompactUsd(token.marketCapUsd)}`
+                ) : token.cachedMarketCapFormatted ? (
+                  formatCompactUsd(token.cachedMarketCapFormatted)
+                ) : (
+                  `~${formatCompactUsd(calculateTokenMetrics(token.bondingCurveProgress, token.ethDeposited, token.pairSymbol, liveRates).marketCapFormatted)}`
+                )}
               </span>
             </div>
             <div>
               <span className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider block mb-1">24H Vol</span>
-              <span
-                className={`text-sm font-bold text-zinc-300 transition-all duration-300 ${!liveMetricsResolved ? 'blur-sm opacity-50 select-none' : ''}`}
-              >
-                {token.volumeUsd
-                  ? formatCompactUsd(token.volumeUsd)
-                  : formatCompactUsd(Number(token.momentum?.volumeEth || 0) * getUsdRateForPair(token.pairSymbol, liveRates))}
+              <span className="text-sm font-bold text-zinc-300 transition-all duration-300">
+                {showSyncing ? (
+                  <span className="text-gray-400 animate-pulse">Syncing...</span>
+                ) : token.volumeUsd ? (
+                  formatCompactUsd(token.volumeUsd)
+                ) : (
+                  formatCompactUsd(Number(token.momentum?.volumeEth || 0) * getUsdRateForPair(token.pairSymbol, liveRates))
+                )}
               </span>
             </div>
             <div className="pl-1">
@@ -304,6 +321,7 @@ function areTokenCardPropsEqual(prev: TokenCardProps, next: TokenCardProps): boo
   if (prev.hasAccess !== next.hasAccess) return false;
   if (prev.signalTokenAddress !== next.signalTokenAddress) return false;
   if (prev.liveMetricsResolved !== next.liveMetricsResolved) return false;
+  if (prev.oracleReady !== next.oracleReady) return false;
   if (prev.liveRates !== next.liveRates) return false;
 
   const a = prev.token;

@@ -10,6 +10,12 @@ export interface TelemetryMomentum {
 
 interface LiveTelemetryPanelProps {
   isSyncingLive: boolean;
+  /**
+   * Whether the ETH/quote oracle price has been loaded at least once. Until it
+   * has, any USD-denominated value is computed against a hard-coded seed rate
+   * and MUST NOT be rendered — the panel shows "Syncing..." instead.
+   */
+  oracleReady?: boolean;
   timeSinceLaunchMins: number;
   bondingCurveProgress: number;
   ethDeposited: number | string;
@@ -20,8 +26,17 @@ interface LiveTelemetryPanelProps {
   volumeEth?: string | number;
 }
 
+/**
+ * Muted, pulsing "Syncing..." placeholder used everywhere a USD metric is not
+ * yet trustworthy (oracle not loaded, fetch in flight, or synthetic fallback).
+ */
+function SyncingText() {
+  return <span className="text-gray-400 animate-pulse">Syncing...</span>;
+}
+
 export default function LiveTelemetryPanel({
   isSyncingLive,
+  oracleReady = false,
   timeSinceLaunchMins,
   bondingCurveProgress,
   ethDeposited,
@@ -41,6 +56,22 @@ export default function LiveTelemetryPanel({
   // the first live fetch instead of flashing the graduation target.
   const hasResolvedMarketCap =
     !!marketCapUsd && !SYNTHETIC_GRAD_TARGETS.includes(marketCapUsd);
+
+  // STRICT SYNCING GATE for Market Cap:
+  //   - oracle not loaded yet (USD rate unknown), OR
+  //   - the first live fetch is still in flight, OR
+  //   - the value is a synthetic fallback (not real API data)
+  // In any of these cases we render "Syncing..." rather than a partial number.
+  const showMarketCapSyncing =
+    !oracleReady || (isSyncingLive && !hasResolvedMarketCap) || !hasResolvedMarketCap;
+
+  // STRICT SYNCING GATE for 24H Volume: same rules — no USD volume may render
+  // until the oracle is ready and a real (non-zero) volume figure exists.
+  const hasResolvedVolume = !!(
+    (momentum?.volumeUsd || volumeUsd) ||
+    (momentum?.volumeEth || volumeEth)
+  );
+  const showVolumeSyncing = !oracleReady || (isSyncingLive && !hasResolvedVolume);
 
   return (
     <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
@@ -65,7 +96,7 @@ export default function LiveTelemetryPanel({
                 is what caused the initial "$50.5K" flash. Show a placeholder
                 until real, API-derived data resolves. */}
             <span className="text-zinc-400 font-mono">
-              MC: {isSyncingLive && !hasResolvedMarketCap ? <span className="animate-pulse">...</span> : formatCompactUsd(marketCapUsd)}
+              MC: {showMarketCapSyncing ? <SyncingText /> : formatCompactUsd(marketCapUsd)}
             </span>
             <span className={bondingCurveProgress >= 100 ? "text-amber-400 font-bold" : "text-emerald-400 font-bold"}>
               {bondingCurveProgress >= 100 ? 'Graduated 🚀' : `${bondingCurveProgress.toFixed(1)}%`}
@@ -87,8 +118,8 @@ export default function LiveTelemetryPanel({
         <div className="flex justify-between text-xs mb-2">
           <span className="text-zinc-400 uppercase tracking-wider font-bold">24H MOMENTUM</span>
           <span className="text-zinc-500">
-            24H Volume: {isSyncingLive && !momentum?.volumeUsd && !volumeUsd && !momentum?.volumeEth && !volumeEth
-              ? <span className="animate-pulse">...</span>
+            24H Volume: {showVolumeSyncing
+              ? <SyncingText />
               : (momentum?.volumeUsd || volumeUsd
                 ? formatCompactUsd(momentum?.volumeUsd ?? volumeUsd)
                 : `${momentum?.volumeEth || volumeEth || '0.0000'} ${pairSymbol}`)}

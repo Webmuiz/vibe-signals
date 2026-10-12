@@ -262,6 +262,19 @@ export default function Home() {
   const [liveMetrics, setLiveMetrics] = useState<Record<string, LiveTokenMetrics>>({});
   const liveMetricsRef = useRef<Record<string, LiveTokenMetrics>>({});
   const inFlightRef = useRef<Set<string>>(new Set());
+  // Monotonic per-token fetch sequence. Every fetch (grid poller OR detail
+  // poller) claims the next number for its token; a fetch may only commit its
+  // result to state if it still owns the LATEST sequence for that token. This
+  // is the core race-condition guard: a slow, older request that resolves
+  // after a newer one is silently discarded instead of clobbering fresh data
+  // (the cause of the Market Cap / Volume flashing between values).
+  const fetchSeqRef = useRef<Map<string, number>>(new Map());
+  // Tracks whether the ETH/quote oracle price has been loaded from the API at
+  // least once. Until it has, USD-denominated metrics must NOT be rendered —
+  // they would be computed against the hard-coded seed rate and then jump when
+  // the real oracle price arrives.
+  const [oracleReady, setOracleReady] = useState(false);
+  const oracleReadyRef = useRef(false);
   // Mirror of the oracle rates so background pollers always read the freshest
   // prices WITHOUT the polling effects having to re-subscribe on every sync.
   const liveRatesRef = useRef<Record<string, number>>({});
@@ -310,6 +323,11 @@ export default function Home() {
 
         if (isSubscribed && Object.keys(oracleRates).length > 0) {
           setLiveRates(prev => ({ ...prev, ...oracleRates, ETH: ethPrice, WETH: ethPrice }));
+          // Mark the oracle as loaded so USD metrics may now be rendered. Until
+          // this flips, the UI shows "Syncing..." instead of computing values
+          // against the hard-coded seed rate (which caused the initial flash).
+          oracleReadyRef.current = true;
+          setOracleReady(true);
         }
       } catch (err) {
         console.error("Failed to sync global oracle prices", err);
@@ -401,6 +419,12 @@ export default function Home() {
     const key = contractAddress.toLowerCase();
     if (!key || inFlightRef.current.has(key)) return;
     inFlightRef.current.add(key);
+    // Claim the next sequence number for this token. Only the fetch that still
+    // owns the latest sequence is allowed to commit to state, so a slow older
+    // request can never overwrite a newer one's result.
+    const seq = (fetchSeqRef.current.get(key) ?? 0) + 1;
+    fetchSeqRef.current.set(key, seq);
+    const isLatest = () => fetchSeqRef.current.get(key) === seq;
     // Hard client-side ceiling so a slow/blocked proxy can never leave a card
     // stuck on the synthetic fallback. The proxy itself now responds in <3s
     // (oracle is non-blocking), so 12s is a generous safety net.
@@ -421,6 +445,9 @@ export default function Home() {
           `[liveMetrics] proxyVibe HTTP ${res.status} for ${key}:`,
           body?.reason || body?.error || 'unknown'
         );
+        // Only the latest fetch may seed a fallback entry; a stale error
+        // response must not resurrect a placeholder over newer real data.
+        if (!isLatest()) return;
         setLiveMetrics((prev) => {
           if (prev[key]) return prev; // preserve last-known-good real data
           if (!fallback) return prev;
@@ -456,6 +483,15 @@ export default function Home() {
           }
         }
       );
+
+      // STALE-GUARD: if a newer fetch for this token was issued while this one
+      // was in flight, discard this result entirely. Without this, a slow
+      // response could overwrite fresher Market Cap / Volume values, producing
+      // the reported "flash to $26.1K then back" behaviour.
+      if (!isLatest()) {
+        console.warn(`[liveMetrics] discarding stale response for ${key} (seq ${seq})`);
+        return;
+      }
 
       // Mark this token as resolved so the card's blur is permanently lifted
       // and never re-triggered by subsequent background refreshes.
@@ -946,8 +982,12 @@ export default function Home() {
      * guaranteed fallback that prevents the panel from hanging on
      * "SYNCING..." / "MC: ..." indefinitely.
      */
-    const hydrateFromOnChain = async () => {
+    const hydrateFromOnChain = async (seq: number) => {
       const detailKey = selectedToken.contractAddress.toLowerCase();
+      // Only hydrate if this detail fetch still owns the latest sequence for
+      // the token — otherwise a slow on-chain read could overwrite the fresh
+      // API metrics a newer fetch already committed.
+      const isLatest = () => fetchSeqRef.current.get(detailKey) === seq;
       try {
         // Read the raw ETH reserve directly from the bonding curve contract
         // when the API is unavailable. `pairReserveUnits`/`netRaisedWei` are
@@ -1003,7 +1043,7 @@ export default function Home() {
           isLegacy: selectedToken.isLegacy ?? false,
         };
 
-        if (!isMounted) return;
+        if (!isMounted || !isLatest()) return;
         resolvedOnceRef.current.add(detailKey);
         setLiveMetrics((prev) => ({ ...prev, [detailKey]: fallbackMetrics }));
         setSelectedToken((prev: any) => {
@@ -1025,6 +1065,11 @@ export default function Home() {
 
     const fetchLiveToken = () => {
       const detailKey = selectedToken.contractAddress.toLowerCase();
+      // Claim the next sequence for this token so this detail fetch and the
+      // grid poller share a single ordering. Only the latest owner may commit.
+      const seq = (fetchSeqRef.current.get(detailKey) ?? 0) + 1;
+      fetchSeqRef.current.set(detailKey, seq);
+      const isLatest = () => fetchSeqRef.current.get(detailKey) === seq;
       // Only surface the "Syncing..." state on the FIRST load for this token.
       // Background refreshes update silently so the telemetry panel never
       // flashes placeholders (or re-triggers the card blur) every 5 seconds.
@@ -1051,7 +1096,7 @@ export default function Home() {
               `[detail] proxyVibe ${res.status} for ${selectedToken.contractAddress}:`,
               body?.reason || body?.error || 'unknown'
             );
-            await hydrateFromOnChain();
+            await hydrateFromOnChain(seq);
             return;
           }
 
@@ -1093,8 +1138,13 @@ export default function Home() {
           // on-chain reserves so the telemetry panel shows real numbers.
           if (json.data?.partial === true) {
             console.warn(`[detail] partial payload for ${detailKey} — hydrating on-chain metrics`);
-            await hydrateFromOnChain();
+            await hydrateFromOnChain(seq);
           }
+
+          // STALE-GUARD: a newer fetch for this token superseded us while the
+          // response was in flight — discard so we never overwrite fresher
+          // Market Cap / Volume values.
+          if (!isMounted || !isLatest()) return;
 
           // Mark resolved so the card blur is lifted permanently and future
           // background refreshes never re-trigger the syncing state.
@@ -1106,6 +1156,10 @@ export default function Home() {
 
           const launch = json.data?.launch || (json.data?.tokenAddress ? json.data : null);
           const poolAddr = (launch?.graduation?.poolId || launch?.poolAddress || launch?.pool?.address || "").toLowerCase();
+
+          // Final stale-guard before mutating the detail view. If a newer fetch
+          // superseded us, bail so the drawer keeps the fresher numbers.
+          if (!isMounted || !isLatest()) return;
 
           setSelectedToken((prev: any) => ({
             ...prev,
@@ -1156,14 +1210,14 @@ export default function Home() {
           // hanging on "SYNCING..." / "MC: ...".
           const reason = err?.name === 'AbortError' ? 'client timeout (5s)' : err?.message || String(err);
           console.warn(`[detail] proxyVibe fetch failed for ${detailKey}: ${reason}`);
-          await hydrateFromOnChain();
+          await hydrateFromOnChain(seq);
         })
         .finally(() => {
           clearTimeout(clientTimeout);
           // Only clear the syncing flag if this fetch was the initial load for
-          // this token. Background refreshes never set it, so they must not
-          // clear it either (avoids clobbering a concurrent initial load).
-          if (!resolvedOnceRef.current.has(detailKey)) {
+          // this token AND it still owns the latest sequence. A superseded
+          // fetch must not clear the flag set by a newer in-flight load.
+          if (!resolvedOnceRef.current.has(detailKey) && isLatest()) {
             setIsSyncingLive(false);
           }
         });
@@ -1618,6 +1672,7 @@ export default function Home() {
 
                 <LiveTelemetryPanel
                   isSyncingLive={isSyncingLive}
+                  oracleReady={oracleReady}
                   timeSinceLaunchMins={selectedToken.timeSinceLaunchMins}
                   bondingCurveProgress={selectedToken.bondingCurveProgress}
                   ethDeposited={selectedToken.ethDeposited}
@@ -1710,6 +1765,7 @@ export default function Home() {
                     hasAccess={hasAccess}
                     liveRates={liveRates}
                     liveMetricsResolved={!!liveMetrics[token.contractAddress.toLowerCase()]}
+                    oracleReady={oracleReady}
                     onSelect={handleSelectToken}
                     signalTokenAddress={SIGNAL_TOKEN}
                   />
