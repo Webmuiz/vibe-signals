@@ -7,6 +7,8 @@ interface HeaderProps {
   address?: string;
   login: () => void;
   logout: () => void;
+  /** Opens the User Portfolio drawer. Only meaningful when connected. */
+  onOpenPortfolio?: () => void;
 }
 
 export default function Header({
@@ -15,7 +17,8 @@ export default function Header({
   isConnected,
   address,
   login,
-  logout
+  logout,
+  onOpenPortfolio
 }: HeaderProps) {
   return (
     <nav className="flex justify-between items-center p-4 border-b border-zinc-800 bg-zinc-900/50 sticky top-0 z-50 backdrop-blur-md">
@@ -34,6 +37,14 @@ export default function Header({
           </button>
         ) : (
           <div className="flex items-center gap-3">
+            {onOpenPortfolio && (
+              <button
+                onClick={onOpenPortfolio}
+                className="px-3 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-bold rounded-lg transition-colors text-sm border border-zinc-700 hover:border-emerald-500/50"
+              >
+                💼 Portfolio
+              </button>
+            )}
             <span className="text-sm font-mono text-emerald-400 bg-emerald-500/10 px-3 py-1.5 rounded-lg border border-emerald-500/30">
               {address ? `${address.substring(0, 6)}...${address.substring(address.length - 4)}` : ""}
             </span>

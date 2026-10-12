@@ -4,6 +4,7 @@ import { useState, useMemo, useEffect, useRef, useCallback, memo } from "react";
 import { usePrivy } from "@privy-io/react-auth";
 import { useAccount, useSendTransaction, useBalance, useReadContract, useWaitForTransactionReceipt } from "wagmi";
 import { isAddress, parseEther, parseUnits, createPublicClient, http, formatEther, encodeFunctionData, parseAbi, BaseError, ContractFunctionRevertedError } from "viem";
+import { toPng } from "html-to-image";
 import Header from "@/components/ui/Header";
 import TokenCard, { type TokenCardData } from "@/components/ui/TokenCard";
 import SafetyAuditPanel from "@/components/ui/SafetyAuditPanel";
@@ -12,6 +13,7 @@ import CabalDetectorPanel from "@/components/ui/CabalDetectorPanel";
 import LiveTelemetryPanel from "@/components/ui/LiveTelemetryPanel";
 import RadarHeader, { type RadarFilter } from "@/components/ui/RadarHeader";
 import TradingTerminal from "@/components/ui/TradingTerminal";
+import UserPortfolio from "@/components/ui/UserPortfolio";
 import {
   shortenAddress,
   formatTimeLive,
@@ -262,6 +264,15 @@ export default function Home() {
 
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const activeTokenRef = useRef<string | null>(null);
+
+  // User Portfolio drawer visibility.
+  const [isPortfolioOpen, setIsPortfolioOpen] = useState(false);
+
+  // Ref wrapping the token header + live telemetry + Vibe Score block that the
+  // "Share 📸" button snapshots into a PNG.
+  const shareCardRef = useRef<HTMLDivElement | null>(null);
+  const [isSharing, setIsSharing] = useState(false);
+  const [shareStatus, setShareStatus] = useState<string | null>(null);
 
   // Cache of REAL, API-derived metrics keyed by lowercase contract address.
   // Both the homepage cards and the detail view read from this so they can
@@ -1597,6 +1608,69 @@ export default function Home() {
     );
   }, [liveMetrics]);
 
+  /**
+   * Captures the token header + live telemetry + Vibe Score block as a PNG and
+   * triggers a download named `vibe-signal-[symbol].png`.
+   *
+   * The snapshot is rendered with an explicit dark background so the exported
+   * image is legible regardless of the viewer's theme (the app is dark-only,
+   * but the transparent PNG would otherwise show through on light backgrounds).
+   */
+  const handleShareImage = useCallback(async () => {
+    const node = shareCardRef.current;
+    if (!node || !selectedToken) return;
+    setIsSharing(true);
+    setShareStatus(null);
+    try {
+      const dataUrl = await toPng(node, {
+        cacheBust: true,
+        pixelRatio: 2,
+        // Force a solid dark canvas so the PNG is readable everywhere.
+        backgroundColor: "#09090b",
+        style: {
+          // Neutralise any transient hover/transform state during capture.
+          transform: "none",
+        },
+      });
+
+      const symbol = (selectedToken.symbol || selectedToken.ticker || "token")
+        .toString()
+        .replace(/[^a-zA-Z0-9]/g, "")
+        .toLowerCase();
+      const filename = `vibe-signal-${symbol || "token"}.png`;
+
+      // Prefer the clipboard when available (nicer for social sharing), and
+      // always fall back to a file download.
+      let copied = false;
+      try {
+        if (typeof navigator !== "undefined" && navigator.clipboard && "write" in navigator.clipboard) {
+          const blob = await (await fetch(dataUrl)).blob();
+          await navigator.clipboard.write([
+            new ClipboardItem({ [blob.type]: blob }),
+          ]);
+          copied = true;
+        }
+      } catch {
+        // Clipboard image write is unsupported/blocked — fall through to download.
+        copied = false;
+      }
+
+      const link = document.createElement("a");
+      link.download = filename;
+      link.href = dataUrl;
+      link.click();
+
+      setShareStatus(copied ? "Copied & downloaded ✓" : "Downloaded ✓");
+    } catch (err) {
+      console.error("[share] snapshot failed:", err);
+      setShareStatus("Snapshot failed");
+    } finally {
+      setIsSharing(false);
+      // Auto-clear the status toast.
+      setTimeout(() => setShareStatus(null), 3000);
+    }
+  }, [selectedToken]);
+
   // A token is treated as graduated when the API reports it as such OR the
   // curve progress has reached 100%. Graduated tokens trade on the Uniswap v4
   // pool, not the bonding curve, so the terminal swaps to a DEX link.
@@ -1690,13 +1764,26 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 font-mono selection:bg-emerald-500/30">
-      <Header 
-        ready={ready} 
-        authenticated={authenticated} 
-        isConnected={isConnected} 
-        address={address} 
-        login={login} 
-        logout={logout} 
+      <Header
+        ready={ready}
+        authenticated={authenticated}
+        isConnected={isConnected}
+        address={address}
+        login={login}
+        logout={logout}
+        onOpenPortfolio={() => setIsPortfolioOpen(true)}
+      />
+
+      <UserPortfolio
+        address={address}
+        isOpen={isPortfolioOpen}
+        onClose={() => setIsPortfolioOpen(false)}
+        onSelectToken={(tokenAddress) => {
+          // Close the drawer and open the token's detail view. The grid poller
+          // will hydrate the full metrics for this address.
+          setIsPortfolioOpen(false);
+          setSearchQuery(tokenAddress);
+        }}
       />
 
       <main className="p-8 max-w-6xl mx-auto">
@@ -1709,21 +1796,60 @@ export default function Home() {
               ← Back to Radar
             </button>
 
-            <header className="mb-8 flex justify-between items-end border-b border-zinc-800 pb-6">
-              <div>
-                <h2 className="text-4xl font-bold tracking-tight mb-2 flex items-center gap-3">
-                  {selectedToken.name}
-                  <span className="text-xl text-emerald-400 bg-emerald-400/10 px-3 py-1 rounded-lg border border-emerald-400/20">{selectedToken.ticker}</span>
-                </h2>
-                <p className="text-zinc-500 text-sm">Contract: {selectedToken.contractAddress}</p>
-              </div>
-              <div className="text-right">
-                <span className="block text-sm text-zinc-400 mb-1">Vibe Score</span>
-                <VibeScoreDisplay score={detailScore} />
-              </div>
-            </header>
+            {/*
+              SHARE SNAPSHOT REGION.
+              This wrapper is the exact DOM subtree converted to a PNG by the
+              "Share 📸" button: token header (name/ticker/contract), the Vibe
+              Score, and the Live Telemetry panel. It carries an explicit dark
+              background so the exported image is legible on any viewer theme.
+            */}
+            <div ref={shareCardRef} className="bg-zinc-950 rounded-xl p-1">
+              <header className="mb-8 flex justify-between items-end border-b border-zinc-800 pb-6">
+                <div>
+                  <h2 className="text-4xl font-bold tracking-tight mb-2 flex items-center gap-3">
+                    {selectedToken.name}
+                    <span className="text-xl text-emerald-400 bg-emerald-400/10 px-3 py-1 rounded-lg border border-emerald-400/20">{selectedToken.ticker}</span>
+                  </h2>
+                  <p className="text-zinc-500 text-sm">Contract: {selectedToken.contractAddress}</p>
+                </div>
+                <div className="text-right flex flex-col items-end gap-2">
+                  <div>
+                    <span className="block text-sm text-zinc-400 mb-1">Vibe Score</span>
+                    <VibeScoreDisplay score={detailScore} />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={handleShareImage}
+                      disabled={isSharing}
+                      className="px-3 py-1.5 bg-zinc-800 hover:bg-emerald-500 hover:text-zinc-950 text-zinc-300 font-bold rounded-lg text-xs border border-zinc-700 hover:border-emerald-500 transition-colors disabled:opacity-50"
+                      title="Download a PNG snapshot of this token's Vibe Score and metrics"
+                    >
+                      {isSharing ? "Capturing..." : "Share 📸"}
+                    </button>
+                    {shareStatus && (
+                      <span className="text-[10px] text-emerald-400 font-bold animate-pulse">
+                        {shareStatus}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </header>
 
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              <LiveTelemetryPanel
+                isSyncingLive={isSyncingLive}
+                oracleReady={oracleReady}
+                timeSinceLaunchMins={selectedToken.timeSinceLaunchMins}
+                bondingCurveProgress={selectedToken.bondingCurveProgress}
+                ethDeposited={selectedToken.ethDeposited}
+                pairSymbol={selectedToken.pairSymbol}
+                marketCapUsd={selectedToken.marketCapUsd}
+                momentum={selectedToken.momentum}
+                volumeUsd={selectedToken.volumeUsd}
+                volumeEth={selectedToken.volumeEth}
+              />
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-6">
               <div className="lg:col-span-2 space-y-6">
 
                 {criticalRisks.length > 0 && (
@@ -1736,19 +1862,6 @@ export default function Home() {
                     </div>
                   </div>
                 )}
-
-                <LiveTelemetryPanel
-                  isSyncingLive={isSyncingLive}
-                  oracleReady={oracleReady}
-                  timeSinceLaunchMins={selectedToken.timeSinceLaunchMins}
-                  bondingCurveProgress={selectedToken.bondingCurveProgress}
-                  ethDeposited={selectedToken.ethDeposited}
-                  pairSymbol={selectedToken.pairSymbol}
-                  marketCapUsd={selectedToken.marketCapUsd}
-                  momentum={selectedToken.momentum}
-                  volumeUsd={selectedToken.volumeUsd}
-                  volumeEth={selectedToken.volumeEth}
-                />
 
                 <CabalDetectorPanel
                   isCabalRisk={isCabalRisk}
