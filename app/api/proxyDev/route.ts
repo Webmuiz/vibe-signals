@@ -7,6 +7,9 @@ import { NextResponse } from 'next/server';
 const VIBE_API_BASE = 'https://testnet.vibevibe.fun/api/v1/chains/46630';
 
 // Pagination safety breakers — prevent infinite loops / serverless timeouts.
+// Live testing against the VibeVibe testnet API shows the opposite of the
+// documented convention: `limit=50` returns "Origin unavailable", while
+// `limit=100` returns complete launch data. We therefore use 100.
 const PAGE_LIMIT = 100;
 const MAX_PAGES = 5;
 const MAX_EVENTS = 500;
@@ -85,6 +88,44 @@ async function fetchAllPages(
   return { items, ok: firstPageOk };
 }
 
+/**
+ * Fetches a wallet's launches with a resilience fallback.
+ *
+ * Primary path: cursor-paginated `fetchAllPages`. If that fails outright OR
+ * returns an empty page-1 result set, we retry once with a plain, non-cursor
+ * query (`limit=${PAGE_LIMIT}`) — some upstream deployments reject the `cursor`
+ * parameter or return empty arrays for it, and the plain query is the
+ * documented form.
+ *
+ * `ok` is true when either attempt produced a usable (non-failed) response, so
+ * a genuinely empty wallet is not mistaken for an upstream outage.
+ */
+async function fetchLaunchesWithFallback(
+  buildPaginatedUrl: (cursor: string | null) => string,
+  buildPlainUrl: () => string,
+  headers: Record<string, string>
+): Promise<{ items: any[]; ok: boolean }> {
+  const paginated = await fetchAllPages(buildPaginatedUrl, headers);
+
+  // Success with data → use it.
+  if (paginated.ok && paginated.items.length > 0) return paginated;
+
+  // Either the paginated call failed, or it succeeded but page 1 was empty.
+  // Retry with the standard non-cursor query before giving up.
+  const plain = await fetchPage(buildPlainUrl(), headers);
+  if (plain !== null) {
+    const plainItems = Array.isArray(plain.data?.items) ? plain.data!.items! : [];
+    // Prefer whichever attempt actually returned data; otherwise report the
+    // plain query's (possibly empty but successful) result.
+    if (plainItems.length > 0 || paginated.items.length === 0) {
+      return { items: plainItems, ok: true };
+    }
+  }
+
+  // Plain retry also failed — fall back to whatever pagination collected.
+  return paginated;
+}
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const address = searchParams.get('address');
@@ -97,16 +138,18 @@ export async function GET(request: Request) {
 
     // 1. Fetch all launches created by this wallet (legacy + V6), paginated.
     const [legacyLaunches, v6Launches] = await Promise.all([
-      fetchAllPages(
+      fetchLaunchesWithFallback(
         (cursor) =>
           `${VIBE_API_BASE}/launches?creatorAddress=${address}&limit=${PAGE_LIMIT}` +
           (cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''),
+        () => `${VIBE_API_BASE}/launches?creatorAddress=${address}&limit=${PAGE_LIMIT}`,
         headers
       ),
-      fetchAllPages(
+      fetchLaunchesWithFallback(
         (cursor) =>
           `${VIBE_API_BASE}/v6/wallets/${address}/launches?limit=${PAGE_LIMIT}` +
           (cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''),
+        () => `${VIBE_API_BASE}/v6/wallets/${address}/launches?limit=${PAGE_LIMIT}`,
         headers
       ),
     ]);
