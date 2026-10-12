@@ -1769,6 +1769,7 @@ export default function Home() {
                   badgeColor={devBadgeColor}
                   devStats={devStats}
                   devProfile={selectedToken.devProfile}
+                  isLoading={devStats === null}
                 />
               </div>
 

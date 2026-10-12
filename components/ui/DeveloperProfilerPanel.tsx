@@ -17,6 +17,12 @@ interface DeveloperProfilerPanelProps {
   badgeColor: string;
   devStats: DevStats | null;
   devProfile: DevProfile;
+  /**
+   * True while the authoritative `/api/proxyDev` fetch is in flight. When set,
+   * the panel shows an animated "Syncing..." indicator instead of flashing the
+   * grid-derived defaults (e.g. "1 Token", "0%") before real data arrives.
+   */
+  isLoading?: boolean;
 }
 
 export default function DeveloperProfilerPanel({
@@ -25,6 +31,7 @@ export default function DeveloperProfilerPanel({
   badgeColor,
   devStats,
   devProfile,
+  isLoading = false,
 }: DeveloperProfilerPanelProps) {
   return (
     <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
@@ -47,13 +54,21 @@ export default function DeveloperProfilerPanel({
       <div className="grid grid-cols-2 gap-4 text-sm">
         <div className="p-4 bg-zinc-950 rounded-lg border border-zinc-800">
           <span className="text-zinc-500 block mb-1">Total Launches</span>
-          <span className="text-white font-bold">
-            {devStats ? `${devStats.launches} Tokens` : `${devProfile.launches} Tokens`}
-          </span>
+          {isLoading ? (
+            <span className="animate-pulse text-emerald-400 font-bold">Syncing...</span>
+          ) : (
+            <span className="text-white font-bold">
+              {devStats ? `${devStats.launches} Tokens` : `${devProfile.launches} Tokens`}
+            </span>
+          )}
         </div>
         <div className="p-4 bg-zinc-950 rounded-lg border border-zinc-800">
           <span className="text-zinc-500 block mb-1">Graduation Rate</span>
-          <span className={(devStats ? devStats.gradRate : devProfile.gradRate) > 50 ? 'text-emerald-400 font-bold' : 'text-red-400 font-bold'}>{devStats ? `${devStats.gradRate}%` : `${devProfile.gradRate}%`}</span>
+          {isLoading ? (
+            <span className="animate-pulse text-emerald-400 font-bold">Syncing...</span>
+          ) : (
+            <span className={(devStats ? devStats.gradRate : devProfile.gradRate) > 50 ? 'text-emerald-400 font-bold' : 'text-red-400 font-bold'}>{devStats ? `${devStats.gradRate}%` : `${devProfile.gradRate}%`}</span>
+          )}
         </div>
       </div>
     </div>
