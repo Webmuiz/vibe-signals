@@ -1,13 +1,27 @@
 import { NextResponse } from 'next/server';
-import { createPublicClient, http, formatUnits, parseAbi, getAddress } from 'viem';
+import { createPublicClient, http, fallback, formatUnits, parseAbi, getAddress } from 'viem';
 import { createClient } from '@libsql/client';
 
 const TURSO_DATABASE_URL = process.env.TURSO_DATABASE_URL!;
 const TURSO_AUTH_TOKEN = process.env.TURSO_AUTH_TOKEN!;
 const db = createClient({ url: TURSO_DATABASE_URL, authToken: TURSO_AUTH_TOKEN });
 
+// Resilient RPC transport: explicit timeout + retries, with an optional
+// secondary endpoint (SECONDARY_RPC_URL) that viem fails over to automatically.
+const PRIMARY_RPC_URL =
+    process.env.PRIMARY_RPC_URL || 'https://rpc.testnet.chain.robinhood.com';
+const SECONDARY_RPC_URL = process.env.SECONDARY_RPC_URL;
+
 const publicClient = createPublicClient({
-    transport: http('https://rpc.testnet.chain.robinhood.com'),
+    transport: fallback(
+        [
+            http(PRIMARY_RPC_URL, { timeout: 20000, retryCount: 5, retryDelay: 1000 }),
+            ...(SECONDARY_RPC_URL
+                ? [http(SECONDARY_RPC_URL, { timeout: 20000, retryCount: 5, retryDelay: 1000 })]
+                : []),
+        ],
+        { rank: false, retryCount: 2 }
+    ),
 });
 
 // ---------------------------------------------------------------------------

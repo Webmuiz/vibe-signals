@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { createPublicClient, http } from 'viem';
+import { createPublicClient, http, fallback } from 'viem';
 
 const robinhoodTestnet = {
   id: 46630,
@@ -8,9 +8,23 @@ const robinhoodTestnet = {
   rpcUrls: { default: { http: ['https://rpc.testnet.chain.robinhood.com'] } },
 } as const;
 
+// Resilient RPC transport: explicit timeout + retries, with an optional
+// secondary endpoint (SECONDARY_RPC_URL) that viem fails over to automatically.
+const PRIMARY_RPC_URL =
+  process.env.PRIMARY_RPC_URL || 'https://rpc.testnet.chain.robinhood.com';
+const SECONDARY_RPC_URL = process.env.SECONDARY_RPC_URL;
+
 const publicClient = createPublicClient({
   chain: robinhoodTestnet,
-  transport: http()
+  transport: fallback(
+    [
+      http(PRIMARY_RPC_URL, { timeout: 20000, retryCount: 5, retryDelay: 1000 }),
+      ...(SECONDARY_RPC_URL
+        ? [http(SECONDARY_RPC_URL, { timeout: 20000, retryCount: 5, retryDelay: 1000 })]
+        : []),
+    ],
+    { rank: false, retryCount: 2 }
+  ),
 });
 
 let cachedResponse: any = null;

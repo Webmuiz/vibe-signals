@@ -8,6 +8,7 @@ loadEnv();
 import {
     createPublicClient,
     http,
+    fallback,
     defineChain,
     formatUnits,
     parseAbi,
@@ -44,7 +45,51 @@ const robinhoodTestnet = defineChain({
     testnet: true,
 });
 
-const publicClient = createPublicClient({ chain: robinhoodTestnet, transport: http() });
+// ---------------------------------------------------------------------------
+// RPC TRANSPORT — resilient by design.
+//
+// The primary Robinhood testnet RPC intermittently throws
+// `TimeoutError: The request took too long to respond` during eth_getLogs /
+// watchEvent polling. We wrap it in an `http()` transport with an explicit
+// timeout and retry budget, then layer a `fallback()` on top so viem
+// automatically switches to a secondary RPC if the primary keeps failing.
+//
+// Set SECONDARY_RPC_URL (e.g. a Tatum/Alchemy endpoint) in `.env.local` to
+// enable the backup. When unset, the fallback array simply contains the
+// primary transport, which still benefits from the retry configuration.
+// ---------------------------------------------------------------------------
+const PRIMARY_RPC_URL =
+    process.env.PRIMARY_RPC_URL || 'https://rpc.testnet.chain.robinhood.com';
+const SECONDARY_RPC_URL = process.env.SECONDARY_RPC_URL;
+
+const primaryTransport = http(PRIMARY_RPC_URL, {
+    timeout: 20000, // 20 seconds
+    retryCount: 5,
+    retryDelay: 1000,
+});
+
+const rpcTransports = [
+    primaryTransport,
+    ...(SECONDARY_RPC_URL
+        ? [
+              http(SECONDARY_RPC_URL, {
+                  timeout: 20000,
+                  retryCount: 5,
+                  retryDelay: 1000,
+              }),
+          ]
+        : []),
+];
+
+const publicClient = createPublicClient({
+    chain: robinhoodTestnet,
+    transport: fallback(rpcTransports, {
+        // Give the primary a fair shot before failing over, and rank by
+        // latency so the fastest healthy RPC is preferred.
+        rank: false,
+        retryCount: 2,
+    }),
+});
 
 const FACTORY_ADDRESS = '0xe794217880011f9cA6961340eD5c16EC9559Fea0' as const;
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000' as const;
@@ -308,11 +353,37 @@ async function updateMomentumInDatabase(
 // ---------------------------------------------------------------------------
 const watchedCurves = new Map<string, () => void>();
 
+/**
+ * Classifies an RPC error so transient network hiccups (timeouts, aborted
+ * requests, rate limits) are logged as warnings rather than fatal errors.
+ * Returns true when the error is a recoverable transport-level failure.
+ */
+function isTransientRpcError(error: unknown): boolean {
+    const msg = (error instanceof Error ? error.message : String(error)).toLowerCase();
+    return (
+        msg.includes('timeout') ||
+        msg.includes('took too long') ||
+        msg.includes('timed out') ||
+        msg.includes('fetch failed') ||
+        msg.includes('econnreset') ||
+        msg.includes('econnrefused') ||
+        msg.includes('socket hang up') ||
+        msg.includes('network') ||
+        msg.includes('429') ||
+        msg.includes('rate limit') ||
+        msg.includes('502') ||
+        msg.includes('503') ||
+        msg.includes('504')
+    );
+}
+
 function watchCurve(curveAddress: string, tokenAddress: string) {
     const curve = curveAddress.toLowerCase();
     if (watchedCurves.has(curve)) return;
 
-    const unwatch = publicClient.watchContractEvent({
+    let unwatch: () => void;
+    try {
+        unwatch = publicClient.watchContractEvent({
         address: curve as `0x${string}`,
         abi: CURVE_ABI,
         onLogs: async (logs) => {
@@ -362,12 +433,24 @@ function watchCurve(curveAddress: string, tokenAddress: string) {
             }
         },
         onError: (error) => {
-            console.error(`Curve watchEvent error for ${curve} (RPC hiccup):`, error);
+            if (isTransientRpcError(error)) {
+                console.warn(
+                    `⚠ Curve watchEvent transient RPC error for ${curve} (will retry):`,
+                    error instanceof Error ? error.message : error
+                );
+            } else {
+                console.error(`Curve watchEvent error for ${curve}:`, error);
+            }
         },
-    });
+        });
 
-    watchedCurves.set(curve, unwatch);
-    console.log(`👀 Watching curve ${curve} for ${tokenAddress}`);
+        watchedCurves.set(curve, unwatch);
+        console.log(`👀 Watching curve ${curve} for ${tokenAddress}`);
+    } catch (err) {
+        // A synchronous failure while subscribing (e.g. transport setup) must
+        // never crash the indexer. Log and move on; rehydration will retry.
+        console.error(`Failed to attach curve watcher for ${curve}:`, err);
+    }
 }
 
 /**
@@ -417,7 +500,8 @@ async function runIndexer() {
     console.log('⚡ Vibe Signals Cloud Node Live...');
 
     // 1. THE LAUNCH CATCHER — decode the real LaunchCreated event.
-    publicClient.watchContractEvent({
+    try {
+        publicClient.watchContractEvent({
         address: FACTORY_ADDRESS,
         abi: FACTORY_ABI,
         onLogs: async (logs) => {
@@ -525,9 +609,21 @@ async function runIndexer() {
             }
         },
         onError: (error) => {
-            console.error('Factory watchEvent error (RPC hiccup):', error);
+            if (isTransientRpcError(error)) {
+                console.warn(
+                    '⚠ Factory watchEvent transient RPC error (will retry):',
+                    error instanceof Error ? error.message : error
+                );
+            } else {
+                console.error('Factory watchEvent error:', error);
+            }
         },
-    });
+        });
+    } catch (err) {
+        // Never let a failed subscription crash the process; the health server
+        // and the polling loop below keep running regardless.
+        console.error('Failed to attach factory watcher:', err);
+    }
 
     // Re-attach watchers for tokens already indexed before this boot.
     await rehydrateCurveWatchers();
