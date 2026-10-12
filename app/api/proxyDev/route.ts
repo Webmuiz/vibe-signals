@@ -1,12 +1,6 @@
 import { NextResponse } from 'next/server';
 import { isTokenGraduated } from '@/lib/tokenMetrics';
 
-// Force dynamic execution so Vercel never serves a stale, cached profiler
-// response. Without this, the merged V6 + legacy data can be masked by a
-// previously-cached payload and the new launches never appear in production.
-export const dynamic = 'force-dynamic';
-export const revalidate = 0;
-
 // ---------------------------------------------------------------------------
 // Upstream VibeVibe API base. Both the legacy and V6 surfaces are queried and
 // merged, because older launches only appear on the legacy surface.
@@ -14,10 +8,15 @@ export const revalidate = 0;
 const VIBE_API_BASE = 'https://testnet.vibevibe.fun/api/v1/chains/46630';
 
 // Pagination safety breakers — prevent infinite loops / serverless timeouts.
-// Live testing against the VibeVibe testnet API shows the opposite of the
-// documented convention: `limit=50` returns "Origin unavailable", while
-// `limit=100` returns complete launch data. We therefore use 100.
-const PAGE_LIMIT = 100;
+//
+// CRITICAL: the V6 wallet-launches endpoint (`/v6/wallets/{address}/launches`)
+// REJECTS `limit=100` with HTTP 400 Bad Request (verified live against the
+// testnet). It accepts 10/20/50 but NOT 100. The previous value of 100 made
+// EVERY V6 launch request fail with a 400, which silently collapsed the V6
+// surface to zero items and produced the "0 launches" Dev Profile bug. The
+// legacy `/launches` and `/wallets/{address}/activity` endpoints accept 50
+// fine, so 50 is the safe common denominator across all surfaces.
+const PAGE_LIMIT = 50;
 const MAX_PAGES = 5;
 const MAX_EVENTS = 500;
 
@@ -196,6 +195,8 @@ export async function GET(request: Request) {
   // this single canonical value.
   const targetDev = (searchParams.get('address') || '').trim().toLowerCase();
 
+  console.log('[proxyDev] targetDev:', targetDev);
+
   if (!targetDev) return NextResponse.json({ error: 'Missing address' }, { status: 400 });
 
   try {
@@ -215,6 +216,9 @@ export async function GET(request: Request) {
     //    Both surfaces are queried with the LOWERCASED address: the upstream
     //    indexes are case-sensitive, so a checksummed (mixed-case) input would
     //    silently return zero launches and undercount the profiler.
+    const v6Url = `${VIBE_API_BASE}/v6/wallets/${targetDev}/launches?limit=${PAGE_LIMIT}`;
+    const legacyUrl = `${VIBE_API_BASE}/launches?creatorAddress=${targetDev}&limit=${PAGE_LIMIT}`;
+
     const v6Launches = await fetchLaunchesWithFallback(
       (cursor) =>
         `${VIBE_API_BASE}/v6/wallets/${targetDev}/launches?limit=${PAGE_LIMIT}` +
@@ -222,6 +226,8 @@ export async function GET(request: Request) {
       () => `${VIBE_API_BASE}/v6/wallets/${targetDev}/launches?limit=${PAGE_LIMIT}`,
       headers
     );
+
+    console.log('[proxyDev] V6 URL:', v6Url, 'ok:', v6Launches.ok, 'items:', v6Launches.items.length);
 
     // Legacy surface is a secondary, non-fatal merge. A failure here must NOT
     // discard the V6 results.
@@ -231,6 +237,14 @@ export async function GET(request: Request) {
         (cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''),
       () => `${VIBE_API_BASE}/launches?creatorAddress=${targetDev}&limit=${PAGE_LIMIT}`,
       headers
+    );
+
+    console.log('[proxyDev] V5 URL:', legacyUrl, 'ok:', legacyLaunches.ok, 'items:', legacyLaunches.items.length);
+    console.log(
+      '[proxyDev] Extracted V6 Items:',
+      v6Launches.items.length,
+      'V5 Items:',
+      legacyLaunches.items.length
     );
 
     // SILENT-FAILURE GUARD: if BOTH launch surfaces failed outright we have no
@@ -287,9 +301,18 @@ export async function GET(request: Request) {
     // lost. This guarantees the legacy array is never ignored when V6 also
     // succeeds, while V6 retains precedence for shared tokens.
     const dedupMap = new Map<string, any>();
-    normalizedItems.forEach((item: any) => {
-      const key = String(item.tokenAddress || item.address || '').toLowerCase();
-      if (!key) return; // malformed item — never let it throw / 500 the response
+    normalizedItems.forEach((item: any, index: number) => {
+      // GUARANTEE A UNIQUE, NON-EMPTY KEY. If `tokenAddress` is missing we must
+      // NOT fall back to an empty string: every malformed item would then share
+      // the "" key and overwrite each other in the Map, collapsing N tokens down
+      // to 1 (or 0). We synthesize a per-item key from the launch id / tx hash,
+      // and as a last resort the array index, so no item is ever lost.
+      const rawKey = String(item.tokenAddress || item.address || '').toLowerCase();
+      const key =
+        rawKey ||
+        String(item.launchId || item.createdTransactionHash || item.curveAddress || '').toLowerCase() ||
+        `__unkeyed_${index}`;
+
       const existing = dedupMap.get(key);
       if (!existing) {
         dedupMap.set(key, item);
@@ -300,6 +323,8 @@ export async function GET(request: Request) {
       dedupMap.set(key, { ...item, ...existing });
     });
     const deduplicated = Array.from(dedupMap.values());
+
+    console.log('[proxyDev] Final Deduplicated Length:', deduplicated.length);
 
     // Isolate tokens created by this wallet. After normalization both surfaces
     // expose the creator under `creatorAddress`, but we still inspect both keys

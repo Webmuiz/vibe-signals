@@ -2,11 +2,6 @@ import { NextResponse } from 'next/server';
 import { createPublicClient, http, fallback, formatUnits, parseAbi, getAddress } from 'viem';
 import { createClient } from '@libsql/client';
 
-// Force dynamic execution so Vercel never serves a stale, cached indexing
-// response. Indexing must always reflect the latest on-chain state.
-export const dynamic = 'force-dynamic';
-export const revalidate = 0;
-
 const TURSO_DATABASE_URL = process.env.TURSO_DATABASE_URL!;
 const TURSO_AUTH_TOKEN = process.env.TURSO_AUTH_TOKEN!;
 const db = createClient({ url: TURSO_DATABASE_URL, authToken: TURSO_AUTH_TOKEN });
