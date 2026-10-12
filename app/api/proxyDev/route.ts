@@ -1,6 +1,12 @@
 import { NextResponse } from 'next/server';
 import { isTokenGraduated } from '@/lib/tokenMetrics';
 
+// Force dynamic execution so Vercel never serves a stale, cached profiler
+// response. Without this, the merged V6 + legacy data can be masked by a
+// previously-cached payload and the new launches never appear in production.
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 // ---------------------------------------------------------------------------
 // Upstream VibeVibe API base. Both the legacy and V6 surfaces are queried and
 // merged, because older launches only appear on the legacy surface.

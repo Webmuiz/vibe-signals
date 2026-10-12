@@ -1349,7 +1349,7 @@ export default function Home() {
       ""
     ).toLowerCase();
     if (creatorWallet && creatorWallet !== "0x" && creatorWallet !== "0x0000000000000000000000000000000000000000") {
-      fetch(`/api/proxyDev?address=${creatorWallet}`)
+      fetch(`/api/proxyDev?address=${creatorWallet}`, { cache: 'no-store' })
         .then(devRes => {
           // A 502 means the upstream launch data was unavailable. Throw so the
           // .catch() below fires and the existing devStats/UI state is preserved
