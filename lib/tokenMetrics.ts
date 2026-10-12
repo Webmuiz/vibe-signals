@@ -6,6 +6,34 @@ export function shortenAddress(address: string) {
 }
 
 /**
+ * Canonical graduation predicate shared by the Dev Profiler API route and the
+ * client-side developer profile math.
+ *
+ * VibeVibe exposes graduation across BOTH API generations:
+ *   - V6 tokens carry `lifecycle: 'GRADUATED'` (and/or `graduated: true`, or a
+ *     nested `curve.lifecycle`).
+ *   - Legacy/V5 tokens only expose a numeric `curve_progress` / `curveProgress`
+ *     that reaches 100 once the bonding curve completes.
+ *
+ * Checking only one shape is the root cause of the "0% graduation rate for
+ * graduated V6 tokens" bug, so every consumer MUST funnel through this helper.
+ */
+export function isTokenGraduated(token: any): boolean {
+  if (!token) return false;
+  return (
+    token.lifecycle === 'GRADUATED' ||
+    token.graduated === true ||
+    token.curve?.lifecycle === 'GRADUATED' ||
+    Number(
+      token.curve_progress ??
+        token.curveProgress ??
+        token.bondingCurveProgress ??
+        0
+    ) >= 100
+  );
+}
+
+/**
  * Formats a numeric USD value into a clean, compact string using K (thousands),
  * M (millions) and B (billions) suffixes, e.g. 16800 -> "$16.8K", 1200000 -> "$1.2M".
  *

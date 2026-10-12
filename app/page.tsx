@@ -20,6 +20,7 @@ import {
   calculateVibeScore,
   normalizeVibeResponse,
   parseCreatedAtMs,
+  isTokenGraduated,
   ERC20_SYMBOL_ABI,
   type LiveTokenMetrics,
   type VibeScoreParams,
@@ -182,8 +183,12 @@ function getDevProfile(devAddress: string, allTokens: DBToken[]) {
 
   if (launches === 0) return { label: "Neutral / Unproven Dev", color: "text-yellow-400 bg-yellow-400/10 border-yellow-400/30", launches: 1, gradRate: 0 };
 
-  const graduated = devLaunches.filter(t => (t.curve_progress || t.curveProgress || 0) >= 100).length;
-  const gradRate = Math.round((graduated / launches) * 100);
+  // Use the SHARED graduation predicate so V6 tokens (which express graduation
+  // via `lifecycle` / `graduated` rather than a 100% curve progress) are counted
+  // correctly. Checking only `curve_progress` produced a 0% rate for graduated
+  // V6 launches.
+  const graduated = devLaunches.filter(t => isTokenGraduated(t)).length;
+  const gradRate = launches > 0 ? Math.round((graduated / launches) * 100) : 0;
 
   let label = "Neutral / Unproven Dev";
   let color = "text-yellow-400 bg-yellow-400/10 border-yellow-400/30";
@@ -1323,7 +1328,19 @@ export default function Home() {
         .catch(err => console.error("Holders fetch failed:", err));
     }
 
-    const creatorWallet = (selectedToken?.devAddress || "").toLowerCase();
+    // Resolve the developer address from EVERY shape the token may carry:
+    //   - `devAddress`     : canonical internal key (set by the normalizer).
+    //   - `launcherAddress`: V6-native creator field.
+    //   - `creatorAddress` : legacy creator field.
+    // Non-SIGNAL tokens frequently arrive with only the V6/legacy field set, so
+    // reading `devAddress` alone passed an empty string to the profiler and the
+    // panel reported "0 launches".
+    const creatorWallet = (
+      selectedToken?.devAddress ||
+      (selectedToken as any)?.launcherAddress ||
+      (selectedToken as any)?.creatorAddress ||
+      ""
+    ).toLowerCase();
     if (creatorWallet && creatorWallet !== "0x" && creatorWallet !== "0x0000000000000000000000000000000000000000") {
       fetch(`/api/proxyDev?address=${creatorWallet}`)
         .then(devRes => {
@@ -1735,7 +1752,12 @@ export default function Home() {
                 />
 
                 <DeveloperProfilerPanel
-                  devAddress={selectedToken.devAddress}
+                  devAddress={
+                    selectedToken.devAddress ||
+                    (selectedToken as any).launcherAddress ||
+                    (selectedToken as any).creatorAddress ||
+                    ""
+                  }
                   badgeText={devBadgeText}
                   badgeColor={devBadgeColor}
                   devStats={devStats}

@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { isTokenGraduated } from '@/lib/tokenMetrics';
 
 // ---------------------------------------------------------------------------
 // Upstream VibeVibe API base. Both the legacy and V6 surfaces are queried and
@@ -179,6 +180,12 @@ export async function GET(request: Request) {
       );
     }
 
+    // MERGE, DO NOT OVERWRITE. Both surfaces are concatenated so that a
+    // successful V6 fetch can never discard genuinely-old (pre-V6) launches that
+    // only the legacy index knows about — and vice versa. V6 items are placed
+    // FIRST so that, during deduplication below, the richer V6 record wins for
+    // any token that appears on both surfaces (the legacy projection lacks the
+    // V6 `lifecycle` / `graduated` fields the graduation math depends on).
     const combinedItems: any[] = [...v6Launches.items, ...legacyLaunches.items];
 
     // NORMALIZE THE CREATOR FIELD. V6 items carry `launcherAddress`; legacy
@@ -205,11 +212,25 @@ export async function GET(request: Request) {
     // Deduplicate by lowercased token address. Items without a tokenAddress are
     // dropped rather than allowed to throw (a single malformed item must not
     // 500 the whole profiler response).
-    const deduplicated = Array.from(
-      new Map(
-        normalizedItems.map((item: any) => [String(item.tokenAddress).toLowerCase(), item])
-      ).values()
-    );
+    // Deduplicate by lowercased token address. When a token appears on BOTH
+    // surfaces we MERGE the two records rather than letting one clobber the
+    // other: the V6 record is the base (it carries `lifecycle` / `graduated` /
+    // `curve`), and any legacy-only fields are layered underneath so no data is
+    // lost. This is what guarantees the legacy array is never ignored when V6
+    // also succeeds.
+    const dedupMap = new Map<string, any>();
+    normalizedItems.forEach((item: any) => {
+      const key = String(item.tokenAddress).toLowerCase();
+      const existing = dedupMap.get(key);
+      if (!existing) {
+        dedupMap.set(key, item);
+        return;
+      }
+      // `existing` is the earlier (V6-first) record; keep it authoritative for
+      // identity/graduation fields while backfilling any missing legacy fields.
+      dedupMap.set(key, { ...item, ...existing });
+    });
+    const deduplicated = Array.from(dedupMap.values());
 
     // Isolate tokens created by this wallet. After normalization both surfaces
     // expose the creator under `creatorAddress`, but we still inspect both keys
@@ -220,14 +241,13 @@ export async function GET(request: Request) {
     });
 
     const createdTokenSet = new Set(createdTokens.map((t: any) => t.tokenAddress.toLowerCase()));
+    // Graduation is evaluated through the SHARED predicate so V6 (`lifecycle` /
+    // `graduated`) and legacy (`curve_progress >= 100`) tokens are both counted.
+    // Previously only the V6 fields were checked, which reported a 0% rate for
+    // graduated V6 tokens whose graduation was expressed via `curve_progress`.
     const graduatedTokenSet = new Set(
       createdTokens
-        .filter(
-          (item: any) =>
-            item.lifecycle === 'GRADUATED' ||
-            item.graduated === true ||
-            item.curve?.lifecycle === 'GRADUATED'
-        )
+        .filter((item: any) => isTokenGraduated(item))
         .map((t: any) => t.tokenAddress.toLowerCase())
     );
 
