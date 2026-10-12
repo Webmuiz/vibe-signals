@@ -30,7 +30,11 @@ export async function GET() {
             ammAddress: db.amm_address,
             devAddress: db.dev_address,
             ethDeposited: db.liquidity_deposited,
-            pairSymbol: db.pair_symbol || 'ETH',
+            // `pairSymbol` may be null (e.g. MOBLAND) — preserve null rather than
+            // coercing to 'ETH', which would misprice a non-ETH pair. The
+            // authoritative quote-asset key is `pairCurrencyAddress`.
+            pairSymbol: db.pair_symbol ?? null,
+            pairCurrencyAddress: db.pair_currency_address ?? null,
             curveProgress: db.curve_progress,
             launchBlock: db.launch_block,
             timestamp: db.created_at,

@@ -130,6 +130,8 @@ interface DBToken {
   ethDeposited?: number;
   pair_symbol?: string;
   pairSymbol?: string;
+  pair_currency_address?: string;
+  pairCurrencyAddress?: string;
   curve_progress?: number;
   curveProgress?: number;
   bondingCurveProgress?: number;
@@ -689,7 +691,23 @@ export default function Home() {
       // When live data exists, its curve progress is authoritative.
       const resolvedCurveProgress = live ? live.bondingCurveProgress : bondingCurveProgress;
       const resolvedEthDeposited = live ? live.ethDeposited : ethDeposited;
-      const resolvedPairSymbol = live?.pairSymbol || db.pair_symbol || db.pairSymbol || "ETH";
+      // The pair currency ADDRESS is the authoritative quote-asset key. It is
+      // preferred over `pairSymbol`, which can be null (e.g. MOBLAND) or
+      // mislabeled. Only fall back to 'ETH' when there is genuinely no pair
+      // address (i.e. a native-ETH pair).
+      const resolvedPairCurrencyAddress =
+        live?.pairCurrencyAddress ||
+        db.pair_currency_address ||
+        db.pairCurrencyAddress ||
+        "";
+      const resolvedPairSymbol =
+        live?.pairSymbol ||
+        db.pair_symbol ||
+        db.pairSymbol ||
+        (resolvedPairCurrencyAddress &&
+        resolvedPairCurrencyAddress !== "0x0000000000000000000000000000000000000000"
+          ? ""
+          : "ETH");
 
       const devProfile = getDevProfile(devAddress, dbTokens);
       const vibeParams: VibeScoreParams = {
@@ -732,6 +750,7 @@ export default function Home() {
         bondingCurveProgress: resolvedCurveProgress,
         ethDeposited: resolvedEthDeposited,
         pairSymbol: resolvedPairSymbol,
+        pairCurrencyAddress: resolvedPairCurrencyAddress,
         timeSinceLaunchMins: live?.timeSinceLaunchMins ?? timeSinceLaunchMins,
         blockZeroBuyers: block0,
         diamondHandsHoldersPct: diamond,

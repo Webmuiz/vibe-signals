@@ -13,6 +13,12 @@ export interface TokenCardData {
   bondingCurveProgress: number;
   ethDeposited: number | string;
   pairSymbol: string;
+  /**
+   * Authoritative quote-asset contract address (lowercased). Preferred over
+   * `pairSymbol` for USD rate lookups because the API sometimes returns a null
+   * or mislabeled symbol. Zero address denotes the native ETH pair.
+   */
+  pairCurrencyAddress?: string;
   timeSinceLaunchMins: number;
   score: number;
   /** Creator bag as a percentage of total supply (0 when unknown). */

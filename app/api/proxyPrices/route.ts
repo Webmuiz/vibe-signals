@@ -81,23 +81,16 @@ export async function GET() {
       const resolvedSym = symbols[i]?.status === 'success' ? (symbols[i].result as string).toUpperCase() : null;
       if (resolvedSym) item.symbol = resolvedSym;
 
-      // The upstream `/v6/pair-prices` endpoint already returns USD rates for
-      // pair currencies (see vibevibe.md: "USD rates for pair currencies").
-      // `priceEthWad` is therefore ALREADY a USD-denominated rate — multiplying
-      // it by `ethPriceUsd` double-converts and inflated every non-ETH pair
-      // (VIBE/VIBEVIBE/NVDA/SPCX) by the ETH price. We use the value directly.
-      //
-      // Native ETH/WETH pairs are the one exception: their rate is expressed in
-      // ETH terms, so it must be multiplied by the ETH oracle to reach USD.
-      const rawRate = Number(item.priceEthWad || 0) / 1e18;
-      const isNativePair =
-        !item.pairAddress ||
-        item.pairAddress.toLowerCase() === '0x0000000000000000000000000000000000000000' ||
-        resolvedSym === 'ETH' ||
-        resolvedSym === 'WETH';
-      const priceUsd = isNativePair ? rawRate * ethPriceUsd : rawRate;
+      // `priceEthWad` is denominated in ETH (confirmed against the raw VibeVibe
+      // API payload), so converting to USD requires multiplying by the ETH
+      // oracle price. This is the CORRECT conversion and must be kept.
+      const priceEth = Number(item.priceEthWad || 0) / 1e18;
+      const priceUsd = priceEth * ethPriceUsd;
       item.priceUsd = priceUsd;
 
+      // Key the rate map by BOTH the pair address and the resolved symbol. The
+      // address is the authoritative key: `pairSymbol` can be null (e.g.
+      // MOBLAND) or mislabeled, so consumers must be able to look up by address.
       if (item.pairAddress) {
         rates[item.pairAddress.toLowerCase()] = priceUsd;
       }

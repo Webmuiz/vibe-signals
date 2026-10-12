@@ -426,6 +426,9 @@ export async function GET(request: Request) {
             amm_address: curveAddress,
             dev_address: devAddress,
             pair_symbol: pairSymbol,
+            // Authoritative quote-asset key for USD-rate lookups. Persisted so
+            // the frontend can price the pair even when `pair_symbol` is null.
+            pair_currency_address: isNativeEth ? ZERO_ADDRESS : pairCurrencyAddr,
             liquidity_deposited: Number(currentLiq.toFixed(4)),
             curve_progress: Number(curveProgress.toFixed(1)),
             launch_block: launchBlock,
@@ -445,15 +448,17 @@ export async function GET(request: Request) {
         await db.execute({
             sql: `INSERT INTO launches (
                     launch_id, token_address, amm_address, dev_address, pair_symbol,
+                    pair_currency_address,
                     liquidity_deposited, curve_progress, launch_block, name, symbol,
                     created_at, volume_eth, buy_count, sell_count, buy_pct, sell_pct,
                     block_zero_buyers, sniper_wallets, sniper_retention_pct
-                  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                   ON CONFLICT(token_address) DO UPDATE SET
                     launch_id = excluded.launch_id,
                     amm_address = excluded.amm_address,
                     dev_address = excluded.dev_address,
                     pair_symbol = excluded.pair_symbol,
+                    pair_currency_address = excluded.pair_currency_address,
                     -- Non-regression: a transient RPC read returning 0 must
                     -- never overwrite a previously high curve progress or
                     -- liquidity. These only ever move UP.
@@ -477,6 +482,7 @@ export async function GET(request: Request) {
                 dbPayload.amm_address,
                 dbPayload.dev_address,
                 dbPayload.pair_symbol,
+                dbPayload.pair_currency_address,
                 dbPayload.liquidity_deposited,
                 dbPayload.curve_progress,
                 dbPayload.launch_block,

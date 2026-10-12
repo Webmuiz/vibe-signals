@@ -63,6 +63,13 @@ export interface LiveTokenMetrics {
   ticker: string;
   symbol: string;
   pairSymbol: string;
+  /**
+   * On-chain address of the quote asset this token is paired against. This is
+   * the AUTHORITATIVE key for USD-rate lookups: `pairSymbol` can be null (e.g.
+   * MOBLAND) or mislabeled, whereas the address is always present and unique.
+   * The zero address denotes native ETH.
+   */
+  pairCurrencyAddress?: string;
   bondingCurveProgress: number;
   ethDeposited: string;
   marketCapUsd: string;
@@ -322,18 +329,27 @@ export function resolveQuoteUsdRate(
   const addr = (pairAddress || '').toLowerCase();
   const sym = (pairSymbol || '').toUpperCase().trim();
 
-  // 1. Exact address match from the oracle map is always authoritative.
-  if (addr && liveRates[addr] != null && Number.isFinite(liveRates[addr])) {
-    return liveRates[addr];
+  // 1. ADDRESS LOOKUP IS PRIMARY. `pairSymbol` is unreliable — the upstream API
+  //    returns `null` for some pairs (e.g. MOBLAND) and the indexer historically
+  //    mislabeled non-ETH pairs as 'STOCK'. The pair currency ADDRESS is always
+  //    present and unique, so it is the authoritative key into the oracle map.
+  //    The zero address is native ETH and is handled by the ETH oracle below.
+  if (addr && addr !== '0x0000000000000000000000000000000000000000') {
+    if (liveRates[addr] != null && Number.isFinite(liveRates[addr])) {
+      return liveRates[addr];
+    }
   }
 
-  // 2. Exact symbol match from the oracle map.
+  // 2. Symbol match is a SECONDARY fallback, used only when the address is
+  //    absent or not present in the oracle map.
   if (sym && liveRates[sym] != null && Number.isFinite(liveRates[sym])) {
     return liveRates[sym];
   }
 
-  // 3. Native ETH/WETH always uses the ETH oracle.
-  if (kind === 'native') return ethPriceUsd;
+  // 3. Native ETH/WETH (zero address or ETH/WETH symbol) uses the ETH oracle.
+  if (kind === 'native' || addr === '0x0000000000000000000000000000000000000000') {
+    return ethPriceUsd;
+  }
 
   // 4. USD stables are 1:1.
   if (kind === 'usd') return 1;
@@ -376,6 +392,7 @@ export async function normalizeVibeResponse(
       ticker: fallback.ticker || 'TKN',
       symbol: fallback.symbol || '',
       pairSymbol: fallback.pairSymbol || 'ETH',
+      pairCurrencyAddress: fallback.pairCurrencyAddress,
       bondingCurveProgress: fallback.bondingCurveProgress ?? 0,
       ethDeposited: fallback.ethDeposited || '0.0000 / 4.0',
       marketCapUsd: fallback.marketCapUsd || '$0.00',
@@ -398,15 +415,26 @@ export async function normalizeVibeResponse(
 
   const contractAddress = (launch.tokenAddress || fallback?.contractAddress || '').toLowerCase();
 
+  // --- Pair currency address (authoritative quote-asset key) ---
+  // `pairSymbol` can be null (e.g. MOBLAND) or mislabeled, so we always carry
+  // the raw pair currency ADDRESS through to the consumer. The zero address
+  // denotes native ETH.
+  const pairCurrencyAddress = (
+    launch.pairCurrencyAddress ||
+    fallback?.pairCurrencyAddress ||
+    ''
+  ).toLowerCase();
+
   // --- Pair symbol resolution ---
+  // NOTE: a null/empty `pairSymbol` is preserved as an empty string rather than
+  // being coerced to 'ETH'. The address is the authoritative key for rate
+  // lookups, so guessing 'ETH' here would misprice a non-ETH pair.
   let pairSymbol: string = launch.pairSymbol || fallback?.pairSymbol || '';
   if (!pairSymbol) {
-    if (launch.pairIsNative || launch.pairCurrencyAddress === '0x0000000000000000000000000000000000000000') {
+    if (launch.pairIsNative || pairCurrencyAddress === '0x0000000000000000000000000000000000000000') {
       pairSymbol = 'ETH';
-    } else if (launch.pairCurrencyAddress && resolveSymbol) {
-      pairSymbol = (await resolveSymbol(launch.pairCurrencyAddress)) || 'TOKEN';
-    } else {
-      pairSymbol = 'ETH';
+    } else if (pairCurrencyAddress && resolveSymbol) {
+      pairSymbol = (await resolveSymbol(pairCurrencyAddress)) || '';
     }
   }
 
@@ -447,15 +475,16 @@ export async function normalizeVibeResponse(
   // multiplied by that asset's own USD rate. Blindly using the ETH oracle for a
   // Guild/Stock-paired token inflates its market cap into the billions.
   const liveEthPrice = Number(json?.data?.ethPriceUsd) || liveRates['ETH'] || 2416;
-  const pairAddr = (launch.pairCurrencyAddress || '').toLowerCase();
-  const quoteKind = classifyQuoteAsset(pairSymbol, pairAddr);
+  const quoteKind = classifyQuoteAsset(pairSymbol, pairCurrencyAddress);
 
   // `quoteUsdRate` is `null` when the quote asset is non-ETH and has no known
   // USD rate — in that case we must rely on the token's direct USD price.
+  // The lookup is keyed primarily by the pair currency ADDRESS (authoritative),
+  // falling back to the symbol only when the address is absent from the map.
   const quoteUsdRate = resolveQuoteUsdRate(
     quoteKind,
     pairSymbol,
-    pairAddr,
+    pairCurrencyAddress,
     { ...liveRates, ETH: liveEthPrice, WETH: liveEthPrice },
     liveEthPrice
   );
@@ -573,6 +602,7 @@ export async function normalizeVibeResponse(
     ticker: launch.symbol || fallback?.ticker || 'TKN',
     symbol: launch.symbol || fallback?.symbol || '',
     pairSymbol,
+    pairCurrencyAddress,
     bondingCurveProgress,
     ethDeposited,
     marketCapUsd,
