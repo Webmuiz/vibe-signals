@@ -1224,7 +1224,13 @@ export default function Home() {
     const creatorWallet = (selectedToken?.devAddress || "").toLowerCase();
     if (creatorWallet && creatorWallet !== "0x" && creatorWallet !== "0x0000000000000000000000000000000000000000") {
       fetch(`/api/proxyDev?address=${creatorWallet}`)
-        .then(devRes => devRes.json())
+        .then(devRes => {
+          // A 502 means the upstream launch data was unavailable. Throw so the
+          // .catch() below fires and the existing devStats/UI state is preserved
+          // instead of being overwritten with zeros.
+          if (!devRes.ok) throw new Error(`Profiler upstream ${devRes.status}`);
+          return devRes.json();
+        })
         .then(devJson => {
           const profiler = devJson?.data?.profiler;
           if (!profiler) return;
