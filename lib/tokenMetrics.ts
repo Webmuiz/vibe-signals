@@ -660,31 +660,26 @@ export function calculateTokenMetrics(
 ) {
   const usdRate = getUsdRateForPair(pairSymbol, liveRates);
 
-  if (lastPriceWeiPerToken && Number(lastPriceWeiPerToken) > 0) {
+  // Market cap is ONLY ever derived from a real spot price. There is no
+  // synthetic "graduation target" fallback: the previous hard-coded constants
+  // ($50,500 for ETH pairs, $220,000 for VIBE pairs) were fabricated numbers
+  // that had no relationship to the token's actual price and were the direct
+  // cause of the "$220K grid card" discrepancy. When no trustworthy price is
+  // available we return 0, which the UI renders as "Syncing..." rather than a
+  // misleading figure.
+  if (lastPriceWeiPerToken && Number(lastPriceWeiPerToken) > 0 && usdRate > 0) {
     const pricePairUnits = Number(lastPriceWeiPerToken) / 1e18;
-    const mcUsd = usdRate > 0 ? pricePairUnits * 1_000_000_000 * usdRate : 0;
+    const mcUsd = pricePairUnits * 1_000_000_000 * usdRate;
     return {
       marketCapFormatted: mcUsd > 0 ? mcUsd.toLocaleString('en-US', { style: 'currency', currency: 'USD' }) : '$0.00',
       marketCapRaw: mcUsd
     };
   }
 
-  const progress = Math.min(100, Math.max(0, Number(bondingCurveProgress || 0)));
-  const sym = (pairSymbol || 'ETH').toUpperCase();
-
-  let gradUsd = 50500;
-  let baseUsd = 4000;
-  if (sym === 'VIBEVIBE' || sym === 'VIBE') {
-    gradUsd = 220000; // Vibe-paired tokens have higher USD graduation targets
-    baseUsd = 15000;
-  }
-
-  const currentUsd = progress >= 100
-    ? gradUsd
-    : baseUsd + ((gradUsd - baseUsd) * Math.pow(progress / 100, 1.45));
-
+  // No real price available — signal "unresolved" with a zero market cap so the
+  // caller shows a syncing placeholder instead of a synthetic estimate.
   return {
-    marketCapFormatted: currentUsd.toLocaleString('en-US', { style: 'currency', currency: 'USD' }),
-    marketCapRaw: currentUsd
+    marketCapFormatted: '$0.00',
+    marketCapRaw: 0
   };
 }

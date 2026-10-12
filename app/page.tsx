@@ -322,7 +322,16 @@ export default function Home() {
         const ethPrice = Number(json?.data?.ethPriceUsd) || 2416;
 
         if (isSubscribed && Object.keys(oracleRates).length > 0) {
-          setLiveRates(prev => ({ ...prev, ...oracleRates, ETH: ethPrice, WETH: ethPrice }));
+          const mergedRates = { ...liveRatesRef.current, ...oracleRates, ETH: ethPrice, WETH: ethPrice };
+          // CRITICAL: mirror the merged rates into the ref BEFORE/alongside the
+          // state update. The background pollers (`fetchLiveMetricsFor` and
+          // `fetchLiveToken`) read `liveRatesRef.current` — NOT the `liveRates`
+          // state — so if the ref is never written it stays `{}` forever and
+          // every non-ETH quote asset resolves to a null USD rate, forcing the
+          // synthetic fallback. This was the root cause of the $18.5K / $55.8K /
+          // $220K divergence.
+          liveRatesRef.current = mergedRates;
+          setLiveRates(mergedRates);
           // Mark the oracle as loaded so USD metrics may now be rendered. Until
           // this flips, the UI shows "Syncing..." instead of computing values
           // against the hard-coded seed rate (which caused the initial flash).
@@ -1018,6 +1027,21 @@ export default function Home() {
             : selectedToken.bondingCurveProgress ?? 0;
 
         // Publish a metrics entry so the grid card and detail view agree.
+        // Preserve any REAL market cap / volume we already hold. Writing a
+        // literal '$0.00' here would poison the shared `liveMetrics` cache: the
+        // grid card reads `marketCapUsd` as a truthy string and renders "$0.00"
+        // (or, if empty, falls through to the synthetic target). Leaving these
+        // undefined keeps the UI in the "Syncing..." state until valid data
+        // arrives from the API.
+        const priorMarketCapUsd =
+          selectedToken.marketCapUsd && selectedToken.marketCapUsd !== '$0.00'
+            ? selectedToken.marketCapUsd
+            : undefined;
+        const priorVolumeUsd =
+          selectedToken.volumeUsd && selectedToken.volumeUsd !== '$0.00'
+            ? selectedToken.volumeUsd
+            : undefined;
+
         const fallbackMetrics: LiveTokenMetrics = {
           contractAddress: detailKey,
           name: selectedToken.name || 'Unknown',
@@ -1026,10 +1050,10 @@ export default function Home() {
           pairSymbol: selectedToken.pairSymbol || 'ETH',
           bondingCurveProgress: fallbackProgress,
           ethDeposited: onChainEth > 0 ? `${onChainEth.toFixed(4)} / ${targetEth.toFixed(1)}` : (selectedToken.ethDeposited || '0.0000 / 4.0'),
-          marketCapUsd: selectedToken.marketCapUsd || '$0.00',
+          marketCapUsd: priorMarketCapUsd,
           marketCapRaw: 0,
           volumeEth: selectedToken.volumeEth || '0.0000',
-          volumeUsd: selectedToken.volumeUsd || '$0.00',
+          volumeUsd: priorVolumeUsd,
           buyPct: selectedToken.momentum?.buyPct ?? 50,
           sellPct: selectedToken.momentum?.sellPct ?? 50,
           priceUsd: 0,

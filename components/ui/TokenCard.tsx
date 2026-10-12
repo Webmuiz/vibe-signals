@@ -2,8 +2,6 @@ import React from "react";
 import {
   shortenAddress,
   formatTimeLive,
-  getUsdRateForPair,
-  calculateTokenMetrics,
   formatCompactUsd,
 } from "@/lib/tokenMetrics";
 
@@ -267,26 +265,26 @@ function TokenCard({
                 {token.marketCapIsEstimate ? 'M.Cap (Est)' : 'M.Cap'}
               </span>
               <span className="text-sm font-bold text-zinc-300 transition-all duration-300">
-                {showSyncing ? (
+                {/*
+                  Market cap is ONLY rendered from a real, API-derived value.
+                  There is NO synthetic fallback: if the live metric is missing
+                  or is the "$0.00" placeholder we show "Syncing..." rather than
+                  a fabricated graduation-target constant (the old $220K bug).
+                */}
+                {showSyncing || !token.marketCapUsd || token.marketCapUsd === '$0.00' ? (
                   <span className="text-gray-400 animate-pulse">Syncing...</span>
-                ) : token.marketCapUsd ? (
-                  `${token.marketCapIsEstimate ? '~' : ''}${formatCompactUsd(token.marketCapUsd)}`
-                ) : token.cachedMarketCapFormatted ? (
-                  formatCompactUsd(token.cachedMarketCapFormatted)
                 ) : (
-                  `~${formatCompactUsd(calculateTokenMetrics(token.bondingCurveProgress, token.ethDeposited, token.pairSymbol, liveRates).marketCapFormatted)}`
+                  `${token.marketCapIsEstimate ? '~' : ''}${formatCompactUsd(token.marketCapUsd)}`
                 )}
               </span>
             </div>
             <div>
               <span className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider block mb-1">24H Vol</span>
               <span className="text-sm font-bold text-zinc-300 transition-all duration-300">
-                {showSyncing ? (
+                {showSyncing || !token.volumeUsd || token.volumeUsd === '$0.00' ? (
                   <span className="text-gray-400 animate-pulse">Syncing...</span>
-                ) : token.volumeUsd ? (
-                  formatCompactUsd(token.volumeUsd)
                 ) : (
-                  formatCompactUsd(Number(token.momentum?.volumeEth || 0) * getUsdRateForPair(token.pairSymbol, liveRates))
+                  formatCompactUsd(token.volumeUsd)
                 )}
               </span>
             </div>

@@ -326,9 +326,36 @@ export async function GET(request: Request) {
         };
         const launchId = Number(launchArgs.launchId ?? 0);
         const devAddress = (launchArgs.launcher || tokenAddress).toLowerCase();
-        const isNativeEth = (launchArgs.pairCurrency || '').toLowerCase() === ZERO_ADDRESS;
+        const pairCurrencyAddr = (launchArgs.pairCurrency || '').toLowerCase();
+        const isNativeEth = pairCurrencyAddr === ZERO_ADDRESS;
         const finalName = launchArgs.name || (name as string);
         const finalSymbol = launchArgs.symbol || (symbol as string);
+
+        // Resolve the REAL quote-asset symbol from the on-chain pair currency
+        // address. Previously every non-ETH pair was persisted as the literal
+        // string 'STOCK', which corrupted quote-asset classification downstream
+        // (a VIBE/VIBEVIBE-paired token was misread as a stock pair, so the
+        // pricing oracle fetched the wrong USD rate). We now read the ERC-20
+        // symbol directly so the stored value is 'VIBEVIBE', 'NVDA', 'SPCX', etc.
+        let pairSymbol = 'ETH';
+        if (!isNativeEth && pairCurrencyAddr && pairCurrencyAddr !== ZERO_ADDRESS) {
+            try {
+                const resolved = (await publicClient.readContract({
+                    address: pairCurrencyAddr as `0x${string}`,
+                    abi: TOKEN_ABI,
+                    functionName: 'symbol',
+                })) as string;
+                if (resolved && typeof resolved === 'string' && resolved.trim()) {
+                    pairSymbol = resolved.trim().toUpperCase();
+                }
+            } catch (pairErr) {
+                // Symbol read failed (non-standard ERC-20 / RPC hiccup). Fall back
+                // to the address so the oracle can still key off it, rather than
+                // mislabeling the pair as a stock.
+                console.warn('Could not resolve pair currency symbol:', pairErr);
+                pairSymbol = pairCurrencyAddr;
+            }
+        }
 
         // 5. Live curve state (real graduation progress, not a balance guess).
         let currentLiq = 0;
@@ -398,7 +425,7 @@ export async function GET(request: Request) {
             token_address: tokenAddress,
             amm_address: curveAddress,
             dev_address: devAddress,
-            pair_symbol: isNativeEth ? 'ETH' : 'STOCK',
+            pair_symbol: pairSymbol,
             liquidity_deposited: Number(currentLiq.toFixed(4)),
             curve_progress: Number(curveProgress.toFixed(1)),
             launch_block: launchBlock,
