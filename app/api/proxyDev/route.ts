@@ -136,54 +136,84 @@ export async function GET(request: Request) {
     const headers = { 'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0' };
     const targetDev = address.toLowerCase();
 
-    // 1. Fetch all launches created by this wallet (legacy + V6), paginated.
+    // 1. Fetch all launches created by this wallet.
+    //
+    //    V6 IS THE PRIMARY SOURCE. The legacy `/launches?creatorAddress=` surface
+    //    returns EMPTY arrays for V6-deployed tokens (the V6 factory writes
+    //    `launcherAddress`, which the legacy index does not project onto
+    //    `creatorAddress`). Relying on it first — as the previous implementation
+    //    did — is the root cause of the "0 launches" Dev Profile / Discipline
+    //    scanner bug. We therefore query the V6 wallet-launches endpoint FIRST
+    //    and treat the legacy surface as a best-effort secondary merge so that
+    //    genuinely old (pre-V6) launches are still counted.
+    //
     //    Both surfaces are queried with the LOWERCASED address: the upstream
     //    indexes are case-sensitive, so a checksummed (mixed-case) input would
     //    silently return zero launches and undercount the profiler.
-    const [legacyLaunches, v6Launches] = await Promise.all([
-      fetchLaunchesWithFallback(
-        (cursor) =>
-          `${VIBE_API_BASE}/launches?creatorAddress=${targetDev}&limit=${PAGE_LIMIT}` +
-          (cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''),
-        () => `${VIBE_API_BASE}/launches?creatorAddress=${targetDev}&limit=${PAGE_LIMIT}`,
-        headers
-      ),
-      fetchLaunchesWithFallback(
-        (cursor) =>
-          `${VIBE_API_BASE}/v6/wallets/${targetDev}/launches?limit=${PAGE_LIMIT}` +
-          (cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''),
-        () => `${VIBE_API_BASE}/v6/wallets/${targetDev}/launches?limit=${PAGE_LIMIT}`,
-        headers
-      ),
-    ]);
+    const v6Launches = await fetchLaunchesWithFallback(
+      (cursor) =>
+        `${VIBE_API_BASE}/v6/wallets/${targetDev}/launches?limit=${PAGE_LIMIT}` +
+        (cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''),
+      () => `${VIBE_API_BASE}/v6/wallets/${targetDev}/launches?limit=${PAGE_LIMIT}`,
+      headers
+    );
+
+    // Legacy surface is a secondary, non-fatal merge. A failure here must NOT
+    // discard the V6 results.
+    const legacyLaunches = await fetchLaunchesWithFallback(
+      (cursor) =>
+        `${VIBE_API_BASE}/launches?creatorAddress=${targetDev}&limit=${PAGE_LIMIT}` +
+        (cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''),
+      () => `${VIBE_API_BASE}/launches?creatorAddress=${targetDev}&limit=${PAGE_LIMIT}`,
+      headers
+    );
 
     // SILENT-FAILURE GUARD: if BOTH launch surfaces failed outright we have no
     // reliable data. Returning 200 with totalLaunches: 0 would overwrite the
     // UI's accurate state with zeros, so we surface a 502 instead and let the
     // frontend's .catch() preserve the last-known-good values.
-    if (!legacyLaunches.ok && !v6Launches.ok) {
+    if (!v6Launches.ok && !legacyLaunches.ok) {
       return NextResponse.json(
         { error: 'Upstream launch data unavailable' },
         { status: 502 }
       );
     }
 
-    const combinedItems: any[] = [...legacyLaunches.items, ...v6Launches.items];
+    const combinedItems: any[] = [...v6Launches.items, ...legacyLaunches.items];
+
+    // NORMALIZE THE CREATOR FIELD. V6 items carry `launcherAddress`; legacy
+    // items carry `creatorAddress`. Every downstream consumer (the Discipline
+    // scanner, the returned `items` payload, the frontend profiler) reads
+    // `creatorAddress`, so we project `launcherAddress` onto it here. Without
+    // this mapping the V6 tokens reach the scanner with an undefined creator and
+    // are silently dropped, producing the "0 launches" symptom.
+    const normalizedItems: any[] = combinedItems
+      .filter((item: any) => item && item.tokenAddress)
+      .map((item: any) => {
+        const creator = String(
+          item.launcherAddress || item.creatorAddress || ''
+        ).toLowerCase();
+        return {
+          ...item,
+          // Canonical internal key consumed downstream.
+          creatorAddress: creator,
+          // Preserve the V6-native field for any consumer that still reads it.
+          launcherAddress: item.launcherAddress || creator,
+        };
+      });
 
     // Deduplicate by lowercased token address. Items without a tokenAddress are
     // dropped rather than allowed to throw (a single malformed item must not
     // 500 the whole profiler response).
     const deduplicated = Array.from(
       new Map(
-        combinedItems
-          .filter((item: any) => item && item.tokenAddress)
-          .map((item: any) => [String(item.tokenAddress).toLowerCase(), item])
+        normalizedItems.map((item: any) => [String(item.tokenAddress).toLowerCase(), item])
       ).values()
     );
 
-    // Isolate tokens created by this wallet. The upstream surfaces disagree on
-    // the field name (`launcherAddress` on V6, `creatorAddress` on legacy), so
-    // both are inspected and compared case-insensitively.
+    // Isolate tokens created by this wallet. After normalization both surfaces
+    // expose the creator under `creatorAddress`, but we still inspect both keys
+    // and compare case-insensitively for defensive robustness.
     const createdTokens = deduplicated.filter((item: any) => {
       const launcher = String(item.launcherAddress || item.creatorAddress || '').toLowerCase();
       return launcher === targetDev;

@@ -1,0 +1,11 @@
+﻿{
+    "key":  "GET /api/v1/chains/46630/readiness",
+    "url":  "https://testnet.vibevibe.fun/api/v1/chains/46630/readiness",
+    "method":  "GET",
+    "path":  "/api/v1/chains/46630/readiness",
+    "status":  200,
+    "mime":  "application/json",
+    "reqHeaders":  ":authority: testnet.vibevibe.fun\n:method: GET\n:path: /api/v1/chains/46630/readiness\n:scheme: https\naccept: application/json\naccept-encoding: gzip, deflate, br, zstd\naccept-language: en-US,en;q=0.9\nif-none-match: W/\"4b922d95ce5099ae270c8fca112e174d\"\npriority: u=1, i\nsec-ch-ua: \"Microsoft Edge\";v=\"155\", \"Chromium\";v=\"155\", \"Not(A:Brand\";v=\"24\"\nsec-ch-ua-mobile: ?0\nsec-ch-ua-platform: \"Windows\"\nsec-fetch-dest: empty\nsec-fetch-mode: cors\nsec-fetch-site: same-origin\nuser-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36 Edg/155.0.0.0",
+    "reqBody":  "",
+    "respBody":  "{\"apiVersion\":\"1\",\"requestId\":\"req-1b77\",\"data\":{\"deploymentVersion\":\"testnet-r2.18.73.99408853\",\"revision\":\"2616455\",\"features\":{\"reads\":{\"enabled\":true,\"reason\":null},\"metadataPreparation\":{\"enabled\":true,\"reason\":null},\"positionLens\":{\"enabled\":true,\"reason\":null},\"transactionReceipts\":{\"enabled\":true,\"reason\":null},\"contentReports\":{\"enabled\":true,\"reason\":null},\"curveWrites\":{\"enabled\":true,\"reason\":null},\"creationWrites\":{\"enabled\":true,\"reason\":null},\"graduationWrites\":{\"enabled\":true,\"reason\":null},\"creatorClaims\":{\"enabled\":true,\"reason\":null},\"v4Trading\":{\"enabled\":true,\"reason\":null},\"quoteLaunches\":{\"enabled\":true,\"reason\":null},\"analytics\":{\"enabled\":false,\"reason\":\"FIRST_PARTY_ANALYTICS_COLLECTOR_NOT_CONFIGURED\"},\"writesStateReady\":true}},\"meta\":{\"freshness\":{\"status\":\"FRESH\",\"source\":\"INDEXER\",\"chainId\":46630,\"asOfBlock\":\"133814780\",\"asOfBlockHash\":\"0x0a9db760293564d67e1aabe42de4982e7fa517c439bb603e6a9cb2ac13a15525\",\"chainHeadBlock\":\"133814781\",\"indexedThroughBlock\":\"133814780\",\"lagBlocks\":\"1\",\"coverageStartsAtBlock\":\"91563904\",\"coverageComplete\":true,\"observedAt\":\"2026-10-12T20:42:22.385Z\",\"reason\":null,\"headObservedBlock\":\"133814821\",\"headObservedAt\":\"2026-10-12T20:42:24.183Z\",\"headLagBlocks\":\"41\"}}}"
+}

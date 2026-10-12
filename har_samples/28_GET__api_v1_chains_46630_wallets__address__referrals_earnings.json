@@ -1,0 +1,11 @@
+﻿{
+    "key":  "GET /api/v1/chains/46630/wallets/{address}/referrals/earnings",
+    "url":  "https://testnet.vibevibe.fun/api/v1/chains/46630/wallets/0xc8F14080c15801bab3747E9875e6894b86801bC7/referrals/earnings",
+    "method":  "GET",
+    "path":  "/api/v1/chains/46630/wallets/{address}/referrals/earnings",
+    "status":  200,
+    "mime":  "application/json",
+    "reqHeaders":  ":authority: testnet.vibevibe.fun\n:method: GET\n:path: /api/v1/chains/46630/wallets/0xc8F14080c15801bab3747E9875e6894b86801bC7/referrals/earnings\n:scheme: https\naccept: application/json\naccept-encoding: gzip, deflate, br, zstd\naccept-language: en-US,en;q=0.9\npriority: u=1, i\nsec-ch-ua: \"Microsoft Edge\";v=\"155\", \"Chromium\";v=\"155\", \"Not(A:Brand\";v=\"24\"\nsec-ch-ua-mobile: ?0\nsec-ch-ua-platform: \"Windows\"\nsec-fetch-dest: empty\nsec-fetch-mode: cors\nsec-fetch-site: same-origin\nuser-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36 Edg/155.0.0.0",
+    "reqBody":  "",
+    "respBody":  "{\"apiVersion\":\"1\",\"requestId\":\"req-17ie\",\"data\":{\"network\":\"TESTNET\",\"commissionBps\":2500,\"retainedProtocolBps\":2000,\"payoutStatus\":\"TREASURY_PAYMENTS\",\"coverage\":\"COMPLETE\",\"pendingTradeCount\":\"0\",\"assets\":[]},\"meta\":{\"freshness\":{\"status\":\"FRESH\",\"source\":\"DERIVED\",\"chainId\":46630,\"asOfBlock\":\"133814983\",\"asOfBlockHash\":\"0x97393ed9372d8c17d13e94ce9514e3a6a82192f63f887ff913832f191090aa23\",\"chainHeadBlock\":\"133814984\",\"indexedThroughBlock\":\"133814983\",\"lagBlocks\":\"1\",\"coverageStartsAtBlock\":\"91563904\",\"coverageComplete\":true,\"observedAt\":\"2026-10-12T20:42:52.289Z\",\"reason\":null,\"headObservedBlock\":\"133815018\",\"headObservedAt\":\"2026-10-12T20:42:51.353Z\",\"headLagBlocks\":\"35\"}}}"
+}

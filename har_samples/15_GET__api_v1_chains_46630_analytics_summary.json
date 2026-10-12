@@ -1,0 +1,11 @@
+﻿{
+    "key":  "GET /api/v1/chains/46630/analytics/summary",
+    "url":  "https://testnet.vibevibe.fun/api/v1/chains/46630/analytics/summary",
+    "method":  "GET",
+    "path":  "/api/v1/chains/46630/analytics/summary",
+    "status":  200,
+    "mime":  "application/json",
+    "reqHeaders":  ":authority: testnet.vibevibe.fun\n:method: GET\n:path: /api/v1/chains/46630/analytics/summary\n:scheme: https\naccept: application/json\naccept-encoding: gzip, deflate, br, zstd\naccept-language: en-US,en;q=0.9\npriority: u=1, i\nsec-ch-ua: \"Microsoft Edge\";v=\"155\", \"Chromium\";v=\"155\", \"Not(A:Brand\";v=\"24\"\nsec-ch-ua-mobile: ?0\nsec-ch-ua-platform: \"Windows\"\nsec-fetch-dest: empty\nsec-fetch-mode: cors\nsec-fetch-site: same-origin\nuser-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36 Edg/155.0.0.0",
+    "reqBody":  "",
+    "respBody":  "{\"apiVersion\":\"1\",\"requestId\":\"req-12we\",\"data\":{\"projection\":{\"revision\":\"2824\",\"sha256\":\"07b0d70c0a154d6c5d36dd32825cbdad82ef2ea39014c8d856359ba049dd67f0\",\"blockNumber\":\"133806479\",\"blockHash\":\"0x8b8dfd87d4122fdecb07aa748478ab265eb77f1647d1ce9220532646aae67b4a\"},\"population\":{\"tokens\":223281,\"walletTokens\":4242894,\"wallets\":193501,\"builders\":66252,\"walletsUnavailable\":90905,\"trades\":5680479,\"traders\":153726,\"tradersUnavailable\":73663},\"totals\":{\"cumulativeMarketCapWei\":\"6395982934695768000000000\",\"cumulativeVolumeWei\":\"288040181980103890211761\",\"cumulativeVolumeExcludedWei\":\"15304728546689960313505\",\"realizedPnlWei\":\"-59371109056551859180757\",\"unrealizedPnlWei\":\"688038602725589563877237\",\"totalPnlWei\":\"628667493669037704696480\",\"equityWei\":\"738332340265855165832713\"}},\"meta\":{\"freshness\":{\"status\":\"FRESH\",\"source\":\"DERIVED\",\"chainId\":46630,\"asOfBlock\":\"133806479\",\"asOfBlockHash\":\"0x8b8dfd87d4122fdecb07aa748478ab265eb77f1647d1ce9220532646aae67b4a\",\"chainHeadBlock\":\"133811953\",\"indexedThroughBlock\":\"133806479\",\"lagBlocks\":\"5474\",\"coverageStartsAtBlock\":\"91563904\",\"coverageComplete\":true,\"observedAt\":\"2026-10-12T20:35:03.914Z\",\"reason\":null}}}"
+}

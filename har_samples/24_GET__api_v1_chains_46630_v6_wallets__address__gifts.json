@@ -1,0 +1,11 @@
+﻿{
+    "key":  "GET /api/v1/chains/46630/v6/wallets/{address}/gifts",
+    "url":  "https://testnet.vibevibe.fun/api/v1/chains/46630/v6/wallets/0xc8f14080c15801bab3747e9875e6894b86801bc7/gifts?status=pending\u0026limit=50",
+    "method":  "GET",
+    "path":  "/api/v1/chains/46630/v6/wallets/{address}/gifts",
+    "status":  200,
+    "mime":  "application/json",
+    "reqHeaders":  ":authority: testnet.vibevibe.fun\n:method: GET\n:path: /api/v1/chains/46630/v6/wallets/0xc8f14080c15801bab3747e9875e6894b86801bc7/gifts?status=pending\u0026limit=50\n:scheme: https\naccept: application/json\naccept-encoding: gzip, deflate, br, zstd\naccept-language: en-US,en;q=0.9\ncache-control: no-cache\npragma: no-cache\npriority: u=1, i\nsec-ch-ua: \"Microsoft Edge\";v=\"155\", \"Chromium\";v=\"155\", \"Not(A:Brand\";v=\"24\"\nsec-ch-ua-mobile: ?0\nsec-ch-ua-platform: \"Windows\"\nsec-fetch-dest: empty\nsec-fetch-mode: cors\nsec-fetch-site: same-origin\nuser-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36 Edg/155.0.0.0",
+    "reqBody":  "",
+    "respBody":  "{\"apiVersion\":\"1\",\"requestId\":\"req-11y4\",\"data\":{\"items\":[],\"complete\":true},\"meta\":{\"freshness\":{\"status\":\"FRESH\",\"source\":\"INDEXER\",\"chainId\":46630,\"asOfBlock\":\"133813089\",\"asOfBlockHash\":\"0xd683511e5df2fe419d040ea04cfec6622711ed00ab0255a5d9483013f58bbb8c\",\"chainHeadBlock\":\"133813090\",\"indexedThroughBlock\":\"133813089\",\"lagBlocks\":\"1\",\"coverageStartsAtBlock\":\"91563904\",\"coverageComplete\":true,\"observedAt\":\"2026-10-12T20:38:04.832Z\",\"reason\":null,\"headObservedBlock\":\"133813116\",\"headObservedAt\":\"2026-10-12T20:38:04.638Z\",\"headLagBlocks\":\"27\"}}}"
+}

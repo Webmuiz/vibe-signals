@@ -1,0 +1,1012 @@
+﻿
+===== 01_GET__api_v1_chains_46630_v6_pair_prices.json =====
+.apiVersion : String = 1
+.requestId : String = req-157x
+.data.items : array[61]
+.data.items[].pairAddress : String = 0x012554cb9b4c0e0319499124e5e36d5f38185b5c
+.data.items[].source : String = LAUNCH_POOL
+.data.items[].decimals : Int32 = 18
+.data.items[].priceEthWad : String = 2236320633
+.data.items[].reason : null
+.data.items[].poolIds : array[0]
+.data.items[].historyComplete : Boolean = True
+.data.asOfBlock : String = 133814068
+.meta.freshness.status : String = FRESH
+.meta.freshness.source : String = INDEXER
+.meta.freshness.chainId : Int32 = 46630
+.meta.freshness.asOfBlock : String = 133814068
+.meta.freshness.asOfBlockHash : String = 0x82eb178ed2aa9485a3187ac77e9dc45b3ab83a003767228f77979599ca88ef91
+.meta.freshness.chainHeadBlock : String = 133814069
+.meta.freshness.indexedThroughBlock : String = 133814068
+.meta.freshness.lagBlocks : String = 1
+.meta.freshness.coverageStartsAtBlock : String = 91563904
+.meta.freshness.coverageComplete : Boolean = True
+.meta.freshness.observedAt : String = 2026-10-12T20:40:48.827Z
+.meta.freshness.reason : null
+.meta.freshness.headObservedBlock : String = 133814172
+.meta.freshness.headObservedAt : String = 2026-10-12T20:40:48.609Z
+.meta.freshness.headLagBlocks : String = 104
+
+===== 02_GET__api_v1_chains_46630_board.json =====
+NON-JSON body (len=138576): eyJhcGlWZXJzaW9uIjoiMSIsInJlcXVlc3RJZCI6InJlcS15bm0iLCJkYXRhIjp7Iml0ZW1zIjpbeyJraW5kIjoidjYiLCJsYXVuY2giOnsidG9rZW5BZGRyZXNzIjoiMHg1ZTNlMWE4MjJlOTQ0NDcxMDRhNTJiZTUwYzE3ZWVlY2ViOGY2YjY0IiwiY3VydmVBZGRyZXNzIjoiMHhjYjBjYzNjM2YyMDE0ZjE1NDQ1MGQwYTBlYmMwYWUxZDA1MzRiMmUwIiwibGF1bmNoZXJBZGRyZXNzIjoiMHhhY2Q0
+
+===== 03_GET__api_v1_chains_46630_v6_launches_cards.json =====
+NON-JSON body (len=128060): eyJhcGlWZXJzaW9uIjoiMSIsInJlcXVlc3RJZCI6InJlcS0xYmlhIiwiZGF0YSI6eyJpdGVtcyI6W3sidG9rZW5BZGRyZXNzIjoiMHg3ZDYzZmExMWYyZjJiY2FmMzM5ZTZkNDRiMTVmNzBiNDYyMjJiYjg4IiwiY3VydmVBZGRyZXNzIjoiMHhjODg4YTk0NTQ5MGI1MzU3MmY1ZWJiYWUzNmFlMzU4Y2FjNWVhYzNmIiwibGF1bmNoZXJBZGRyZXNzIjoiMHgyYWIyYTdkNTI4MGIzYjg1YmZlODM3N2U4
+
+===== 04_GET__api_v1_chains_46630_market_eth_usd.json =====
+.apiVersion : String = 1
+.requestId : String = req-15uv
+.data.usdPerEthCents : String = 252092
+.data.source : String = CoinGecko
+.data.observedAt : String = 2026-10-12T20:40:55.292Z
+
+===== 05_GET__api_v1_chains_46630_v6_launches.json =====
+NON-JSON body (len=151892): eyJhcGlWZXJzaW9uIjoiMSIsInJlcXVlc3RJZCI6InJlcS0xMWE4IiwiZGF0YSI6eyJpdGVtcyI6W3sidG9rZW5BZGRyZXNzIjoiMHg0YTU1NDY3YzUyOTdlNjNjOGZkYWMzZjE5NjNkMmYzMTQ4MTg2ZDBhIiwiY3VydmVBZGRyZXNzIjoiMHhkODgyODc0NjRkYWFjMTI3MTQ3MDY2ZGQ3Yzc0ZDhhMzQxYTFmZTY5IiwibGF1bmNoZXJBZGRyZXNzIjoiMHgzZGE4YzY4NGY4YmZiMTE3MmU2ZjZmMTE1
+
+===== 06_GET__api_v1_chains_46630_launches.json =====
+NON-JSON body (len=19924): eyJhcGlWZXJzaW9uIjoiMSIsInJlcXVlc3RJZCI6InJlcS14NXYiLCJkYXRhIjp7Iml0ZW1zIjpbeyJsYXVuY2hJZCI6IjE0MTk2NiIsInRva2VuQWRkcmVzcyI6IjB4NjViZWUwODYwN2YyYmUxNDMyNTVkNDVjNTI5MTY5ZjRlNTliNDNmMiIsImN1cnZlQWRkcmVzcyI6IjB4NGMyYzM3NmFiNmQxOGQ1YTE2YzAyZjA2NzFjZGU4MzE5ZDFjMGQ3MiIsImNyZWF0b3JBZGRyZXNzIjoiMHhmYjVkYTlh
+
+===== 07_GET__api_v1_chains_46630_assets.json =====
+.apiVersion : String = 1
+.requestId : String = req-15fc
+.data.items : array[1]
+.data.items[].assetKind : String = CANONICAL
+.data.items[].tokenAddress : String = 0x728e721256d0708d23b00afcd32c096979259b16
+.data.items[].name : String = Testnet SFUND
+.data.items[].symbol : String = tSFUND
+.data.items[].decimals : Int32 = 18
+.data.items[].totalSupplyBaseUnits : String = 1000000000000000000000000000
+.data.items[].createdAt : String = 2026-07-25T20:11:35.000Z
+.data.items[].deploymentBlock : String = 93437257
+.data.items[].deploymentTransaction : String = 0xd323b40ac24904a0710ce78f066f7115934c6ccf0d73368f8b66861a22e250c7
+.data.items[].runtimeHash : String = 0xda4382e6b53d4b57d9c6b259b8b13808a58750147604c7a516e646b73df2feb1
+.data.items[].logoPath : String = /seedify-logo.webp
+.data.items[].pool.poolManager : String = 0x8366a39cc670b4001a1121b8f6a443a643e40951
+.data.items[].pool.poolId : String = 0xb933556d80062453de15c70946f933fa12e8f86da995dfe9933a77dc0ae81f32
+.data.items[].pool.poolKey.currency0 : String = 0x0000000000000000000000000000000000000000
+.data.items[].pool.poolKey.currency1 : String = 0x728e721256d0708d23b00afcd32c096979259b16
+.data.items[].pool.poolKey.fee : Int32 = 3000
+.data.items[].pool.poolKey.tickSpacing : Int32 = 60
+.data.items[].pool.poolKey.hooks : String = 0x0000000000000000000000000000000000000000
+.data.items[].protocolSplitAddress : String = 0x3b13605865d7164d1dfe2080e22910df3a701899
+.data.items[].buybackExecutorAddress : String = 0xc9975c306b0bb34a2732a7b96fed54fe8e0e7d29
+.data.items[].tradingEnabled : Boolean = True
+.data.items[].chartEnabled : Boolean = True
+.data.items[].market.status : String = AVAILABLE
+.data.items[].market.reason : null
+.data.items[].market.formulaVersion : String = confirmed-principal-v1
+.data.items[].market.lastPriceWeiPerToken : String = 1615935698232377400
+.data.items[].market.volume5mWei : String = 0
+.data.items[].market.volume1hWei : String = 0
+.data.items[].market.volume24hWei : String = 0
+.data.items[].market.priceChange5mBps : String = 0
+.data.items[].market.priceChange1hBps : String = 0
+.data.items[].market.priceChange24hBps : String = 0
+.data.items[].market.priceChangeBasis.m5 : String = WINDOW
+.data.items[].market.priceChangeBasis.h1 : String = WINDOW
+.data.items[].market.priceChangeBasis.h24 : String = WINDOW
+.data.items[].market.uniqueBuyers1h : Int32 = 0
+.data.items[].market.buyCount1h : Int32 = 0
+.data.items[].market.sellCount1h : Int32 = 0
+.data.items[].buybacks.status : String = AVAILABLE
+.data.items[].buybacks.ethSpentWei : String = 18282255943139710291
+.data.items[].buybacks.tokensBurnedBaseUnits : String = 1478100104677442656
+.data.items[].buybacks.executionCount : Int32 = 4108
+.data.items[].buybacks.lastBurnAt : String = 2026-09-16T07:42:12.000Z
+.data.items[].buybacks.reason : null
+.data.items[].protocolReserveWei : null
+.data.items[].protocolReserveStatus : String = LIVE_CHAIN_READ_REQUIRED
+.data.items[].treasuryClaimableWei : null
+.data.items[].treasuryClaimableStatus : String = LIVE_CHAIN_READ_REQUIRED
+.data.items[].asOfBlock : String = 133814213
+.data.items[].asOfBlockHash : String = 0x4fae15bd116935467636fd558c1d19cbc0cafb10a991fc26d015e952683cb387
+.meta.freshness.status : String = FRESH
+.meta.freshness.source : String = INDEXER
+.meta.freshness.chainId : Int32 = 46630
+.meta.freshness.asOfBlock : String = 133814213
+.meta.freshness.asOfBlockHash : String = 0x4fae15bd116935467636fd558c1d19cbc0cafb10a991fc26d015e952683cb387
+.meta.freshness.chainHeadBlock : String = 133814214
+.meta.freshness.indexedThroughBlock : String = 133814213
+.meta.freshness.lagBlocks : String = 1
+.meta.freshness.coverageStartsAtBlock : String = 91563904
+.meta.freshness.coverageComplete : Boolean = True
+.meta.freshness.observedAt : String = 2026-10-12T20:40:58.726Z
+.meta.freshness.reason : null
+.meta.freshness.headObservedBlock : String = 133814230
+.meta.freshness.headObservedAt : String = 2026-10-12T20:40:57.445Z
+.meta.freshness.headLagBlocks : String = 17
+
+===== 08_POST__api_v1_chains_46630_rum.json =====
+(empty body)
+
+===== 09_GET__api_v1_chains_46630_v6_launches__address__market.json =====
+.apiVersion : String = 1
+.requestId : String = req-11zp
+.data.metadataURI : String = ipfs://bafkreiethgiwthxjaj6ql4l4g5jmty7q67m7dnbx2gy4bh3bggzul4moke
+.data.content.description : String = 
+.data.content.image.uri : String = ipfs://bafkreidpxqulsknytkw2hjrq3hpvrdc2bw3kgnn76lfhh45pfks6zhsiwu
+.data.content.image.mimeType : String = image/webp
+.data.content.image.bytes : Int32 = 77394
+.data.content.image.width : Int32 = 1448
+.data.content.image.height : Int32 = 1086
+.data.content.image.renders.thumb : array[2]
+.data.content.image.renders.thumb[] : Int32 = 96
+.data.content.image.renders.sq410 : array[2]
+.data.content.image.renders.sq410[] : Int32 = 410
+.data.content.image.renders.sq544 : array[2]
+.data.content.image.renders.sq544[] : Int32 = 544
+.data.content.image.renders.card : array[2]
+.data.content.image.renders.card[] : Int32 = 768
+.data.tokenAddress : String = 0xf1a06d4428f66e624d300b6a394721b52c85b208
+.data.pairCurrencyAddress : String = 0xb506f089331c4ad5c86889184f8bf5b5fb40d7f3
+.data.coverage.complete : Boolean = True
+.data.coverage.reason : null
+.data.trades : array[100]
+.data.trades[].id : String = 0xc2b55a57b55c9af7508d3cdac4250df863d53ba758742933cff5cec7ebac44fb:14
+.data.trades[].kind : String = TRADE
+.data.trades[].transactionHash : String = 0xc2b55a57b55c9af7508d3cdac4250df863d53ba758742933cff5cec7ebac44fb
+.data.trades[].blockHash : String = 0x5fc2ed12340e4f5d4a4cab01d03a222d5c645cef6d4d27e87228e0fa496e0b8c
+.data.trades[].blockNumber : String = 133811775
+.data.trades[].logIndex : Int32 = 14
+.data.trades[].occurredAt : String = 2026-10-12T20:34:26.000Z
+.data.trades[].side : String = BUY
+.data.trades[].venue : String = CURVE
+.data.trades[].actorAddress : String = 0xee9137dd244d412f26c696f8b2c13d520086736a
+.data.trades[].recipientAddress : String = 0xee9137dd244d412f26c696f8b2c13d520086736a
+.data.trades[].tokenAmountUnits : String = 6037361149767217625310089
+.data.trades[].pairAmountUnits : String = 2322544022622358908699021
+.data.trades[].pairFeeUnits : String = 16722316962880984142632
+.data.trades[].tokenFeeUnits : String = 78280209397305901138542
+.data.trades[].executionPricePairUnitsPerToken : String = 379771128851749533
+.data.trades[].priceAfterPairUnitsPerToken : String = 387166655273898943
+.data.page.hasMore : Boolean = True
+.data.page.nextCursor : String = 133716401:3:19
+.data.holders : array[100]
+.data.holders[].address : String = 0x5bd7fe1c9525202e0afeae24bf6b7053818f1ce1
+.data.holders[].balanceUnits : String = 303559080199354251807184479
+.data.traders : array[100]
+.data.traders[].address : String = 0x33023a3a657ca162e6381406ed5f2b9b2f136c93
+.data.traders[].boughtTokenUnits : String = 222375769965632955310992005
+.data.traders[].soldTokenUnits : String = 222375769965632955310992005
+.data.traders[].buyPairUnits : String = 65369681476121673445466599
+.data.traders[].sellPairUnits : String = 66522761871671020825721616
+.data.traders[].tradeCount : Int32 = 6
+.data.position : null
+.data.stats.volume5mPairUnits : String = 2322544022622358908699021
+.data.stats.volume1hPairUnits : String = 2911440634425456625627719
+.data.stats.volume24hPairUnits : String = 496048179137458114656692807
+.data.stats.buyVolume24hPairUnits : String = 275607059671819445765345633
+.data.stats.sellVolume24hPairUnits : String = 220441119465638668891347174
+.data.stats.tradeCount24h : Int32 = 644
+.data.stats.buyCount24h : Int32 = 388
+.data.stats.sellCount24h : Int32 = 256
+.data.stats.buyCount1h : Int32 = 12
+.data.stats.sellCount1h : Int32 = 6
+.data.stats.uniqueBuyers1h : Int32 = 10
+.data.stats.uniqueTraders24h : Int32 = 306
+.data.stats.uniqueBuyers24h : Int32 = 304
+.data.stats.uniqueSellers24h : Int32 = 205
+.data.stats.holderCount : Int32 = 123
+.data.stats.priceChange5mBps : Int32 = 205
+.data.stats.priceChange1hBps : Int32 = 233
+.data.stats.priceChange24hBps : Int32 = 14825
+.meta.freshness.status : String = FRESH
+.meta.freshness.source : String = INDEXER
+.meta.freshness.chainId : Int32 = 46630
+.meta.freshness.asOfBlock : String = 133813098
+.meta.freshness.asOfBlockHash : String = 0x1c9a58edad9b9e9f2dd54d0e2bfaa557b994e57e8de6815227d09a1b48952b2b
+.meta.freshness.chainHeadBlock : String = 133813099
+.meta.freshness.indexedThroughBlock : String = 133813098
+.meta.freshness.lagBlocks : String = 1
+.meta.freshness.coverageStartsAtBlock : String = 91563904
+.meta.freshness.coverageComplete : Boolean = True
+.meta.freshness.observedAt : String = 2026-10-12T20:38:06.613Z
+.meta.freshness.reason : null
+.meta.freshness.headObservedBlock : String = 133813133
+.meta.freshness.headObservedAt : String = 2026-10-12T20:38:06.751Z
+.meta.freshness.headLagBlocks : String = 35
+
+===== 10_GET__api_v1_chains_46630_v6_launches__address__candles.json =====
+.apiVersion : String = 1
+.requestId : String = req-16p7
+.data.interval : String = 15m
+.data.from : String = 2026-09-22T00:45:00.000Z
+.data.toExclusive : String = 2026-10-12T20:38:28.001Z
+.data.denomination : String = QUOTE
+.data.quoteAssetAddress : String = 0xf1f6b050550531226ee0257fec4a1e575ff4c341
+.data.items : array[490]
+.data.items[].bucketStart : String = 2026-10-04T05:00:00.000Z
+.data.items[].bucketEnd : String = 2026-10-04T05:15:00.000Z
+.data.items[].openPriceWeiPerToken : null
+.data.items[].highPriceWeiPerToken : null
+.data.items[].lowPriceWeiPerToken : null
+.data.items[].closePriceWeiPerToken : null
+.data.items[].volumeWei : null
+.data.items[].openPriceQuoteBaseUnitsPerToken : String = 1587323555105183
+.data.items[].highPriceQuoteBaseUnitsPerToken : String = 1802790432443146
+.data.items[].lowPriceQuoteBaseUnitsPerToken : String = 1587323555105183
+.data.items[].closePriceQuoteBaseUnitsPerToken : String = 1802790432443146
+.data.items[].volumeQuoteBaseUnits : String = 350811788739430836392648
+.data.items[].tokenVolumeBaseUnits : String = 252531255677681526449513406
+.data.items[].tradeCount : Int32 = 4
+.data.items[].buyCount : Int32 = 4
+.data.items[].sellCount : Int32 = 0
+.meta.freshness.status : String = FRESH
+.meta.freshness.source : String = INDEXER
+.meta.freshness.chainId : Int32 = 46630
+.meta.freshness.asOfBlock : String = 133813282
+.meta.freshness.asOfBlockHash : String = 0xa39f619068423a38cf035aff82de4c43ab277b4118cd4bd5b9f3e559a6c5c092
+.meta.freshness.chainHeadBlock : String = 133813283
+.meta.freshness.indexedThroughBlock : String = 133813282
+.meta.freshness.lagBlocks : String = 1
+.meta.freshness.coverageStartsAtBlock : String = 91563904
+.meta.freshness.coverageComplete : Boolean = True
+.meta.freshness.observedAt : String = 2026-10-12T20:38:32.601Z
+.meta.freshness.reason : null
+.meta.freshness.headObservedBlock : String = 133813301
+.meta.freshness.headObservedAt : String = 2026-10-12T20:38:31.620Z
+.meta.freshness.headLagBlocks : String = 19
+
+===== 11_GET__api_v1_chains_46630_v6_launches__address_.json =====
+.apiVersion : String = 1
+.requestId : String = req-17u5
+.data.launch.tokenAddress : String = 0x01d01f80c9cf12adc2141d209efd746f825221bd
+.data.launch.curveAddress : String = 0x7532152e91f99b97a452526ab24f738e82249475
+.data.launch.launcherAddress : String = 0x1c256b1826095f17410611ce724163623aba2820
+.data.launch.factoryAddress : String = 0xe794217880011f9ca6961340ed5c16ec9559fea0
+.data.launch.launchId : String = 6709
+.data.launch.name : String = Trav
+.data.launch.symbol : String = TRAV
+.data.launch.metadataURI : String = ipfs://bafkreigu3gmsvuqtqxbk4txsf63ms2nznh5lzeuwjrd3gpmv6ngmnaczw4
+.data.launch.content.description : String = 
+.data.launch.content.image.uri : String = ipfs://bafkreiewrbsfvzx3o4qnfu2gt743cwluwyjib4scariuiehmynul3dlcfy
+.data.launch.content.image.mimeType : String = image/webp
+.data.launch.content.image.bytes : Int32 = 29182
+.data.launch.content.image.width : Int32 = 400
+.data.launch.content.image.height : Int32 = 400
+.data.launch.content.image.renders.thumb : array[2]
+.data.launch.content.image.renders.thumb[] : Int32 = 96
+.data.launch.content.image.renders.sq410 : array[2]
+.data.launch.content.image.renders.sq410[] : Int32 = 400
+.data.launch.content.image.renders.sq544 : array[2]
+.data.launch.content.image.renders.sq544[] : Int32 = 400
+.data.launch.content.image.renders.card : array[2]
+.data.launch.content.image.renders.card[] : Int32 = 400
+.data.launch.pairCurrencyAddress : String = 0x438820dcfe62a21e306614a4b54383cd8a36acf2
+.data.launch.pairIsNative : Boolean = False
+.data.launch.pairSymbol : null
+.data.launch.targetPairUnits : String = 28421416226518898906
+.data.launch.taxBps : Int32 = 200
+.data.launch.weights.cashBps : Int32 = 2000
+.data.launch.weights.holdersBps : Int32 = 7500
+.data.launch.weights.burnBps : Int32 = 500
+.data.launch.weights.holdersPairBps : Int32 = 0
+.data.launch.projectTreasuryAddress : String = 0x1c256b1826095f17410611ce724163623aba2820
+.data.launch.initialProjectTreasuryAddress : String = 0x1c256b1826095f17410611ce724163623aba2820
+.data.launch.initialNetPersonalUnits : String = 0
+.data.launch.gifts.count : String = 0
+.data.launch.gifts.root : String = 0x0000000000000000000000000000000000000000000000000000000000000000
+.data.launch.gifts.reservedUnits : String = 0
+.data.launch.gifts.totalUnits : String = 0
+.data.launch.gifts.deliveredCount : String = 0
+.data.launch.gifts.deliveredUnits : String = 0
+.data.launch.gifts.deliveredComplete : Boolean = True
+.data.launch.gifts.listId : null
+.data.launch.lifecycle : String = CURVE_TRADING
+.data.launch.graduated : Boolean = False
+.data.launch.graduation : null
+.data.launch.curve.tokensSoldGrossUnits : String = 622464848731711516986429049
+.data.launch.curve.pairReserveUnits : String = 13275746772361367241
+.data.launch.curve.transfersUnlocked : Boolean = False
+.data.launch.createdAt : String = 2026-10-06T22:05:15.000Z
+.data.launch.createdBlock : String = 130104370
+.data.launch.createdTransactionHash : String = 0x51475218f273c4ba42c3c082c5ec7f68914cd9755c225f25c91231d35ac17349
+.data.launch.createdLogIndex : Int32 = 18
+.data.launch.asOfBlock : String = 133812059
+.data.launch.asOfBlockHash : String = 0x060b25fef2a1c674cf56cbb1db09fda653d9d3adaf1e4cc029c0455214413cdf
+.data.feeEvents : array[50]
+.data.feeEvents[].source : String = CURVE_BUY
+.data.feeEvents[].side : String = BUY
+.data.feeEvents[].actorAddress : String = 0x2784448c519d01d3ae257c0aac0b7cdad8acceb1
+.data.feeEvents[].recipientAddress : String = 0xee9137dd244d412f26c696f8b2c13d520086736a
+.data.feeEvents[].poolId : null
+.data.feeEvents[].pairCurrencyAddress : String = 0x438820dcfe62a21e306614a4b54383cd8a36acf2
+.data.feeEvents[].pairFeeUnits : String = 5538681303551054
+.data.feeEvents[].tokenFeeUnits : String = 198989768013903025420575
+.data.feeEvents[].protocolPairUnits : null
+.data.feeEvents[].rateBps : Int32 = 200
+.data.feeEvents[].grossTokenUnits : String = 15546075626086173860982448
+.data.feeEvents[].netTokenUnits : String = 15347085858072270835561873
+.data.feeEvents[].pairPrincipalUnits : String = 769261292159868687
+.data.feeEvents[].blockNumber : String = 133812059
+.data.feeEvents[].transactionHash : String = 0xa0609db856c5d127b03b80803cb5fdd73de7bb6b88f474a9c11e6e5f8d5804ba
+.data.feeEvents[].logIndex : Int32 = 9
+.data.feeEvents[].occurredAt : String = 2026-10-12T20:35:15.000Z
+.data.rewardFeeds : array[50]
+.data.rewardFeeds[].holderDeltaUnits : String = 186552907513034086331790
+.data.rewardFeeds[].carryReleasedUnits : String = 1
+.data.rewardFeeds[].poolUnits : String = 186552907513034086331791
+.data.rewardFeeds[].eligibleSupplyUnits : String = 446762679472513723340167334
+.data.rewardFeeds[].accAfter : String = 5739062663249946381503463329
+.data.rewardFeeds[].blockNumber : String = 133812059
+.data.rewardFeeds[].transactionHash : String = 0xa0609db856c5d127b03b80803cb5fdd73de7bb6b88f474a9c11e6e5f8d5804ba
+.data.rewardFeeds[].logIndex : Int32 = 7
+.data.rewardFeeds[].occurredAt : String = 2026-10-12T20:35:15.000Z
+.data.giftDeliveries : array[0]
+.data.treasuryRotations : array[0]
+.data.zaps : array[50]
+.data.zaps[].zapAddress : String = 0x2784448c519d01d3ae257c0aac0b7cdad8acceb1
+.data.zaps[].actorAddress : String = 0xee9137dd244d412f26c696f8b2c13d520086736a
+.data.zaps[].kindCode : Int32 = 1
+.data.zaps[].kind : String = CURVE_BUY
+.data.zaps[].marketAddress : String = 0x7532152e91f99b97a452526ab24f738e82249475
+.data.zaps[].inputAddress : String = 0x0000000000000000000000000000000000000000
+.data.zaps[].outputAddress : String = 0x01d01f80c9cf12adc2141d209efd746f825221bd
+.data.zaps[].amountInUnits : String = 1982113408600786503
+.data.zaps[].amountOutUnits : String = 774799973463419742
+.data.zaps[].blockNumber : String = 133812059
+.data.zaps[].transactionHash : String = 0xa0609db856c5d127b03b80803cb5fdd73de7bb6b88f474a9c11e6e5f8d5804ba
+.data.zaps[].logIndex : Int32 = 11
+.data.zaps[].occurredAt : String = 2026-10-12T20:35:15.000Z
+.meta.freshness.status : String = FRESH
+.meta.freshness.source : String = INDEXER
+.meta.freshness.chainId : Int32 = 46630
+.meta.freshness.asOfBlock : String = 133813639
+.meta.freshness.asOfBlockHash : String = 0xf471e00bf53c0b2cf8c6162b96feb4fd390195b069f1a416cf6ca0a06b33e007
+.meta.freshness.chainHeadBlock : String = 133813640
+.meta.freshness.indexedThroughBlock : String = 133813639
+.meta.freshness.lagBlocks : String = 1
+.meta.freshness.coverageStartsAtBlock : String = 91563904
+.meta.freshness.coverageComplete : Boolean = True
+.meta.freshness.observedAt : String = 2026-10-12T20:39:29.940Z
+.meta.freshness.reason : null
+.meta.freshness.headObservedBlock : String = 133813664
+.meta.freshness.headObservedAt : String = 2026-10-12T20:39:30.377Z
+.meta.freshness.headLagBlocks : String = 25
+
+===== 12_GET__api_v1_chains_46630_wallets__address__activity.json =====
+.apiVersion : String = 1
+.requestId : String = req-12bs
+.data.items : array[100]
+.data.items[].id : String = 46630:0x36b8dacbed5d161c3b3732f89f862bfb87b2a440cd5c92c6d5ec4c47ba93ab...
+.data.items[].type : String = PAIR_REWARD
+.data.items[].tokenAddress : String = 0xc66d7fc7ab79cbdb46ba0ca5158ca3c8c11af866
+.data.items[].actorAddress : String = 0xc66d7fc7ab79cbdb46ba0ca5158ca3c8c11af866
+.data.items[].blockNumber : String = 133442660
+.data.items[].blockHash : String = 0x36b8dacbed5d161c3b3732f89f862bfb87b2a440cd5c92c6d5ec4c47ba93abd0
+.data.items[].logIndex : Int32 = 1
+.data.items[].txHash : String = 0x856fa13133215f7527287ff0576ecf5b476a992a62492afa19c45bc26a66b226
+.data.items[].occurredAt : String = 2026-10-12T06:15:58.000Z
+.data.items[].finality : String = CONFIRMED
+.data.items[].route : null
+.data.items[].side : null
+.data.items[].amountInBaseUnits : null
+.data.items[].amountOutBaseUnits : null
+.data.items[].feeBaseUnits : null
+.data.items[].quoteAmountInBaseUnits : null
+.data.items[].quoteAmountOutBaseUnits : String = 17727760162469070
+.data.items[].heldForBurn : Boolean = False
+.data.items[].tokenSymbol : String = LAMBO
+.data.items[].pairCurrencyAddress : String = 0xba163e9887d54a854323b41fca9cf64a1c275ac9
+.data.items[].pairSymbol : null
+.data.page.limit : Int32 = 100
+.data.page.nextCursor : String = eyJ2ZXJzaW9uIjoxLCJmaWx0ZXJIYXNoIjoiZmJkYzZjZDY2OWIwZTY2OTIzNzAwZWM0Yz...
+.data.page.hasMore : Boolean = True
+.data.page.snapshotBlock : String = 133811796
+.data.page.snapshotBlockHash : String = 0x8dc073eebcd21c36d5ba4c308c3b050cc06a12d5da4f425148ea95af25a33d75
+.meta.freshness.status : String = FRESH
+.meta.freshness.source : String = INDEXER
+.meta.freshness.chainId : Int32 = 46630
+.meta.freshness.asOfBlock : String = 133811796
+.meta.freshness.asOfBlockHash : String = 0x8dc073eebcd21c36d5ba4c308c3b050cc06a12d5da4f425148ea95af25a33d75
+.meta.freshness.chainHeadBlock : String = 133811797
+.meta.freshness.indexedThroughBlock : String = 133811796
+.meta.freshness.lagBlocks : String = 1
+.meta.freshness.coverageStartsAtBlock : String = 91563904
+.meta.freshness.coverageComplete : Boolean = True
+.meta.freshness.observedAt : String = 2026-10-12T20:34:41.170Z
+.meta.freshness.reason : null
+.meta.freshness.headObservedBlock : String = 133811873
+.meta.freshness.headObservedAt : String = 2026-10-12T20:34:44.503Z
+.meta.freshness.headLagBlocks : String = 77
+
+===== 13_GET__api_v1_chains_46630_v6_wallets__address__launches.json =====
+NON-JSON body (len=160608): eyJhcGlWZXJzaW9uIjoiMSIsInJlcXVlc3RJZCI6InJlcS0xOTRiIiwiZGF0YSI6eyJpdGVtcyI6W3sidG9rZW5BZGRyZXNzIjoiMHgzZDRiODJkNTI0Mzc3ZjYzNjJiY2QyMjFlMDk1ZmI1Yzk3OGQ0ODYyIiwiY3VydmVBZGRyZXNzIjoiMHg0ZWY1NDU2ZjAyMmJlZDc3OTJkMGJlNTQyNTQ3NjM1NmY0YWMxOGY3IiwibGF1bmNoZXJBZGRyZXNzIjoiMHhjNmUzZDNlNDg1OTliNjJlYTgwZDM5YzVh
+
+===== 14_GET__api_v1_chains_46630_tokens__address__project_types.json =====
+.apiVersion : String = 1
+.requestId : String = req-12cr
+.data.tokenAddress : String = 0xc66d7fc7ab79cbdb46ba0ca5158ca3c8c11af866
+.data.creatorAddress : String = 0x6c61e5289ee5ff50f3656300a55347b22f02c5c2
+.data.projectTypes : array[1]
+.data.projectTypes[] : String = vibecoded_product
+.data.source : String = CREATOR_UPDATE
+.data.updatedAt : String = 2026-10-11T05:06:29.684Z
+.data.creatorSlot.tokenAddress : String = 0xc66d7fc7ab79cbdb46ba0ca5158ca3c8c11af866
+.data.creatorSlot.symbol : String = LAMBO
+.data.creatorSlot.name : String = lamborghini
+
+===== 15_GET__api_v1_chains_46630_analytics_summary.json =====
+.apiVersion : String = 1
+.requestId : String = req-12we
+.data.projection.revision : String = 2824
+.data.projection.sha256 : String = 07b0d70c0a154d6c5d36dd32825cbdad82ef2ea39014c8d856359ba049dd67f0
+.data.projection.blockNumber : String = 133806479
+.data.projection.blockHash : String = 0x8b8dfd87d4122fdecb07aa748478ab265eb77f1647d1ce9220532646aae67b4a
+.data.population.tokens : Int32 = 223281
+.data.population.walletTokens : Int32 = 4242894
+.data.population.wallets : Int32 = 193501
+.data.population.builders : Int32 = 66252
+.data.population.walletsUnavailable : Int32 = 90905
+.data.population.trades : Int32 = 5680479
+.data.population.traders : Int32 = 153726
+.data.population.tradersUnavailable : Int32 = 73663
+.data.totals.cumulativeMarketCapWei : String = 6395982934695768000000000
+.data.totals.cumulativeVolumeWei : String = 288040181980103890211761
+.data.totals.cumulativeVolumeExcludedWei : String = 15304728546689960313505
+.data.totals.realizedPnlWei : String = -59371109056551859180757
+.data.totals.unrealizedPnlWei : String = 688038602725589563877237
+.data.totals.totalPnlWei : String = 628667493669037704696480
+.data.totals.equityWei : String = 738332340265855165832713
+.meta.freshness.status : String = FRESH
+.meta.freshness.source : String = DERIVED
+.meta.freshness.chainId : Int32 = 46630
+.meta.freshness.asOfBlock : String = 133806479
+.meta.freshness.asOfBlockHash : String = 0x8b8dfd87d4122fdecb07aa748478ab265eb77f1647d1ce9220532646aae67b4a
+.meta.freshness.chainHeadBlock : String = 133811953
+.meta.freshness.indexedThroughBlock : String = 133806479
+.meta.freshness.lagBlocks : String = 5474
+.meta.freshness.coverageStartsAtBlock : String = 91563904
+.meta.freshness.coverageComplete : Boolean = True
+.meta.freshness.observedAt : String = 2026-10-12T20:35:03.914Z
+.meta.freshness.reason : null
+
+===== 16_GET__api_v1_chains_46630_analytics_traders.json =====
+.apiVersion : String = 1
+.requestId : String = req-ci2h
+.data.items : array[25]
+.data.items[].address : String = 0x71725a96101600c6ef816faf715b34ef754288fd
+.data.items[].coverage : String = COMPLETE
+.data.items[].coverageReason : null
+.data.items[].realizedPnlWei : String = 1696766011749093427648
+.data.items[].unrealizedPnlWei : String = 25722387150691254162003
+.data.items[].pnlWei : String = 27419153162440347589651
+.data.items[].equityWei : String = 27778013261459880553167
+.data.items[].buyCount : Int32 = 696
+.data.items[].sellCount : Int32 = 532
+.data.items[].tokensTraded : Int32 = 3
+.data.items[].openPositions : Int32 = 2
+.data.items[].unavailablePositions : Int32 = 0
+.data.items[].unpricedTokens : Int32 = 0
+.data.items[].excludedTransfers : Int32 = 677
+.data.items[].excludedSells : Int32 = 1
+.data.items[].sentOutCostWei : String = 161609140427985115776
+.data.page.limit : Int32 = 25
+.data.page.nextCursor : String = eyJ2ZXJzaW9uIjoxLCJzY29wZSI6IlRSQURFUlMiLCJjaGFpbklkIjo0NjYzMCwicHJvam...
+.data.page.projectionRevision : String = 2823
+.meta.freshness.status : String = FRESH
+.meta.freshness.source : String = DERIVED
+.meta.freshness.chainId : Int32 = 46630
+.meta.freshness.asOfBlock : String = 133785477
+.meta.freshness.asOfBlockHash : String = 0x102942a45ff14132b7cf94852b9d74b7306228a5265b3e64fa9899e04016927b
+.meta.freshness.chainHeadBlock : String = 133793082
+.meta.freshness.indexedThroughBlock : String = 133785477
+.meta.freshness.lagBlocks : String = 7605
+.meta.freshness.coverageStartsAtBlock : String = 91563904
+.meta.freshness.coverageComplete : Boolean = True
+.meta.freshness.observedAt : String = 2026-10-12T19:45:35.211Z
+.meta.freshness.reason : null
+.meta.tier : String = publication
+.meta.version : String = ab6bd703270a
+.meta.builtAt : String = 2026-10-12T19:45:32.384Z
+.meta.nextAt : String = 2026-10-12T20:00:00.000Z
+.meta.publishedAt : String = 2026-10-12T19:26:12.000Z
+
+===== 17_GET__api_v1_chains_46630_analytics_traders_pending.json =====
+.apiVersion : String = 1
+.requestId : String = req-ci2j
+.data.items : array[25]
+.data.items[].address : String = 0xd8429ce417a8e98a92dd30c7693e2926d87085ee
+.data.items[].tradeCount : Int32 = 88
+.data.items[].volumeWei : String = 16208657787739860937090
+.data.page.limit : Int32 = 25
+.data.page.nextCursor : String = eyJ2ZXJzaW9uIjoxLCJzY29wZSI6IlBFTkRJTkdfVFJBREVSUyIsImNoYWluSWQiOjQ2Nj...
+.data.page.projectionRevision : String = 2823
+.meta.freshness.status : String = FRESH
+.meta.freshness.source : String = DERIVED
+.meta.freshness.chainId : Int32 = 46630
+.meta.freshness.asOfBlock : String = 133785477
+.meta.freshness.asOfBlockHash : String = 0x102942a45ff14132b7cf94852b9d74b7306228a5265b3e64fa9899e04016927b
+.meta.freshness.chainHeadBlock : String = 133793037
+.meta.freshness.indexedThroughBlock : String = 133785477
+.meta.freshness.lagBlocks : String = 7560
+.meta.freshness.coverageStartsAtBlock : String = 91563904
+.meta.freshness.coverageComplete : Boolean = True
+.meta.freshness.observedAt : String = 2026-10-12T19:45:34.849Z
+.meta.freshness.reason : null
+.meta.tier : String = publication
+.meta.version : String = ab6bd703270a
+.meta.builtAt : String = 2026-10-12T19:45:32.285Z
+.meta.nextAt : String = 2026-10-12T20:00:00.000Z
+.meta.publishedAt : String = 2026-10-12T19:26:12.000Z
+
+===== 18_GET__api_v1_chains_46630_analytics_portfolios__address_.json =====
+.apiVersion : String = 1
+.requestId : String = req-10tu
+.data.walletAddress : String = 0xc8f14080c15801bab3747e9875e6894b86801bc7
+.data.summary.coverage : String = COMPLETE
+.data.summary.coverageReason : null
+.data.summary.realizedPnlWei : String = 116490822310711452
+.data.summary.unrealizedPnlWei : String = 9648148532928988221
+.data.summary.pnlWei : String = 9764639355239699673
+.data.summary.equityWei : String = 14641789485839972094
+.data.summary.buyCount : Int32 = 69
+.data.summary.sellCount : Int32 = 36
+.data.summary.tokensTraded : Int32 = 48
+.data.summary.openPositions : Int32 = 27
+.data.summary.unavailablePositions : Int32 = 1
+.data.summary.unpricedPositions : Int32 = 0
+.data.summary.excludedTransfers : Int32 = 4
+.data.summary.excludedSells : Int32 = 1
+.data.items : array[27]
+.data.items[].tokenAddress : String = 0x031cf626c0009168f284951c3625d756ba76225d
+.data.items[].name : String = SOON
+.data.items[].symbol : String = SOON
+.data.items[].identity.assetKind : String = LAUNCH
+.data.items[].identity.curveAddress : String = 0x257eabcae53f833eb0ea172cfed0d32b9f1196c7
+.data.items[].identity.quoteAssetAddress : String = 0x0000000000000000000000000000000000000000
+.data.items[].identity.image.uri : String = ipfs://bafkreid7xy566uqbh6txqnejpia7llivzkrxw2w2h4lfzi2tbmicb23klm
+.data.items[].identity.image.bytes : Int32 = 25102
+.data.items[].identity.image.width : Int32 = 746
+.data.items[].identity.image.height : Int32 = 472
+.data.items[].identity.image.mimeType : String = image/webp
+.data.items[].identity.pool.poolManager : String = 0x8366a39cc670b4001a1121b8f6a443a643e40951
+.data.items[].identity.pool.poolId : String = 0x26aac0c3b14841fe345c895c6cd63e5306cfa904cc8c9a8d59daf2bf806eecec
+.data.items[].identity.pool.poolKey.currency0 : String = 0x0000000000000000000000000000000000000000
+.data.items[].identity.pool.poolKey.currency1 : String = 0x031cf626c0009168f284951c3625d756ba76225d
+.data.items[].balanceBaseUnits : String = 1000000000000000000
+.data.items[].coverage : String = COMPLETE
+.data.items[].coverageReason : null
+.data.items[].costBasisWei : String = 0
+.data.items[].averageEntryPriceWeiPerToken : null
+.data.items[].realizedPnlWei : String = 0
+.data.items[].breakEvenPriceWeiPerToken : String = 0
+.data.items[].currentPriceWeiPerToken : String = 835868493718359
+.data.items[].currentMarketCapWei : String = 835868493718359000000000
+.data.items[].estimatedValueWei : String = 835868493718359
+.data.items[].unrealizedPnlWei : String = 0
+.data.items[].excludedTransfers : Int32 = 1
+.data.items[].noBasisBalanceBaseUnits : String = 1000000000000000000
+.data.page.limit : Int32 = 100
+.data.page.nextCursor : null
+.data.page.projectionRevision : String = 2824
+.meta.freshness.status : String = FRESH
+.meta.freshness.source : String = DERIVED
+.meta.freshness.chainId : Int32 = 46630
+.meta.freshness.asOfBlock : String = 133806479
+.meta.freshness.asOfBlockHash : String = 0x8b8dfd87d4122fdecb07aa748478ab265eb77f1647d1ce9220532646aae67b4a
+.meta.freshness.chainHeadBlock : String = 133812762
+.meta.freshness.indexedThroughBlock : String = 133806479
+.meta.freshness.lagBlocks : String = 6283
+.meta.freshness.coverageStartsAtBlock : String = 91563904
+.meta.freshness.coverageComplete : Boolean = True
+.meta.freshness.observedAt : String = 2026-10-12T20:37:08.383Z
+.meta.freshness.reason : null
+
+===== 19_GET__api_v1_chains_46630_wallets__address__performance.json =====
+.apiVersion : String = 1
+.requestId : String = req-1b6i
+.data.coverage : String = COMPLETE
+.data.coverageReason : null
+.data.realizedPnlWei : String = 108658741233618550
+.data.accountedTrades : Int32 = 112
+.data.unvaluedTrades : Int32 = 2
+.data.pairLaunches : array[8]
+.data.pairLaunches[].tokenAddress : String = 0x2931faa0b3b3889171cd78143dec75240c5eef81
+.data.pairLaunches[].realizedPnlWei : String = 4147398054352675
+.data.pairLaunches[].coverage : String = COMPLETE
+.data.pairLaunches[].coverageReason : null
+.data.excludedTransfers : Int32 = 2
+.data.excludedSells : Int32 = 1
+.data.windows.coverage : String = COMPLETE
+.data.windows.coverageReason : null
+.data.windows.items : array[4]
+.data.windows.items[].window : String = 7D
+.data.windows.items[].buyVolumeWei : String = 1790956663446238578
+.data.windows.items[].sellVolumeWei : String = 586321304004846656
+.data.windows.items[].buyCount : Int32 = 25
+.data.windows.items[].sellCount : Int32 = 11
+.data.windows.items[].scoredCloses : Int32 = 10
+.data.windows.items[].winningCloses : Int32 = 6
+.data.windows.items[].unscoredCloses : Int32 = 1
+.data.windows.items[].realizedWei : String = 91987286271490318
+.data.windows.items[].quotedTradesExcluded : Int32 = 2
+.data.windows.items[].quotedLaunchesExcluded : Int32 = 1
+.meta.freshness.status : String = FRESH
+.meta.freshness.source : String = DERIVED
+.meta.freshness.chainId : Int32 = 46630
+.meta.freshness.asOfBlock : String = 133814801
+.meta.freshness.asOfBlockHash : String = 0xfc237a58e627fab80cebc61a4bf5150386ca8f875b327fc4e2cced2e88824a08
+.meta.freshness.chainHeadBlock : String = 133814802
+.meta.freshness.indexedThroughBlock : String = 133814801
+.meta.freshness.lagBlocks : String = 1
+.meta.freshness.coverageStartsAtBlock : String = 91563904
+.meta.freshness.coverageComplete : Boolean = True
+.meta.freshness.observedAt : String = 2026-10-12T20:42:24.895Z
+.meta.freshness.reason : null
+.meta.freshness.headObservedBlock : String = 133814821
+.meta.freshness.headObservedAt : String = 2026-10-12T20:42:24.183Z
+.meta.freshness.headLagBlocks : String = 20
+
+===== 20_GET__api_v1_chains_46630_v6_wallets__address__pair_positions.json =====
+.apiVersion : String = 1
+.requestId : String = req-15ns
+.data.items : array[8]
+.data.items[].tokenAddress : String = 0xca19e99999066d07907a2aafd7edc1ff9b85bcc1
+.data.items[].pairCurrencyAddress : String = 0x02ec7d944f71c5e4d9fe3ab092a3c49806c9a472
+.data.items[].usdBasis : String = LAUNCH_POOL
+.data.items[].balanceBaseUnits : String = 49908761809452505387829961
+.data.items[].buyCount : Int32 = 2
+.data.items[].sellCount : Int32 = 0
+.data.items[].coverage : String = COMPLETE
+.data.items[].coverageReason : null
+.data.items[].costBasisPairUnits : String = 295530419600842448122334
+.data.items[].realizedPnlPairUnits : String = 0
+.data.items[].valuePairUnits : String = 311158883831381363449617
+.data.items[].unrealizedPnlPairUnits : String = 15628464230538915327283
+.data.items[].usd.coverage : String = UNAVAILABLE
+.data.items[].usd.coverageReason : String = PAIR_PRICE_AT_TRADE_UNAVAILABLE
+.data.items[].usd.costBasisUsdMicros : null
+.data.items[].usd.realizedPnlUsdMicros : null
+.data.items[].usd.valueUsdMicros : null
+.data.items[].usd.unrealizedPnlUsdMicros : null
+.data.legs : array[18]
+.data.legs[].tokenAddress : String = 0x192cfacd38012f113d706f88b6653a2f1befe4bc
+.data.legs[].transactionHash : String = 0xea31c94c5b42fbe2b56fa759f6c968b79509a978c94a6a7b9caf6e00669c48a1
+.data.legs[].logIndex : Int32 = 11
+.data.legs[].side : String = BUY
+.data.legs[].pairUnits : String = 149965141999108506
+.data.legs[].legWei : String = 36795675547769038
+.data.complete : Boolean = True
+.data.rates.ethUsdNow.usdPerEthCents : String = 252092
+.data.rates.ethUsdNow.source : String = CoinGecko
+.data.rates.ethUsdNow.observedAt : String = 2026-10-12T20:40:55.292Z
+.data.rates.ethUsdAtTrade.source : String = Coinbase
+.data.rates.ethUsdAtTrade.candleSeconds : Int32 = 300
+.meta.freshness.status : String = FRESH
+.meta.freshness.source : String = INDEXER
+.meta.freshness.chainId : Int32 = 46630
+.meta.freshness.asOfBlock : String = 133814278
+.meta.freshness.asOfBlockHash : String = 0x599da2b37a268370fc0f2298708dfe2770a56dba133ccc64f71cc1fc76441836
+.meta.freshness.chainHeadBlock : String = 133814279
+.meta.freshness.indexedThroughBlock : String = 133814278
+.meta.freshness.lagBlocks : String = 1
+.meta.freshness.coverageStartsAtBlock : String = 91563904
+.meta.freshness.coverageComplete : Boolean = True
+.meta.freshness.observedAt : String = 2026-10-12T20:41:08.462Z
+.meta.freshness.reason : null
+.meta.freshness.headObservedBlock : String = 133814323
+.meta.freshness.headObservedAt : String = 2026-10-12T20:41:09.272Z
+.meta.freshness.headLagBlocks : String = 45
+
+===== 21_GET__api_v1_chains_46630_config.json =====
+.apiVersion : String = 1
+.requestId : String = req-1288
+.data.chain.id : Int32 = 46630
+.data.chain.name : String = Robinhood Chain Testnet
+.data.chain.nativeCurrency.name : String = Ether
+.data.chain.nativeCurrency.symbol : String = ETH
+.data.chain.nativeCurrency.decimals : Int32 = 18
+.data.chain.explorerBaseUrl : String = https://explorer.testnet.chain.robinhood.com
+.data.protocol.policyVersion : String = seedify-curve-v3-testnet-5eth-2pct-3pct-creator-125bps-75-25
+.data.protocol.totalSupplyBaseUnits : String = 1000000000000000000000000000
+.data.protocol.curveAllocationBaseUnits : String = 793100000000000000000000000
+.data.protocol.lpAllocationBaseUnits : String = 206900000000000000000000000
+.data.protocol.initialVirtualEthReserveWei : String = 1764594628672298575
+.data.protocol.netGraduationTargetWei : String = 5000000000000000000
+.data.protocol.curveFeeBps : Int32 = 125
+.data.protocol.creatorShareOfFeeBps : Int32 = 7500
+.data.protocol.protocolShareOfFeeBps : Int32 = 2500
+.data.protocol.creatorPayoutShareOfCreatorFeesBps : Int32 = 5000
+.data.protocol.launchTokenBuybackShareOfCreatorFeesBps : Int32 = 5000
+.data.protocol.treasuryShareOfProtocolFeesBps : Int32 = 5000
+.data.protocol.sfundBuybackShareOfProtocolFeesBps : Int32 = 5000
+.data.protocol.buybackDisposition : String = irrecoverable-burn-address
+.data.protocol.buybackExecutionModel : String = keeper-authorized-with-external-limits
+.data.protocol.creationFeeWei : String = 500000000000000
+.data.protocol.curveWalletCapBps : Int32 = 200
+.data.protocol.creatorInitialBuyCapBps : Int32 = 300
+.data.protocol.transfersLockedUntilGraduation : Boolean = True
+.data.deployments.factory : String = 0x40f1be6faf8DAB9C143cce1a0A04c2075Fb2DF59
+.data.deployments.graduationAdapter : String = 0xA6a5D4C098dA8f79eae1203A8E42ff9AC7a17F06
+.data.deployments.feeHook : String = 0x2779651feE12F6fB5A187578De6b63709f85d0Cc
+.data.deployments.liquidityLocker : String = 0xc0a2DEEbdc40b7083dC9a067F6992F884Fb6074D
+.data.deployments.protocolTreasury : String = 0x91719A47f855079678b3D5E3af69CDe2b830c5C9
+.data.deployments.poolManager : String = 0x8366a39cc670b4001a1121b8f6a443a643e40951
+.data.deployments.multicall3 : String = 0xcA11bde05977b3631167028862bE2a173976CA11
+.data.deployments.universalRouter : String = 0x8876789976dEcBfCbBbe364623C63652db8C0904
+.data.deployments.permit2 : String = 0x000000000022D473030F116dDEE9F6B43aC78BA3
+.data.deployments.v4Quoter : String = 0x498928d32bf7649587C4C2D2944038500644c950
+.data.legacyPublicGraphs : array[1]
+.data.legacyPublicGraphs[].factory : String = 0xB5B7A2f6c4EAFa2D73918fcA32d50e2126339eb9
+.data.legacyPublicGraphs[].graduationAdapter : String = 0x1eD9E88AE14713ca4bc964BADe2Bc1e3f5CD501a
+.data.legacyPublicGraphs[].feeHook : String = 0xC5b22F31f247A6Ee33592792d44BdE31C0ef10cc
+.data.legacyPublicGraphs[].liquidityLocker : String = 0x0d0c44BfEb2a60F9b81C221C4cD24Ca89acBacEc
+.data.legacyPublicGraphs[].protocolTreasury : String = 0x29b1B6031df02D68332502FBD39Aee874dE24e03
+.data.legacyPublicGraphs[].runtimeHashes.factory : String = 0xde5e8c6493ea8f1c929b8a5bfb94fd4497559dd6fbd07cb124e2638778930c10
+.data.legacyPublicGraphs[].runtimeHashes.hook : String = 0x4583c3c3dfa82b4af84c49cd7acba67647717fe51e4397ee298ac1ad6589d1d9
+.data.legacyPublicGraphs[].runtimeHashes.adapter : String = 0x4e6e03e9b86b6442c654c08fa1d140775b7b35fa974a298b1801afe2761fc160
+.data.legacyPublicGraphs[].runtimeHashes.locker : String = 0x8f3df08eda1b53de5863b4912452bb7fb9b97ee6d330675d11354e8a434dc0e6
+.data.retiredPublicGraphs : array[1]
+.data.retiredPublicGraphs[].factory : String = 0x4FEbC267e0C24440bcDEF72B5DBC5FE7BED091dF
+.data.retiredPublicGraphs[].graduationAdapter : String = 0x1fD0f2BD38ADa69e2eF138FAf5377c5a5A574e8f
+.data.retiredPublicGraphs[].feeHook : String = 0x30534B7601878E2043335c4BF99B4c50A75B90cc
+.data.retiredPublicGraphs[].liquidityLocker : String = 0xB0079D46C8FE759Ef02453041A077BF445aeb4c4
+.data.retiredPublicGraphs[].protocolTreasury : String = 0x3b13605865D7164d1dfe2080E22910df3a701899
+.data.canonicalAssets : array[1]
+.data.canonicalAssets[].assetKind : String = CANONICAL
+.data.canonicalAssets[].tokenAddress : String = 0x728E721256D0708D23b00afCD32c096979259b16
+.data.canonicalAssets[].decimals : Int32 = 18
+.data.canonicalAssets[].protocolSplitAddress : String = 0x3b13605865D7164d1dfe2080E22910df3a701899
+.data.canonicalAssets[].buybackExecutorAddress : String = 0xC9975c306b0bB34a2732a7b96FED54fe8e0e7D29
+.data.canonicalAssets[].runtimeHash : String = 0xda4382e6b53d4b57d9c6b259b8b13808a58750147604c7a516e646b73df2feb1
+.data.canonicalAssets[].poolId : String = 0xb933556d80062453de15c70946f933fa12e8f86da995dfe9933a77dc0ae81f32
+.data.canonicalAssets[].poolKey.currency0 : String = 0x0000000000000000000000000000000000000000
+.data.canonicalAssets[].poolKey.currency1 : String = 0x728E721256D0708D23b00afCD32c096979259b16
+.data.canonicalAssets[].poolKey.fee : Int32 = 3000
+.data.canonicalAssets[].poolKey.tickSpacing : Int32 = 60
+.data.canonicalAssets[].poolKey.hooks : String = 0x0000000000000000000000000000000000000000
+.data.canonicalAssets[].tradingEnabled : Boolean = True
+.data.canonicalAssets[].chartEnabled : Boolean = True
+.data.quoteAssets : array[1]
+.data.quoteAssets[].address : String = 0x5a5398155d98374c0e26265ea3cb9818169c2739
+.data.quoteAssets[].symbol : String = SPCX
+.data.quoteAssets[].decimals : Int32 = 18
+.data.quoteAssets[].initialVirtualReserveBaseUnits : String = 29200644062199887424
+.data.quoteAssets[].netGraduationTargetBaseUnits : String = 82740374439909720323
+.data.quoteAssets[].launchFeeBaseUnits : String = 8274037443990973
+.data.quoteAssets[].maxCrankBaseUnits : String = 1654807488798194406
+.data.quoteAssets[].registeredAtBlock : String = 115095034
+.data.deploymentVersion : String = testnet-r2.18.73.99408853
+.data.features.reads.enabled : Boolean = True
+.data.features.reads.reason : null
+.data.features.metadataPreparation.enabled : Boolean = True
+.data.features.metadataPreparation.reason : null
+.data.features.positionLens.enabled : Boolean = True
+.data.features.positionLens.reason : null
+.data.features.transactionReceipts.enabled : Boolean = True
+.data.features.transactionReceipts.reason : null
+.data.features.contentReports.enabled : Boolean = True
+.data.features.contentReports.reason : null
+.data.features.curveWrites.enabled : Boolean = True
+.data.features.curveWrites.reason : null
+.data.features.creationWrites.enabled : Boolean = True
+.data.features.creationWrites.reason : null
+.data.features.graduationWrites.enabled : Boolean = True
+.data.features.graduationWrites.reason : null
+.data.features.creatorClaims.enabled : Boolean = True
+.data.features.creatorClaims.reason : null
+.data.features.v4Trading.enabled : Boolean = True
+.data.features.v4Trading.reason : null
+.data.features.quoteLaunches.enabled : Boolean = True
+.data.features.quoteLaunches.reason : null
+.data.features.analytics.enabled : Boolean = False
+.data.features.analytics.reason : String = FIRST_PARTY_ANALYTICS_COLLECTOR_NOT_CONFIGURED
+.data.features.writesStateReady : Boolean = True
+.data.features.v6Claims.enabled : Boolean = True
+.data.features.v6Claims.reason : null
+.data.jurisdiction.region : String = NG
+.data.jurisdiction.quotedWritesAllowed : Boolean = True
+.data.jurisdiction.reason : null
+.data.freshnessPolicy.maxWriteLagBlocks : String = 2000
+.data.freshnessPolicy.displayStaleAfterSeconds : String = 60
+.data.freshnessPolicy.finalityConfirmations : String = 1
+.data.readinessPath : String = /api/v1/chains/46630/readiness
+.meta.freshness.status : String = FRESH
+.meta.freshness.source : String = INDEXER
+.meta.freshness.chainId : Int32 = 46630
+.meta.freshness.asOfBlock : String = 133813183
+.meta.freshness.asOfBlockHash : String = 0xc4520ef225f16328c48cc0bc19a3f935245c905688bb160f908670eda67c0ef7
+.meta.freshness.chainHeadBlock : String = 133813184
+.meta.freshness.indexedThroughBlock : String = 133813183
+.meta.freshness.lagBlocks : String = 1
+.meta.freshness.coverageStartsAtBlock : String = 91563904
+.meta.freshness.coverageComplete : Boolean = True
+.meta.freshness.observedAt : String = 2026-10-12T20:38:18.136Z
+.meta.freshness.reason : null
+.meta.freshness.headObservedBlock : String = 133813209
+.meta.freshness.headObservedAt : String = 2026-10-12T20:38:17.862Z
+.meta.freshness.headLagBlocks : String = 26
+
+===== 22_GET__api_v1_chains_46630_readiness.json =====
+.apiVersion : String = 1
+.requestId : String = req-1b77
+.data.deploymentVersion : String = testnet-r2.18.73.99408853
+.data.revision : String = 2616455
+.data.features.reads.enabled : Boolean = True
+.data.features.reads.reason : null
+.data.features.metadataPreparation.enabled : Boolean = True
+.data.features.metadataPreparation.reason : null
+.data.features.positionLens.enabled : Boolean = True
+.data.features.positionLens.reason : null
+.data.features.transactionReceipts.enabled : Boolean = True
+.data.features.transactionReceipts.reason : null
+.data.features.contentReports.enabled : Boolean = True
+.data.features.contentReports.reason : null
+.data.features.curveWrites.enabled : Boolean = True
+.data.features.curveWrites.reason : null
+.data.features.creationWrites.enabled : Boolean = True
+.data.features.creationWrites.reason : null
+.data.features.graduationWrites.enabled : Boolean = True
+.data.features.graduationWrites.reason : null
+.data.features.creatorClaims.enabled : Boolean = True
+.data.features.creatorClaims.reason : null
+.data.features.v4Trading.enabled : Boolean = True
+.data.features.v4Trading.reason : null
+.data.features.quoteLaunches.enabled : Boolean = True
+.data.features.quoteLaunches.reason : null
+.data.features.analytics.enabled : Boolean = False
+.data.features.analytics.reason : String = FIRST_PARTY_ANALYTICS_COLLECTOR_NOT_CONFIGURED
+.data.features.writesStateReady : Boolean = True
+.meta.freshness.status : String = FRESH
+.meta.freshness.source : String = INDEXER
+.meta.freshness.chainId : Int32 = 46630
+.meta.freshness.asOfBlock : String = 133814780
+.meta.freshness.asOfBlockHash : String = 0x0a9db760293564d67e1aabe42de4982e7fa517c439bb603e6a9cb2ac13a15525
+.meta.freshness.chainHeadBlock : String = 133814781
+.meta.freshness.indexedThroughBlock : String = 133814780
+.meta.freshness.lagBlocks : String = 1
+.meta.freshness.coverageStartsAtBlock : String = 91563904
+.meta.freshness.coverageComplete : Boolean = True
+.meta.freshness.observedAt : String = 2026-10-12T20:42:22.385Z
+.meta.freshness.reason : null
+.meta.freshness.headObservedBlock : String = 133814821
+.meta.freshness.headObservedAt : String = 2026-10-12T20:42:24.183Z
+.meta.freshness.headLagBlocks : String = 41
+
+===== 23_GET__api_v1_chains_46630_tokens__address__details.json =====
+.apiVersion : String = 1
+.requestId : String = req-17u3
+.data.tokenAddress : String = 0x01d01f80c9cf12adc2141d209efd746f825221bd
+.data.creatorAddress : String = 0x1c256b1826095f17410611ce724163623aba2820
+.data.description : String = 
+.data.edited : null
+.data.blocked : null
+.data.nextEditAt : null
+.meta.freshness.status : String = FRESH
+.meta.freshness.source : String = INDEXER
+.meta.freshness.chainId : Int32 = 46630
+.meta.freshness.asOfBlock : String = 133813639
+.meta.freshness.asOfBlockHash : String = 0xf471e00bf53c0b2cf8c6162b96feb4fd390195b069f1a416cf6ca0a06b33e007
+.meta.freshness.chainHeadBlock : String = 133813640
+.meta.freshness.indexedThroughBlock : String = 133813639
+.meta.freshness.lagBlocks : String = 1
+.meta.freshness.coverageStartsAtBlock : String = 91563904
+.meta.freshness.coverageComplete : Boolean = True
+.meta.freshness.observedAt : String = 2026-10-12T20:39:29.940Z
+.meta.freshness.reason : null
+.meta.freshness.headObservedBlock : String = 133813664
+.meta.freshness.headObservedAt : String = 2026-10-12T20:39:30.377Z
+.meta.freshness.headLagBlocks : String = 25
+
+===== 24_GET__api_v1_chains_46630_v6_wallets__address__gifts.json =====
+.apiVersion : String = 1
+.requestId : String = req-11y4
+.data.items : array[0]
+.data.complete : Boolean = True
+.meta.freshness.status : String = FRESH
+.meta.freshness.source : String = INDEXER
+.meta.freshness.chainId : Int32 = 46630
+.meta.freshness.asOfBlock : String = 133813089
+.meta.freshness.asOfBlockHash : String = 0xd683511e5df2fe419d040ea04cfec6622711ed00ab0255a5d9483013f58bbb8c
+.meta.freshness.chainHeadBlock : String = 133813090
+.meta.freshness.indexedThroughBlock : String = 133813089
+.meta.freshness.lagBlocks : String = 1
+.meta.freshness.coverageStartsAtBlock : String = 91563904
+.meta.freshness.coverageComplete : Boolean = True
+.meta.freshness.observedAt : String = 2026-10-12T20:38:04.832Z
+.meta.freshness.reason : null
+.meta.freshness.headObservedBlock : String = 133813116
+.meta.freshness.headObservedAt : String = 2026-10-12T20:38:04.638Z
+.meta.freshness.headLagBlocks : String = 27
+
+===== 25_GET__api_v1_chains_46630_launches__address__comments.json =====
+.apiVersion : String = 1
+.requestId : String = req-17v2
+.data.items : array[0]
+
+===== 26_GET__api_v1_chains_46630_airdrop_participation.json =====
+.apiVersion : String = 1
+.requestId : String = req-15iv
+.data.profile : null
+.data.termsVersion : String = airdrop-pilot-v1
+
+===== 27_GET__api_v1_chains_46630_profile_x_status.json =====
+.apiVersion : String = 1
+.requestId : String = req-1cua
+.data.linked : Boolean = True
+.data.username : String = cryptmuix
+.data.accountAgeBand : String = 3y_plus
+.data.linkedAt : String = 2026-10-07T19:42:15.915Z
+.data.profileImageUrl : String = https://pbs.twimg.com/profile_images/2102860636820557824/i3hWYn4c_norm...
+
+===== 28_GET__api_v1_chains_46630_wallets__address__referrals_earnings.json =====
+.apiVersion : String = 1
+.requestId : String = req-17ie
+.data.network : String = TESTNET
+.data.commissionBps : Int32 = 2500
+.data.retainedProtocolBps : Int32 = 2000
+.data.payoutStatus : String = TREASURY_PAYMENTS
+.data.coverage : String = COMPLETE
+.data.pendingTradeCount : String = 0
+.data.assets : array[0]
+.meta.freshness.status : String = FRESH
+.meta.freshness.source : String = DERIVED
+.meta.freshness.chainId : Int32 = 46630
+.meta.freshness.asOfBlock : String = 133814983
+.meta.freshness.asOfBlockHash : String = 0x97393ed9372d8c17d13e94ce9514e3a6a82192f63f887ff913832f191090aa23
+.meta.freshness.chainHeadBlock : String = 133814984
+.meta.freshness.indexedThroughBlock : String = 133814983
+.meta.freshness.lagBlocks : String = 1
+.meta.freshness.coverageStartsAtBlock : String = 91563904
+.meta.freshness.coverageComplete : Boolean = True
+.meta.freshness.observedAt : String = 2026-10-12T20:42:52.289Z
+.meta.freshness.reason : null
+.meta.freshness.headObservedBlock : String = 133815018
+.meta.freshness.headObservedAt : String = 2026-10-12T20:42:51.353Z
+.meta.freshness.headLagBlocks : String = 35
+
+===== 29_GET__api_v1_chains_46630_wallets__address__referrals.json =====
+.apiVersion : String = 1
+.requestId : String = req-1bp0
+.data.walletAddress : String = 0xc8f14080c15801bab3747e9875e6894b86801bc7
+.data.uniqueQualifiedReferredWallets : String = 0
+.data.traders.qualifiedCount : String = 0
+.data.traders.volumeWei : String = 0
+.data.projects.qualifiedCount : String = 0
+.data.projects.volumeWei : String = 0
+.data.commissions.status : String = UNAVAILABLE
+.data.commissions.totalSfundBaseUnits : null
+.data.commissions.claimableSfundBaseUnits : null
+.data.commissions.reason : String = REWARD_PROGRAM_NOT_CONFIGURED
+.meta.freshness.status : String = FRESH
+.meta.freshness.source : String = DERIVED
+.meta.freshness.chainId : Int32 = 46630
+.meta.freshness.asOfBlock : String = 133814983
+.meta.freshness.asOfBlockHash : String = 0x97393ed9372d8c17d13e94ce9514e3a6a82192f63f887ff913832f191090aa23
+.meta.freshness.chainHeadBlock : String = 133814984
+.meta.freshness.indexedThroughBlock : String = 133814983
+.meta.freshness.lagBlocks : String = 1
+.meta.freshness.coverageStartsAtBlock : String = 91563904
+.meta.freshness.coverageComplete : Boolean = True
+.meta.freshness.observedAt : String = 2026-10-12T20:42:52.289Z
+.meta.freshness.reason : null
+.meta.freshness.headObservedBlock : String = 133815018
+.meta.freshness.headObservedAt : String = 2026-10-12T20:42:51.353Z
+.meta.freshness.headLagBlocks : String = 35
+
+===== 30_GET__api_v1_chains_46630_guilds.json =====
+.apiVersion : String = 1
+.requestId : String = req-1c48
+.error.code : String = BOARD_BUSY
+.error.message : String = Service unavailable
+
+===== 31_GET__api_v1_chains_46630_market_quote_usd_rates.json =====
+.apiVersion : String = 1
+.requestId : String = req-17bc
+.data.items : array[1]
+.data.items[].quoteAddress : String = 0x5a5398155d98374c0e26265ea3cb9818169c2739
+.data.items[].usdPerQuoteCents : String = 6244
+.data.items[].source : String = V4_CONVERSION_POOL_X_ETH_USD
+.data.items[].observedAt : String = 2026-10-12T20:42:33.124Z
+.data.items[].poolId : String = 0x2057b73efc9e4e546f72b79e7476422e173e2d36610f5f858fdfa2f83baf126e
+.data.status : String = AVAILABLE
+
+===== 32_GET__api_v1_chains_46630_realtime.json =====
+(empty body)
+
+===== 33_GET__api_v1_chains_46630_comment_auth_session.json =====
+.apiVersion : String = 1
+.requestId : String = req-18n6
+.data.session.address : String = 0xc8f14080c15801bab3747e9875e6894b86801bc7
+.data.session.expiresAt : String = 2026-10-30T21:37:40.654Z

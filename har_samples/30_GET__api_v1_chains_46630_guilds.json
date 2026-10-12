@@ -1,0 +1,11 @@
+﻿{
+    "key":  "GET /api/v1/chains/46630/guilds",
+    "url":  "https://testnet.vibevibe.fun/api/v1/chains/46630/guilds?search=\u0026limit=25\u0026offset=0\u0026fields=valuation%2Cprofile",
+    "method":  "GET",
+    "path":  "/api/v1/chains/46630/guilds",
+    "status":  503,
+    "mime":  "application/json",
+    "reqHeaders":  ":authority: testnet.vibevibe.fun\n:method: GET\n:path: /api/v1/chains/46630/guilds?search=\u0026limit=25\u0026offset=0\u0026fields=valuation%2Cprofile\n:scheme: https\naccept: application/json\naccept-encoding: gzip, deflate, br, zstd\naccept-language: en-US,en;q=0.9\npriority: u=1, i\nsec-ch-ua: \"Microsoft Edge\";v=\"155\", \"Chromium\";v=\"155\", \"Not(A:Brand\";v=\"24\"\nsec-ch-ua-mobile: ?0\nsec-ch-ua-platform: \"Windows\"\nsec-fetch-dest: empty\nsec-fetch-mode: cors\nsec-fetch-site: same-origin\nuser-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36 Edg/155.0.0.0",
+    "reqBody":  "",
+    "respBody":  "{\"apiVersion\":\"1\",\"requestId\":\"req-1c48\",\"error\":{\"code\":\"BOARD_BUSY\",\"message\":\"Service unavailable\"}}"
+}

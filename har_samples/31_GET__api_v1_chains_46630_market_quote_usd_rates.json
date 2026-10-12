@@ -1,0 +1,11 @@
+﻿{
+    "key":  "GET /api/v1/chains/46630/market/quote-usd-rates",
+    "url":  "https://testnet.vibevibe.fun/api/v1/chains/46630/market/quote-usd-rates",
+    "method":  "GET",
+    "path":  "/api/v1/chains/46630/market/quote-usd-rates",
+    "status":  200,
+    "mime":  "application/json",
+    "reqHeaders":  ":authority: testnet.vibevibe.fun\n:method: GET\n:path: /api/v1/chains/46630/market/quote-usd-rates\n:scheme: https\naccept: application/json\naccept-encoding: gzip, deflate, br, zstd\naccept-language: en-US,en;q=0.9\ncache-control: no-cache\npragma: no-cache\npriority: u=1, i\nsec-ch-ua: \"Microsoft Edge\";v=\"155\", \"Chromium\";v=\"155\", \"Not(A:Brand\";v=\"24\"\nsec-ch-ua-mobile: ?0\nsec-ch-ua-platform: \"Windows\"\nsec-fetch-dest: empty\nsec-fetch-mode: same-origin\nsec-fetch-site: same-origin\nuser-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36 Edg/155.0.0.0",
+    "reqBody":  "",
+    "respBody":  "{\"apiVersion\":\"1\",\"requestId\":\"req-17bc\",\"data\":{\"items\":[{\"quoteAddress\":\"0x5a5398155d98374c0e26265ea3cb9818169c2739\",\"usdPerQuoteCents\":\"6244\",\"source\":\"V4_CONVERSION_POOL_X_ETH_USD\",\"observedAt\":\"2026-10-12T20:42:33.124Z\",\"poolId\":\"0x2057b73efc9e4e546f72b79e7476422e173e2d36610f5f858fdfa2f83baf126e\"}],\"status\":\"AVAILABLE\"},\"meta\":{}}"
+}

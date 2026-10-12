@@ -1,0 +1,11 @@
+﻿{
+    "key":  "GET /api/v1/chains/46630/comment-auth/session",
+    "url":  "https://testnet.vibevibe.fun/api/v1/chains/46630/comment-auth/session",
+    "method":  "GET",
+    "path":  "/api/v1/chains/46630/comment-auth/session",
+    "status":  200,
+    "mime":  "application/json",
+    "reqHeaders":  ":authority: testnet.vibevibe.fun\n:method: GET\n:path: /api/v1/chains/46630/comment-auth/session\n:scheme: https\naccept: application/json\naccept-encoding: gzip, deflate, br, zstd\naccept-language: en-US,en;q=0.9\npriority: u=1, i\nsec-ch-ua: \"Microsoft Edge\";v=\"155\", \"Chromium\";v=\"155\", \"Not(A:Brand\";v=\"24\"\nsec-ch-ua-mobile: ?0\nsec-ch-ua-platform: \"Windows\"\nsec-fetch-dest: empty\nsec-fetch-mode: cors\nsec-fetch-site: same-origin\nuser-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36 Edg/155.0.0.0",
+    "reqBody":  "",
+    "respBody":  "{\"apiVersion\":\"1\",\"requestId\":\"req-18n6\",\"data\":{\"session\":{\"address\":\"0xc8f14080c15801bab3747e9875e6894b86801bc7\",\"expiresAt\":\"2026-10-30T21:37:40.654Z\"}},\"meta\":{}}"
+}

@@ -1,0 +1,11 @@
+﻿{
+    "key":  "POST /api/v1/chains/46630/rum",
+    "url":  "https://testnet.vibevibe.fun/api/v1/chains/46630/rum",
+    "method":  "POST",
+    "path":  "/api/v1/chains/46630/rum",
+    "status":  204,
+    "mime":  "text/plain",
+    "reqHeaders":  ":authority: testnet.vibevibe.fun\n:method: POST\n:path: /api/v1/chains/46630/rum\n:scheme: https\naccept: */*\naccept-encoding: gzip, deflate, br, zstd\naccept-language: en-US,en;q=0.9\ncontent-length: 278\ncontent-type: application/json\norigin: https://testnet.vibevibe.fun\npriority: u=4, i\nsec-ch-ua: \"Microsoft Edge\";v=\"155\", \"Chromium\";v=\"155\", \"Not(A:Brand\";v=\"24\"\nsec-ch-ua-mobile: ?0\nsec-ch-ua-platform: \"Windows\"\nsec-fetch-dest: empty\nsec-fetch-mode: cors\nsec-fetch-site: same-origin\nuser-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36 Edg/155.0.0.0",
+    "reqBody":  "",
+    "respBody":  ""
+}

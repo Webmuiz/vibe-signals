@@ -1,0 +1,11 @@
+﻿{
+    "key":  "GET /api/v1/chains/46630/tokens/{address}/details",
+    "url":  "https://testnet.vibevibe.fun/api/v1/chains/46630/tokens/0x01d01f80c9cf12Adc2141d209Efd746f825221bD/details",
+    "method":  "GET",
+    "path":  "/api/v1/chains/46630/tokens/{address}/details",
+    "status":  200,
+    "mime":  "application/json",
+    "reqHeaders":  ":authority: testnet.vibevibe.fun\n:method: GET\n:path: /api/v1/chains/46630/tokens/0x01d01f80c9cf12Adc2141d209Efd746f825221bD/details\n:scheme: https\naccept: application/json\naccept-encoding: gzip, deflate, br, zstd\naccept-language: en-US,en;q=0.9\ncache-control: max-age=0\npriority: u=1, i\nsec-ch-ua: \"Microsoft Edge\";v=\"155\", \"Chromium\";v=\"155\", \"Not(A:Brand\";v=\"24\"\nsec-ch-ua-mobile: ?0\nsec-ch-ua-platform: \"Windows\"\nsec-fetch-dest: empty\nsec-fetch-mode: cors\nsec-fetch-site: same-origin\nuser-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36 Edg/155.0.0.0",
+    "reqBody":  "",
+    "respBody":  "{\"apiVersion\":\"1\",\"requestId\":\"req-17u3\",\"data\":{\"tokenAddress\":\"0x01d01f80c9cf12adc2141d209efd746f825221bd\",\"creatorAddress\":\"0x1c256b1826095f17410611ce724163623aba2820\",\"description\":\"\",\"socials\":{},\"edited\":null,\"blocked\":null,\"nextEditAt\":null},\"meta\":{\"freshness\":{\"status\":\"FRESH\",\"source\":\"INDEXER\",\"chainId\":46630,\"asOfBlock\":\"133813639\",\"asOfBlockHash\":\"0xf471e00bf53c0b2cf8c6162b96feb4fd390195b069f1a416cf6ca0a06b33e007\",\"chainHeadBlock\":\"133813640\",\"indexedThroughBlock\":\"133813639\",\"lagBlocks\":\"1\",\"coverageStartsAtBlock\":\"91563904\",\"coverageComplete\":true,\"observedAt\":\"2026-10-12T20:39:29.940Z\",\"reason\":null,\"headObservedBlock\":\"133813664\",\"headObservedAt\":\"2026-10-12T20:39:30.377Z\",\"headLagBlocks\":\"25\"}}}"
+}
