@@ -258,7 +258,9 @@ function TokenCard({
                   ? `${token.marketCapIsEstimate ? '~' : ''}${formatCompactUsd(token.marketCapUsd)}`
                   : token.cachedMarketCapFormatted
                     ? formatCompactUsd(token.cachedMarketCapFormatted)
-                    : `~${formatCompactUsd(calculateTokenMetrics(token.bondingCurveProgress, token.ethDeposited, token.pairSymbol, liveRates).marketCapFormatted)}`}
+                    : liveMetricsResolved
+                      ? `~${formatCompactUsd(calculateTokenMetrics(token.bondingCurveProgress, token.ethDeposited, token.pairSymbol, liveRates).marketCapFormatted)}`
+                      : '...'}
               </span>
             </div>
             <div>

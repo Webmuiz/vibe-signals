@@ -137,19 +137,22 @@ export async function GET(request: Request) {
     const targetDev = address.toLowerCase();
 
     // 1. Fetch all launches created by this wallet (legacy + V6), paginated.
+    //    Both surfaces are queried with the LOWERCASED address: the upstream
+    //    indexes are case-sensitive, so a checksummed (mixed-case) input would
+    //    silently return zero launches and undercount the profiler.
     const [legacyLaunches, v6Launches] = await Promise.all([
       fetchLaunchesWithFallback(
         (cursor) =>
-          `${VIBE_API_BASE}/launches?creatorAddress=${address}&limit=${PAGE_LIMIT}` +
+          `${VIBE_API_BASE}/launches?creatorAddress=${targetDev}&limit=${PAGE_LIMIT}` +
           (cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''),
-        () => `${VIBE_API_BASE}/launches?creatorAddress=${address}&limit=${PAGE_LIMIT}`,
+        () => `${VIBE_API_BASE}/launches?creatorAddress=${targetDev}&limit=${PAGE_LIMIT}`,
         headers
       ),
       fetchLaunchesWithFallback(
         (cursor) =>
-          `${VIBE_API_BASE}/v6/wallets/${address}/launches?limit=${PAGE_LIMIT}` +
+          `${VIBE_API_BASE}/v6/wallets/${targetDev}/launches?limit=${PAGE_LIMIT}` +
           (cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''),
-        () => `${VIBE_API_BASE}/v6/wallets/${address}/launches?limit=${PAGE_LIMIT}`,
+        () => `${VIBE_API_BASE}/v6/wallets/${targetDev}/launches?limit=${PAGE_LIMIT}`,
         headers
       ),
     ]);
@@ -167,12 +170,22 @@ export async function GET(request: Request) {
 
     const combinedItems: any[] = [...legacyLaunches.items, ...v6Launches.items];
 
-    // Deduplicate and isolate tokens created by this wallet
+    // Deduplicate by lowercased token address. Items without a tokenAddress are
+    // dropped rather than allowed to throw (a single malformed item must not
+    // 500 the whole profiler response).
     const deduplicated = Array.from(
-      new Map(combinedItems.map((item) => [item.tokenAddress.toLowerCase(), item])).values()
+      new Map(
+        combinedItems
+          .filter((item: any) => item && item.tokenAddress)
+          .map((item: any) => [String(item.tokenAddress).toLowerCase(), item])
+      ).values()
     );
+
+    // Isolate tokens created by this wallet. The upstream surfaces disagree on
+    // the field name (`launcherAddress` on V6, `creatorAddress` on legacy), so
+    // both are inspected and compared case-insensitively.
     const createdTokens = deduplicated.filter((item: any) => {
-      const launcher = (item.launcherAddress || item.creatorAddress || '').toLowerCase();
+      const launcher = String(item.launcherAddress || item.creatorAddress || '').toLowerCase();
       return launcher === targetDev;
     });
 
@@ -205,7 +218,7 @@ export async function GET(request: Request) {
     //    launch data, just without dump detection.
     const activity = await fetchAllPages(
       (cursor) =>
-        `${VIBE_API_BASE}/wallets/${address}/activity?limit=${PAGE_LIMIT}` +
+        `${VIBE_API_BASE}/wallets/${targetDev}/activity?limit=${PAGE_LIMIT}` +
         (cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''),
       headers
     );

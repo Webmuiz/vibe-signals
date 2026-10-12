@@ -19,6 +19,7 @@ import {
   calculateTokenMetrics,
   calculateVibeScore,
   normalizeVibeResponse,
+  parseCreatedAtMs,
   ERC20_SYMBOL_ABI,
   type LiveTokenMetrics,
   type VibeScoreParams,
@@ -769,8 +770,12 @@ export default function Home() {
             const isPartial = json.data?.partial === true;
             if (!launch) throw new Error('Token launch data missing from API response');
 
-            const createdMs = new Date(launch.createdAt).getTime();
-            const timeLiveMins = Math.max(0, Math.floor((Date.now() - createdMs) / 60000));
+            // Normalize seconds-vs-milliseconds: a 10-digit Unix timestamp fed
+            // to `new Date()` would be read as 1970 and render a bogus multi-day
+            // runtime. `parseCreatedAtMs` returns null when unparseable.
+            const createdMs = parseCreatedAtMs(launch.createdAt);
+            const timeLiveMins =
+              createdMs == null ? 0 : Math.max(0, Math.floor((Date.now() - createdMs) / 60000));
 
             const isGraduated = launch.lifecycle === "GRADUATED" || launch.graduated === true || launch.curve?.lifecycle === "GRADUATED" || (launch.curve?.progressBps ?? 0) >= 10000;
             const currentEth = Number(launch.curve?.pairReserveUnits || launch.curve?.netRaisedWei || 0) / 1e18;

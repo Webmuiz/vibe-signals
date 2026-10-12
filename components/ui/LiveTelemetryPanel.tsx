@@ -31,6 +31,17 @@ export default function LiveTelemetryPanel({
   volumeUsd,
   volumeEth,
 }: LiveTelemetryPanelProps) {
+  // The synthetic graduation-target estimates produced by `calculateTokenMetrics`
+  // at 100% curve progress. These are NOT real market caps and must never be
+  // shown as if they were — they are the source of the initial "$50.5K" flash.
+  const SYNTHETIC_GRAD_TARGETS = ['$50,500.00', '$220,000.00'];
+
+  // A market cap is "resolved" only when it is present AND is not one of the
+  // synthetic graduation targets. This lets the panel show a placeholder during
+  // the first live fetch instead of flashing the graduation target.
+  const hasResolvedMarketCap =
+    !!marketCapUsd && !SYNTHETIC_GRAD_TARGETS.includes(marketCapUsd);
+
   return (
     <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
       <div className="flex justify-between items-center mb-6">
@@ -48,11 +59,13 @@ export default function LiveTelemetryPanel({
         <div className="flex justify-between text-xs mb-2">
           <span className="text-zinc-400">{bondingCurveProgress >= 100 ? 'Status' : `Bonding Curve Progress (${ethDeposited} ${pairSymbol})`}</span>
           <div className="flex gap-3">
-            {/* Only show the "..." placeholder while we have NO market cap at
-                all. Once a fallback value (even $0.00) is available we render
-                it immediately so the panel never hangs on "MC: ...". */}
+            {/* While the first live fetch is in flight we must NOT render the
+                synthetic graduation-target estimate ($50.5K / $220K), which is
+                what `calculateTokenMetrics` returns at 100% curve progress and
+                is what caused the initial "$50.5K" flash. Show a placeholder
+                until real, API-derived data resolves. */}
             <span className="text-zinc-400 font-mono">
-              MC: {isSyncingLive && !marketCapUsd ? <span className="animate-pulse">...</span> : formatCompactUsd(marketCapUsd)}
+              MC: {isSyncingLive && !hasResolvedMarketCap ? <span className="animate-pulse">...</span> : formatCompactUsd(marketCapUsd)}
             </span>
             <span className={bondingCurveProgress >= 100 ? "text-amber-400 font-bold" : "text-emerald-400 font-bold"}>
               {bondingCurveProgress >= 100 ? 'Graduated 🚀' : `${bondingCurveProgress.toFixed(1)}%`}

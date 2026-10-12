@@ -554,10 +554,14 @@ export async function normalizeVibeResponse(
   const hasSocials = !!(socials.x || socials.telegram || socials.website);
 
   // --- Time live ---
-  const createdMs = new Date(launch.createdAt || Date.now()).getTime();
-  const timeSinceLaunchMins = isNaN(createdMs)
-    ? fallback?.timeSinceLaunchMins ?? 0
-    : Math.max(0, Math.floor((Date.now() - createdMs) / 60000));
+  // `parseCreatedAtMs` normalizes seconds-vs-milliseconds so a 10-digit Unix
+  // timestamp is not misread as a 1970 date (which produced bogus multi-day
+  // runtimes). A null result means the field was unparseable → keep last-known.
+  const createdMs = parseCreatedAtMs(launch.createdAt);
+  const timeSinceLaunchMins =
+    createdMs == null
+      ? fallback?.timeSinceLaunchMins ?? 0
+      : Math.max(0, Math.floor((Date.now() - createdMs) / 60000));
 
   const imageUri = launch.content?.image?.uri?.startsWith('ipfs://')
     ? launch.content.image.uri.replace('ipfs://', 'https://ipfs.io/ipfs/')
@@ -590,6 +594,39 @@ export async function normalizeVibeResponse(
 }
 
 export { ERC20_SYMBOL_ABI };
+
+/**
+ * Normalizes a launch timestamp into epoch milliseconds.
+ *
+ * Upstream payloads are inconsistent: `createdAt` may arrive as an ISO string,
+ * a Unix timestamp in SECONDS (10 digits), or a Unix timestamp in
+ * MILLISECONDS (13 digits). Passing a seconds value straight into `new Date()`
+ * treats it as milliseconds and yields a 1970 date, which then renders as a
+ * nonsensical multi-day "LIVE: 11d 14h 19m" runtime. This helper detects the
+ * unit and always returns milliseconds.
+ *
+ * Returns `null` when the value cannot be parsed, so callers can fall back to
+ * a previously-known value instead of displaying garbage.
+ */
+export function parseCreatedAtMs(createdAt: unknown): number | null {
+  if (createdAt == null) return null;
+
+  // Numeric input: disambiguate seconds vs milliseconds by magnitude.
+  if (typeof createdAt === 'number' && Number.isFinite(createdAt)) {
+    // Anything below ~1e12 is a seconds timestamp (1e12 ms ≈ year 2001).
+    return createdAt < 1e12 ? createdAt * 1000 : createdAt;
+  }
+
+  // Numeric string (e.g. "1700000000"): parse then apply the same rule.
+  if (typeof createdAt === 'string' && /^\d+$/.test(createdAt.trim())) {
+    const n = Number(createdAt.trim());
+    if (Number.isFinite(n)) return n < 1e12 ? n * 1000 : n;
+  }
+
+  // ISO / date string.
+  const parsed = new Date(String(createdAt)).getTime();
+  return Number.isNaN(parsed) ? null : parsed;
+}
 
 export function formatTimeLive(totalMinutes: number) {
   if (!totalMinutes && totalMinutes !== 0) return '0m';
