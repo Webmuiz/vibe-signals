@@ -21,8 +21,7 @@ WORKDIR /home/node/app
 
 # Install dependencies first so Docker can cache this layer across code edits.
 COPY --chown=node:node package*.json ./
-RUN npm ci --omit=dev || npm install --omit=dev
-
+RUN npm install --omit=dev --legacy-peer-deps
 # Copy the rest of the application with correct ownership.
 COPY --chown=node:node . .
 
