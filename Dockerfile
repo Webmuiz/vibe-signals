@@ -11,22 +11,27 @@
 # Secrets (TURSO_DATABASE_URL, TURSO_AUTH_TOKEN, SECONDARY_RPC_URL, ...) are
 # injected at runtime via Space Secrets — never baked into this image.
 # ---------------------------------------------------------------------------
-FROM node:20-alpine
+# Upgrade to Node 22 to satisfy EBADENGINE requirements
+FROM node:22-alpine
 
-# Reuse the built-in non-root `node` user (UID 1000) required by HF Spaces.
-USER node
+# Create the app directory and assign ownership to the node user FIRST
+RUN mkdir -p /home/node/app && chown -R node:node /home/node/app
 
-# All app files live under the user's home directory.
+# Set the working directory
 WORKDIR /home/node/app
 
-# Install dependencies first so Docker can cache this layer across code edits.
+# Now switch to the non-root user
+USER node
+
+# Copy package files with correct ownership
 COPY --chown=node:node package*.json ./
+
+# Install bypassing peer dependency conflicts
 RUN npm install --omit=dev --legacy-peer-deps
-# Copy the rest of the application with correct ownership.
+
+# Copy the rest of the application files
 COPY --chown=node:node . .
 
-# Hugging Face Spaces health-checks this port.
 EXPOSE 7860
 
-# Start the background indexer (tsx runs the TypeScript entry point directly).
 CMD ["npm", "run", "worker"]
