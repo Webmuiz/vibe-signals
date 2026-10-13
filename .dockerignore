@@ -1,0 +1,16 @@
+# Keep the image lean and free of local secrets / build artifacts.
+node_modules
+.next
+.git
+.gitignore
+.env
+.env.*
+*.log
+npm-debug.log*
+coverage
+.vercel
+*.tsbuildinfo
+next-env.d.ts
+har_samples
+*.har
+technical_audit.md

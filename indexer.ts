@@ -244,7 +244,21 @@ async function fetchLiveApiMetrics(tokenAddress: string): Promise<LiveApiMetrics
             liquidityDeposited,
         };
     } catch (err) {
-        console.log(`⚠ Could not fetch live API metrics for ${tokenAddress}`);
+        // Network-level failures (UND_ERR_SOCKET, "fetch failed", DNS/socket
+        // resets) are expected on flaky hosts. Swallow them so a single bad
+        // request can never crash the node process; the caller treats a null
+        // result as "no fresh data" and keeps the last known-good values.
+        const msg = err instanceof Error ? err.message : String(err);
+        if (
+            msg.includes('UND_ERR_SOCKET') ||
+            msg.includes('fetch failed') ||
+            msg.includes('ECONNRESET') ||
+            msg.includes('socket hang up')
+        ) {
+            console.warn(`⚠ Transient network error fetching metrics for ${tokenAddress}: ${msg}`);
+        } else {
+            console.log(`⚠ Could not fetch live API metrics for ${tokenAddress}`);
+        }
         return null;
     }
 }
@@ -754,10 +768,24 @@ async function runIndexer() {
 
 runIndexer();
 
-const PORT = Number(process.env.PORT) || 3000;
+// ---------------------------------------------------------------------------
+// HEARTBEAT / HEALTH SERVER
+//
+// Hugging Face Spaces requires the container to bind to port 7860 and answer
+// health checks with HTTP 200. We honour an injected PORT (HF sets it) but
+// default to 7860 so the Space passes its readiness probe out of the box.
+// The blockchain polling/listening logic above starts independently of this
+// server, so a slow RPC never blocks the health check.
+// ---------------------------------------------------------------------------
+const PORT = Number(process.env.PORT) || 7860;
 createServer((req, res) => {
-    res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end('Vibe Signals Indexer is Live and Healthy!');
+    if (req.url === '/' || req.url === '/health') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ status: 'alive' }));
+        return;
+    }
+    res.writeHead(404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ status: 'not_found' }));
 }).listen(PORT, '0.0.0.0', () => {
     console.log(`Health check listening on 0.0.0.0:${PORT}`);
 });
