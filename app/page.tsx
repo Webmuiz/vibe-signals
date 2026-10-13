@@ -1799,12 +1799,15 @@ export default function Home() {
             {/*
               SHARE SNAPSHOT REGION.
               This wrapper is the exact DOM subtree converted to a PNG by the
-              "Share 📸" button: token header (name/ticker/contract), the Vibe
-              Score, and the Live Telemetry panel. It carries an explicit dark
-              background so the exported image is legible on any viewer theme.
+              "Share 📸" button. It intentionally contains ONLY the token header
+              card (name, ticker, contract address, Vibe Score) — the bonding
+              curve, live telemetry, and volume panels are deliberately excluded
+              so the exported image stays a clean, focused share card. It carries
+              an explicit dark background so the PNG is legible on any viewer
+              theme, plus padding so the card isn't cropped at the edges.
             */}
-            <div ref={shareCardRef} className="bg-zinc-950 rounded-xl p-1">
-              <header className="mb-8 flex justify-between items-end border-b border-zinc-800 pb-6">
+            <div ref={shareCardRef} className="bg-zinc-950 rounded-xl p-6 border border-zinc-800">
+              <header className="flex justify-between items-end">
                 <div>
                   <h2 className="text-4xl font-bold tracking-tight mb-2 flex items-center gap-3">
                     {selectedToken.name}
@@ -1817,37 +1820,40 @@ export default function Home() {
                     <span className="block text-sm text-zinc-400 mb-1">Vibe Score</span>
                     <VibeScoreDisplay score={detailScore} />
                   </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={handleShareImage}
-                      disabled={isSharing}
-                      className="px-3 py-1.5 bg-zinc-800 hover:bg-emerald-500 hover:text-zinc-950 text-zinc-300 font-bold rounded-lg text-xs border border-zinc-700 hover:border-emerald-500 transition-colors disabled:opacity-50"
-                      title="Download a PNG snapshot of this token's Vibe Score and metrics"
-                    >
-                      {isSharing ? "Capturing..." : "Share 📸"}
-                    </button>
-                    {shareStatus && (
-                      <span className="text-[10px] text-emerald-400 font-bold animate-pulse">
-                        {shareStatus}
-                      </span>
-                    )}
-                  </div>
                 </div>
               </header>
-
-              <LiveTelemetryPanel
-                isSyncingLive={isSyncingLive}
-                oracleReady={oracleReady}
-                timeSinceLaunchMins={selectedToken.timeSinceLaunchMins}
-                bondingCurveProgress={selectedToken.bondingCurveProgress}
-                ethDeposited={selectedToken.ethDeposited}
-                pairSymbol={selectedToken.pairSymbol}
-                marketCapUsd={selectedToken.marketCapUsd}
-                momentum={selectedToken.momentum}
-                volumeUsd={selectedToken.volumeUsd}
-                volumeEth={selectedToken.volumeEth}
-              />
             </div>
+
+            {/* Share control lives OUTSIDE the snapshot region so the button and
+                status text never appear in the exported PNG. */}
+            <div className="flex items-center gap-2 mt-3">
+              <button
+                onClick={handleShareImage}
+                disabled={isSharing}
+                className="px-3 py-1.5 bg-zinc-800 hover:bg-emerald-500 hover:text-zinc-950 text-zinc-300 font-bold rounded-lg text-xs border border-zinc-700 hover:border-emerald-500 transition-colors disabled:opacity-50"
+                title="Download a PNG snapshot of this token's Vibe Score and metrics"
+              >
+                {isSharing ? "Capturing..." : "Share 📸"}
+              </button>
+              {shareStatus && (
+                <span className="text-[10px] text-emerald-400 font-bold animate-pulse">
+                  {shareStatus}
+                </span>
+              )}
+            </div>
+
+            <LiveTelemetryPanel
+              isSyncingLive={isSyncingLive}
+              oracleReady={oracleReady}
+              timeSinceLaunchMins={selectedToken.timeSinceLaunchMins}
+              bondingCurveProgress={selectedToken.bondingCurveProgress}
+              ethDeposited={selectedToken.ethDeposited}
+              pairSymbol={selectedToken.pairSymbol}
+              marketCapUsd={selectedToken.marketCapUsd}
+              momentum={selectedToken.momentum}
+              volumeUsd={selectedToken.volumeUsd}
+              volumeEth={selectedToken.volumeEth}
+            />
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-6">
               <div className="lg:col-span-2 space-y-6">

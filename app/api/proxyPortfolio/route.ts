@@ -83,15 +83,16 @@ function weiToNumber(value: unknown, decimals = 18): number {
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   // Normalize the address immediately: the upstream index is case-sensitive and
-  // a checksummed input would silently return an empty portfolio.
-  const address = (searchParams.get('address') || '').trim().toLowerCase();
+  // a checksummed (mixed-case EIP-55) input would silently return an empty
+  // portfolio. Strictly lowercase so the upstream lookup always matches.
+  const targetAddress = (searchParams.get('address') || '').trim().toLowerCase();
 
-  if (!address) {
+  if (!targetAddress) {
     return NextResponse.json({ error: 'Address is required' }, { status: 400 });
   }
 
   const portfolioUrl =
-    `${VIBE_API_BASE}/api/v1/chains/46630/analytics/portfolios/${address}?limit=100`;
+    `${VIBE_API_BASE}/api/v1/chains/46630/analytics/portfolios/${targetAddress}?limit=100`;
 
   // Portfolio + ETH oracle are fired concurrently. The oracle is best-effort
   // and must never block the portfolio response.
@@ -182,7 +183,7 @@ export async function GET(request: Request) {
 
   return NextResponse.json({
     data: {
-      address,
+      address: targetAddress,
       ethPriceUsd,
       summary: {
         coverage: summary.coverage || 'UNKNOWN',
