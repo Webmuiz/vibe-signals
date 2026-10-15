@@ -30,9 +30,11 @@ const wagmiConfig = createConfig({
 const queryClient = new QueryClient();
 
 export function Providers({ children }: { children: React.ReactNode }) {
+  const privyAppId = process.env.NEXT_PUBLIC_PRIVY_APP_ID || "placeholder-app-id";
+
   return (
     <PrivyProvider
-      appId={process.env.NEXT_PUBLIC_PRIVY_APP_ID || ""}
+      appId={privyAppId}
       config={{
         loginMethods: ["email", "wallet", "google", "twitter", "apple"],
         appearance: {
