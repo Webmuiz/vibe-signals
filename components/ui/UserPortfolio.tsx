@@ -41,6 +41,15 @@ export interface PortfolioSummary {
   openPositions: number;
 }
 
+/** Envelope returned by `/api/proxyPortfolio`. */
+interface PortfolioResponse {
+  data?: {
+    positions?: PortfolioPosition[];
+    summary?: PortfolioSummary | null;
+  };
+  error?: string;
+}
+
 interface UserPortfolioProps {
   /** Connected wallet address. When absent the drawer shows a connect prompt. */
   address?: string;
@@ -113,7 +122,9 @@ export default function UserPortfolio({
         { cache: "no-store" }
       );
       if (!res.ok) {
-        const body = await res.json().catch(() => null);
+        const body = (await res
+          .json()
+          .catch(() => null)) as PortfolioResponse | null;
         // A 404 means the wallet simply has no indexed portfolio yet — that is
         // an empty state, not an error.
         if (res.status === 404) {
@@ -121,11 +132,14 @@ export default function UserPortfolio({
           setSummary(null);
           return;
         }
-        throw new Error(body?.error || `Portfolio request failed (${res.status})`);
+        throw new Error(
+          body?.error || `Portfolio request failed (${res.status})`
+        );
       }
-      const json = await res.json();
-      setPositions(Array.isArray(json?.data?.positions) ? json.data.positions : []);
-      setSummary(json?.data?.summary || null);
+      const json = (await res.json()) as PortfolioResponse;
+      const positions = json?.data?.positions;
+      setPositions(Array.isArray(positions) ? positions : []);
+      setSummary(json?.data?.summary ?? null);
     } catch (err: any) {
       setError(err?.message || "Failed to load portfolio");
     } finally {

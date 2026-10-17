@@ -1,5 +1,6 @@
 import React from "react";
 import { formatTimeLive, formatCompactUsd } from "@/lib/tokenMetrics";
+import type { MindshareTelemetry } from "@/lib/analytics/mindshareEngine";
 
 export interface TelemetryMomentum {
   buyPct?: number;
@@ -24,6 +25,11 @@ interface LiveTelemetryPanelProps {
   momentum?: TelemetryMomentum;
   volumeUsd?: string | number;
   volumeEth?: string | number;
+  /**
+   * Optional social mindshare telemetry from `/api/analytics/mindshare`.
+   * Purely additive: when absent the panel renders exactly as before.
+   */
+  mindshare?: MindshareTelemetry | null;
 }
 
 /**

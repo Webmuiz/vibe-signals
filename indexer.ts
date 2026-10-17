@@ -149,6 +149,76 @@ interface LiveApiMetrics {
 }
 
 /**
+ * Loosely-typed view of the `/api/proxyVibe` payload.
+ *
+ * The upstream API is not schema-stable, so every field is optional and the
+ * nested objects are declared as index signatures. This keeps the property
+ * accesses below type-safe without pretending the shape is guaranteed.
+ */
+interface ProxyVibeLaunch {
+    pairSymbol?: string | null;
+    targetPairUnits?: string | number | null;
+    lifecycle?: string | null;
+    graduated?: boolean | null;
+    graduation?: unknown;
+    poolAddress?: string | null;
+    graduationPoolAddress?: string | null;
+    priceUsd?: string | number | null;
+    curve?: {
+        netTargetWei?: string | number | null;
+        pairReserveUnits?: string | number | null;
+        netRaisedWei?: string | number | null;
+        progressBps?: number | null;
+        lifecycle?: string | null;
+        priceUsd?: string | number | null;
+        [key: string]: unknown;
+    } | null;
+    analytics?: {
+        priceUsd?: string | number | null;
+        lastPriceWeiPerToken?: string | number | null;
+        volume24hWei?: string | number | null;
+        [key: string]: unknown;
+    } | null;
+    pool?: { address?: string | null; [key: string]: unknown } | null;
+    content?: {
+        socials?: {
+            x?: string | null;
+            telegram?: string | null;
+            website?: string | null;
+            [key: string]: unknown;
+        } | null;
+        [key: string]: unknown;
+    } | null;
+    [key: string]: unknown;
+}
+
+interface ProxyVibeMarketStats {
+    priceUsd?: string | number | null;
+    priceWeiPerToken?: string | number | null;
+    lastPriceWeiPerToken?: string | number | null;
+    buyVolume24hPairUnits?: string | number | null;
+    sellVolume24hPairUnits?: string | number | null;
+    [key: string]: unknown;
+}
+
+interface ProxyVibeMarketTrade {
+    executionPricePairUnitsPerToken?: string | number | null;
+    [key: string]: unknown;
+}
+
+interface ProxyVibePayload {
+    data?: {
+        launch?: ProxyVibeLaunch | null;
+        tokenAddress?: string | null;
+        marketStats?: ProxyVibeMarketStats | null;
+        ethPriceUsd?: string | number | null;
+        marketTrades?: ProxyVibeMarketTrade[] | null;
+        [key: string]: unknown;
+    } | null;
+    [key: string]: unknown;
+}
+
+/**
  * Fetches REAL market data for a token from our `/api/proxyVibe` route and
  * extracts the values we persist back into Supabase. This is what makes the
  * database converge with the live API over time.
@@ -160,11 +230,13 @@ async function fetchLiveApiMetrics(tokenAddress: string): Promise<LiveApiMetrics
     try {
         const res = await fetch(`${PROXY_BASE_URL}/api/proxyVibe?address=${tokenAddress}`, { cache: 'no-store' });
         if (!res.ok) return null;
-        const json = await res.json();
-        const launch = json?.data?.launch || (json?.data?.tokenAddress ? json.data : null);
+        const json = (await res.json()) as ProxyVibePayload;
+        const launch: ProxyVibeLaunch | null =
+            json?.data?.launch ??
+            (json?.data?.tokenAddress ? (json.data as ProxyVibeLaunch) : null);
         if (!launch) return null;
 
-        const stats = json?.data?.marketStats;
+        const stats = json?.data?.marketStats ?? null;
         const ethPriceUsd = Number(json?.data?.ethPriceUsd) || 0;
 
         // --- Pair symbol ---
@@ -202,8 +274,9 @@ async function fetchLiveApiMetrics(tokenAddress: string): Promise<LiveApiMetrics
             launch.priceUsd || launch.analytics?.priceUsd || launch.curve?.priceUsd || stats?.priceUsd;
         let lastPriceWei =
             stats?.priceWeiPerToken || stats?.lastPriceWeiPerToken || launch.analytics?.lastPriceWeiPerToken || 0;
-        if ((!lastPriceWei || Number(lastPriceWei) === 0) && json?.data?.marketTrades?.[0]) {
-            lastPriceWei = json.data.marketTrades[0].executionPricePairUnitsPerToken;
+        const firstTrade = json?.data?.marketTrades?.[0];
+        if ((!lastPriceWei || Number(lastPriceWei) === 0) && firstTrade) {
+            lastPriceWei = firstTrade.executionPricePairUnitsPerToken ?? 0;
         }
 
         let marketCapRaw = 0;

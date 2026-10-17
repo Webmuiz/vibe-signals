@@ -27,7 +27,37 @@ const publicClient = createPublicClient({
   ),
 });
 
-let cachedResponse: any = null;
+// ---------------------------------------------------------------------------
+// Upstream payload shapes
+// ---------------------------------------------------------------------------
+
+/** One entry of the VibeVibe `pair-prices` response. */
+interface PairPriceItem {
+  pairAddress?: string;
+  symbol?: string | null;
+  /** Price denominated in ETH, as an 18-decimal fixed-point string. */
+  priceEthWad?: string | number | null;
+  /** Injected below — USD price derived from `priceEthWad`. */
+  priceUsd?: number;
+  [key: string]: unknown;
+}
+
+interface PairPricesPayload {
+  data?: {
+    items?: PairPriceItem[];
+    ethPriceUsd?: number;
+    rates?: Record<string, number>;
+    [key: string]: unknown;
+  };
+  [key: string]: unknown;
+}
+
+/** Coinbase spot-price envelope: `{ data: { amount: "2416.12", ... } }`. */
+interface CoinbaseSpotPayload {
+  data?: { amount?: string; base?: string; currency?: string };
+}
+
+let cachedResponse: PairPricesPayload | null = null;
 let lastCacheTime = 0;
 const CACHE_TTL_MS = 15000;
 
@@ -47,18 +77,21 @@ export async function GET() {
     ]);
 
     if (!pairsRes.ok) return NextResponse.json({ error: 'Failed to fetch pair prices' }, { status: pairsRes.status });
-    const data = await pairsRes.json();
+    const data = (await pairsRes.json()) as PairPricesPayload;
 
     let ethPriceUsd = 2416;
     if (ethRes.ok) {
-      const cbData = await ethRes.json();
-      if (cbData?.data?.amount) ethPriceUsd = Number(cbData.data.amount);
+      const cbData = (await ethRes.json()) as CoinbaseSpotPayload;
+      const amount = Number(cbData?.data?.amount);
+      if (Number.isFinite(amount) && amount > 0) ethPriceUsd = amount;
     }
 
-    const items = data?.data?.items || [];
-    
+    const items: PairPriceItem[] = Array.isArray(data?.data?.items)
+      ? data.data.items
+      : [];
+
     // Resolve on-chain symbols for all pairs in one RPC multicall
-    const symbolCalls = items.map((item: any) => ({
+    const symbolCalls = items.map((item) => ({
       address: item.pairAddress as `0x${string}`,
       abi: [{ name: 'symbol', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'string' }] }] as const,
       functionName: 'symbol',
@@ -77,8 +110,11 @@ export async function GET() {
       '0x0000000000000000000000000000000000000000': ethPriceUsd
     };
 
-    items.forEach((item: any, i: number) => {
-      const resolvedSym = symbols[i]?.status === 'success' ? (symbols[i].result as string).toUpperCase() : null;
+    items.forEach((item, i) => {
+      const resolvedSym =
+        symbols[i]?.status === 'success'
+          ? String(symbols[i].result).toUpperCase()
+          : null;
       if (resolvedSym) item.symbol = resolvedSym;
 
       // `priceEthWad` is denominated in ETH (confirmed against the raw VibeVibe
@@ -92,7 +128,7 @@ export async function GET() {
       // address is the authoritative key: `pairSymbol` can be null (e.g.
       // MOBLAND) or mislabeled, so consumers must be able to look up by address.
       if (item.pairAddress) {
-        rates[item.pairAddress.toLowerCase()] = priceUsd;
+        rates[String(item.pairAddress).toLowerCase()] = priceUsd;
       }
       if (resolvedSym) {
         rates[resolvedSym] = priceUsd;
@@ -102,6 +138,7 @@ export async function GET() {
     if (data && data.data) {
       data.data.ethPriceUsd = ethPriceUsd;
       data.data.rates = rates;
+      data.data.items = items;
     }
 
     cachedResponse = data;

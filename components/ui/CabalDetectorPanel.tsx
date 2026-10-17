@@ -1,4 +1,5 @@
 import React from "react";
+import type { CabalAnalysisResult } from "@/lib/analytics/cabalDetector";
 
 export interface TopHolder {
   address: string;
@@ -11,6 +12,11 @@ interface CabalDetectorPanelProps {
   top5Pct: number;
   creatorHoldingPct: number;
   diamondHandsHoldersPct: number;
+  /**
+   * Optional persisted cluster analysis from `/api/analytics/cabal`.
+   * Purely additive: when absent the panel renders exactly as before.
+   */
+  cabalResult?: CabalAnalysisResult | null;
 }
 
 export default function CabalDetectorPanel({

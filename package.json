@@ -8,6 +8,8 @@
     "start": "next start",
     "lint": "next lint",
     "indexer": "tsx indexer.ts",
+    "migrate": "tsx scripts/run-migrations.ts",
+    "migrate:dry": "tsx scripts/run-migrations.ts --dry-run",
     "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
     "deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
     "upload": "opennextjs-cloudflare build && opennextjs-cloudflare upload",

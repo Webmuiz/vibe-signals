@@ -25,8 +25,68 @@ import {
   isTokenGraduated,
   ERC20_SYMBOL_ABI,
   type LiveTokenMetrics,
+  type RawVibeResponse,
   type VibeScoreParams,
 } from "@/lib/tokenMetrics";
+// Type-only imports for the analytics payloads. `import type` is erased at
+// compile time, so none of these server-side modules (viem clients, Turso
+// clients) are pulled into the client bundle.
+import type { SecuritySimulationResult } from "@/lib/analytics/securitySimulator";
+import type { CabalAnalysisResult } from "@/lib/analytics/cabalDetector";
+import type { MindshareTelemetry } from "@/lib/analytics/mindshareEngine";
+
+// ---------------------------------------------------------------------------
+// Local response envelopes
+//
+// `res.json()` is typed `any` by the DOM lib, but under `strict` the result of
+// an untyped `await res.json()` in a `.catch(() => null)` chain widens to
+// `unknown` / `{}`. These interfaces give each fetch boundary a concrete shape
+// so property access is checked rather than silently allowed.
+// ---------------------------------------------------------------------------
+
+/** `/api/proxyPrices` payload. */
+interface OraclePricesResponse {
+  data?: {
+    rates?: Record<string, number>;
+    ethPriceUsd?: number;
+  };
+}
+
+/** Error body returned by the proxy routes on failure. */
+interface ProxyErrorBody {
+  error?: string;
+  reason?: string;
+}
+
+/** Robinhood explorer `/holders` payload. */
+interface ExplorerHoldersResponse {
+  items?: Array<{
+    address?: {
+      hash?: string;
+      is_contract?: boolean;
+      is_smart_contract?: boolean;
+    };
+    value?: string;
+  }>;
+}
+
+/** Developer profiler record returned by `/api/proxyDev`. */
+interface DevProfiler {
+  isSerialDumper?: boolean;
+  /** Percentage of this dev's launches that graduated, 0-100. */
+  graduationRate?: number;
+  /** Total launches attributed to this wallet. */
+  totalLaunches?: number;
+  /** Tokens this dev dumped before graduation. */
+  totalPreGradDumps?: number;
+}
+
+/** `/api/proxyDev` payload. */
+interface DevProfilerResponse {
+  data?: {
+    profiler?: DevProfiler | null;
+  };
+}
 
 const SIGNAL_TOKEN = "0xD4D41412033a72a0D1cCd0Cb02b666Cf771880B1" as `0x${string}`;
 const FACTORY_ADDRESS = "0xe794217880011f9cA6961340eD5c16EC9559Fea0" as `0x${string}`;
@@ -262,6 +322,13 @@ export default function Home() {
   const [topHolders, setTopHolders] = useState<{ address: string, pct: number }[]>([]);
   const [devStats, setDevStats] = useState<{ launches: number; gradRate: number; label: string; color: string; } | null>(null);
 
+  // Analytics payloads from the `/api/analytics/*` routes. Each is independent
+  // and failure-tolerant: a null value simply means "not loaded yet", and the
+  // panels fall back to their existing data sources.
+  const [securityResult, setSecurityResult] = useState<SecuritySimulationResult | null>(null);
+  const [cabalResult, setCabalResult] = useState<CabalAnalysisResult | null>(null);
+  const [mindshare, setMindshare] = useState<MindshareTelemetry | null>(null);
+
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const activeTokenRef = useRef<string | null>(null);
 
@@ -335,8 +402,8 @@ export default function Home() {
       try {
         const res = await fetch('/api/proxyPrices');
         if (!res.ok) return;
-        const json = await res.json();
-        const oracleRates = json?.data?.rates || {};
+        const json = (await res.json()) as OraclePricesResponse;
+        const oracleRates = json?.data?.rates ?? {};
         const ethPrice = Number(json?.data?.ethPriceUsd) || 2416;
 
         if (isSubscribed && Object.keys(oracleRates).length > 0) {
@@ -467,7 +534,9 @@ export default function Home() {
         // Upstream unreachable / timed out. Do NOT overwrite the cache with
         // zeros — keep whatever real metrics we already have, and only seed a
         // fallback-derived entry if this token has never been resolved.
-        const body = await res.json().catch(() => null);
+        const body = (await res
+          .json()
+          .catch(() => null)) as ProxyErrorBody | null;
         console.warn(
           `[liveMetrics] proxyVibe HTTP ${res.status} for ${key}:`,
           body?.reason || body?.error || 'unknown'
@@ -491,7 +560,7 @@ export default function Home() {
         return;
       }
 
-      const json = await res.json();
+      const json = (await res.json()) as RawVibeResponse;
       // Read the freshest oracle rates from the ref so this poller never needs
       // to re-subscribe when `liveRates` changes.
       const normalized = await normalizeVibeResponse(
@@ -842,7 +911,7 @@ export default function Home() {
         try {
           const res = await fetch(`/api/proxyVibe?address=${query}`);
           if (res.ok) {
-            const json = await res.json();
+            const json = (await res.json()) as RawVibeResponse;
             const launch = json.data?.launch || (json.data?.tokenAddress ? json.data : null);
             const isLegacy = json.apiVersion === "1" || (!json.data?.launch && !!json.data?.tokenAddress);
             // A partial payload (market stats timed out upstream) still carries
@@ -994,7 +1063,9 @@ export default function Home() {
               }
             })();
           } else {
-            const errData = await res.json().catch(() => ({}));
+            const errData = (await res
+              .json()
+              .catch(() => ({}))) as ProxyErrorBody;
             const errMsg = errData.error || "Failed to fetch from VibeVibe API";
             console.error("VibeVibe API failed:", errMsg);
             // A 404 genuinely means "not found". Anything else (502/504) is a
@@ -1026,6 +1097,12 @@ export default function Home() {
     // Clearing to null makes the panel fall back to the selected token's own
     // `devProfile` (grid-derived) until fresh, authoritative data arrives.
     setDevStats(null);
+    // Same reasoning for the analytics payloads: never show the previous
+    // token's security verdict / cluster graph / mindshare while the new
+    // token's requests are still in flight.
+    setSecurityResult(null);
+    setCabalResult(null);
+    setMindshare(null);
 
     /**
      * Hydrates the telemetry panel from on-chain/contract metrics when the
@@ -1157,7 +1234,9 @@ export default function Home() {
           // and feeding it to the normalizer would zero out every metric.
           // Instead, hydrate from on-chain metrics so the panel still renders.
           if (!res.ok) {
-            const body = await res.json().catch(() => null);
+            const body = (await res
+              .json()
+              .catch(() => null)) as ProxyErrorBody | null;
             console.warn(
               `[detail] proxyVibe ${res.status} for ${selectedToken.contractAddress}:`,
               body?.reason || body?.error || 'unknown'
@@ -1166,7 +1245,7 @@ export default function Home() {
             return;
           }
 
-          const json = await res.json();
+          const json = (await res.json()) as RawVibeResponse;
           if (!isMounted) return;
 
           // Use the SAME normalizer the homepage cards use, so both views
@@ -1294,7 +1373,7 @@ export default function Home() {
 
     if (selectedToken?.contractAddress) {
       fetch(`https://explorer.testnet.chain.robinhood.com/api/v2/tokens/${selectedToken.contractAddress}/holders`)
-        .then(res => res.json())
+        .then(res => res.json() as Promise<ExplorerHoldersResponse>)
         .then(data => {
           if (data?.items) {
             const cleanHolders = data.items
@@ -1366,7 +1445,7 @@ export default function Home() {
           // .catch() below fires and the existing devStats/UI state is preserved
           // instead of being overwritten with zeros.
           if (!devRes.ok) throw new Error(`Profiler upstream ${devRes.status}`);
-          return devRes.json();
+          return devRes.json() as Promise<DevProfilerResponse>;
         })
         .then(devJson => {
           const profiler = devJson?.data?.profiler;
@@ -1395,16 +1474,58 @@ export default function Home() {
           if (profiler.isSerialDumper) {
             devLabel = "🚨 SERIAL DUMPER";
             devColor = "text-red-400 border-red-500/30 bg-red-500/10";
-          } else if (profiler.graduationRate >= 30) {
+          } else if ((profiler.graduationRate ?? 0) >= 30) {
             devLabel = "💎 DIAMOND DEV";
             devColor = "text-emerald-400 border-emerald-500/30 bg-emerald-500/10";
-          } else if (profiler.totalLaunches > 0) {
+          } else if ((profiler.totalLaunches ?? 0) > 0) {
             devLabel = "SOLID BUILDER";
             devColor = "text-yellow-400 border-yellow-500/30 bg-yellow-500/10";
           }
-          setDevStats({ launches: profiler.totalLaunches, gradRate: profiler.graduationRate, label: devLabel, color: devColor });
+          setDevStats({
+            launches: profiler.totalLaunches ?? 0,
+            gradRate: profiler.graduationRate ?? 0,
+            label: devLabel,
+            color: devColor,
+          });
         }).catch(err => console.error("Profiler failed:", err));
     }
+
+    // -----------------------------------------------------------------------
+    // Analytics suite: security simulation, cabal clustering, social mindshare.
+    //
+    // These ride the existing detail effect (same dependency array, same
+    // `isMounted` guard) rather than adding a new one. All three routes are
+    // DB-cached server-side, so a single fetch per token selection is enough.
+    // Each request is independent and non-blocking: a failure leaves the
+    // corresponding state null and the panel falls back to its existing data.
+    // -----------------------------------------------------------------------
+    const fetchAnalytics = async () => {
+      const address = selectedToken.contractAddress;
+      const endpoints = [
+        { url: `/api/analytics/security/${address}`, apply: setSecurityResult },
+        { url: `/api/analytics/cabal/${address}`, apply: setCabalResult },
+        { url: `/api/analytics/mindshare/${address}`, apply: setMindshare },
+      ] as const;
+
+      await Promise.all(
+        endpoints.map(async ({ url, apply }) => {
+          try {
+            const res = await fetch(url);
+            if (!res.ok) throw new Error(`${url} responded ${res.status}`);
+            const json = await res.json() as { success?: boolean; data?: unknown };
+            if (!json?.success || !json.data) return;
+            if (!isMounted) return;
+            // The three payloads are structurally distinct; the route contract
+            // guarantees `data` matches the state slot it is assigned to.
+            (apply as (value: unknown) => void)(json.data);
+          } catch (err) {
+            console.error(`Analytics fetch failed (${url}):`, err);
+          }
+        })
+      );
+    };
+
+    void fetchAnalytics();
 
     return () => {
       isMounted = false;
@@ -1853,6 +1974,7 @@ export default function Home() {
               momentum={selectedToken.momentum}
               volumeUsd={selectedToken.volumeUsd}
               volumeEth={selectedToken.volumeEth}
+              mindshare={mindshare}
             />
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-6">
@@ -1875,6 +1997,7 @@ export default function Home() {
                   top5Pct={top5Pct}
                   creatorHoldingPct={creatorHoldingPct}
                   diamondHandsHoldersPct={selectedToken.diamondHandsHoldersPct}
+                  cabalResult={cabalResult}
                 />
 
                 <DeveloperProfilerPanel
@@ -1917,6 +2040,7 @@ export default function Home() {
                 <SafetyAuditPanel
                   hasSocials={selectedToken.hasSocials}
                   safetyChecks={selectedToken.safetyChecks}
+                  securityResult={securityResult}
                 />
 
                 <a

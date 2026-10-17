@@ -1,4 +1,5 @@
 import React from "react";
+import type { SecuritySimulationResult } from "@/lib/analytics/securitySimulator";
 
 export interface SafetyCheck {
   label: string;
@@ -14,6 +15,11 @@ export interface SafetyChecks {
 interface SafetyAuditPanelProps {
   hasSocials: boolean;
   safetyChecks: SafetyChecks;
+  /**
+   * Optional on-chain security simulation from `/api/analytics/security`.
+   * Purely additive: when absent the panel renders exactly as before.
+   */
+  securityResult?: SecuritySimulationResult | null;
 }
 
 export default function SafetyAuditPanel({
