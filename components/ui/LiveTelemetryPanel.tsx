@@ -22,6 +22,13 @@ interface LiveTelemetryPanelProps {
   ethDeposited: number | string;
   pairSymbol: string;
   marketCapUsd?: string;
+  /**
+   * Set by the parent once a live market-cap fetch has actually completed for
+   * this token. This is what separates "we have not fetched yet" from "we
+   * fetched and the answer is genuinely $0.00" — without it a real zero is
+   * indistinguishable from a pending request and the panel spins forever.
+   */
+  marketCapResolved?: boolean;
   momentum?: TelemetryMomentum;
   volumeUsd?: string | number;
   volumeEth?: string | number;
@@ -48,6 +55,7 @@ export default function LiveTelemetryPanel({
   ethDeposited,
   pairSymbol,
   marketCapUsd,
+  marketCapResolved = false,
   momentum,
   volumeUsd,
   volumeEth,
@@ -63,13 +71,23 @@ export default function LiveTelemetryPanel({
   const hasResolvedMarketCap =
     !!marketCapUsd && !SYNTHETIC_GRAD_TARGETS.includes(marketCapUsd);
 
+  // A genuine zero is a RESOLVED value, not a pending one. `$0.00` is a real
+  // answer from the API and must render as `$0.00`; only a missing value or a
+  // synthetic graduation target should trigger the spinner.
+  const isZeroMarketCap =
+    marketCapResolved &&
+    !!marketCapUsd &&
+    !SYNTHETIC_GRAD_TARGETS.includes(marketCapUsd) &&
+    Number(String(marketCapUsd).replace(/[^0-9.-]/g, '')) === 0;
+
   // STRICT SYNCING GATE for Market Cap:
   //   - oracle not loaded yet (USD rate unknown), OR
   //   - the first live fetch is still in flight, OR
   //   - the value is a synthetic fallback (not real API data)
-  // In any of these cases we render "Syncing..." rather than a partial number.
+  // A resolved zero short-circuits all of the above.
   const showMarketCapSyncing =
-    !oracleReady || (isSyncingLive && !hasResolvedMarketCap) || !hasResolvedMarketCap;
+    !isZeroMarketCap &&
+    (!oracleReady || (isSyncingLive && !hasResolvedMarketCap) || !hasResolvedMarketCap);
 
   // STRICT SYNCING GATE for 24H Volume: same rules — no USD volume may render
   // until the oracle is ready and a real (non-zero) volume figure exists.

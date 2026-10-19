@@ -61,6 +61,51 @@ let cachedResponse: PairPricesPayload | null = null;
 let lastCacheTime = 0;
 const CACHE_TTL_MS = 15000;
 
+/** Upstream budget. The client's oracle gate waits on this route. */
+const UPSTREAM_TIMEOUT_MS = 4000;
+/** Last-resort ETH price when Coinbase is unreachable. */
+const FALLBACK_ETH_PRICE_USD = 2416;
+
+/**
+ * A structurally valid payload containing only the ETH/WETH rates.
+ *
+ * This is what lets `oracleReady` flip to `true` in the dashboard even when
+ * the upstream pair-price service is down: the client gets a usable rate map
+ * instead of an `{ error }` body with no `data`, which previously left the
+ * oracle gate permanently closed and every USD metric stuck on "Syncing...".
+ */
+function buildFallbackPayload(ethPriceUsd: number): PairPricesPayload {
+  return {
+    data: {
+      items: [],
+      ethPriceUsd,
+      rates: {
+        ETH: ethPriceUsd,
+        WETH: ethPriceUsd,
+        '0x0000000000000000000000000000000000000000': ethPriceUsd,
+      },
+    },
+  };
+}
+
+/** Fetch with a hard abort deadline; resolves to `null` on timeout/error. */
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number
+): Promise<Response | null> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (err) {
+    console.warn(`[proxyPrices] ${url} failed: ${(err as Error)?.message ?? err}`);
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function GET() {
   try {
     const now = Date.now();
@@ -69,21 +114,52 @@ export async function GET() {
     }
 
     const [pairsRes, ethRes] = await Promise.all([
-      fetch('https://testnet.vibevibe.fun/api/v1/chains/46630/v6/pair-prices', {
-        headers: { 'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0' },
-        cache: 'no-store'
-      }),
-      fetch('https://api.coinbase.com/v2/prices/ETH-USD/spot', { cache: 'no-store' })
+      fetchWithTimeout(
+        'https://testnet.vibevibe.fun/api/v1/chains/46630/v6/pair-prices',
+        {
+          headers: { 'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0' },
+          cache: 'no-store',
+        },
+        UPSTREAM_TIMEOUT_MS
+      ),
+      fetchWithTimeout(
+        'https://api.coinbase.com/v2/prices/ETH-USD/spot',
+        { cache: 'no-store' },
+        UPSTREAM_TIMEOUT_MS
+      ),
     ]);
 
-    if (!pairsRes.ok) return NextResponse.json({ error: 'Failed to fetch pair prices' }, { status: pairsRes.status });
-    const data = (await pairsRes.json()) as PairPricesPayload;
+    // Resolve the ETH oracle first — it is needed by both the success and the
+    // fallback path.
+    let ethPriceUsd = FALLBACK_ETH_PRICE_USD;
+    if (ethRes?.ok) {
+      try {
+        const cbData = (await ethRes.json()) as CoinbaseSpotPayload;
+        const amount = Number(cbData?.data?.amount);
+        if (Number.isFinite(amount) && amount > 0) ethPriceUsd = amount;
+      } catch {
+        /* keep the fallback rate */
+      }
+    }
 
-    let ethPriceUsd = 2416;
-    if (ethRes.ok) {
-      const cbData = (await ethRes.json()) as CoinbaseSpotPayload;
-      const amount = Number(cbData?.data?.amount);
-      if (Number.isFinite(amount) && amount > 0) ethPriceUsd = amount;
+    if (!pairsRes || !pairsRes.ok) {
+      // Upstream unavailable: still answer 200 with a valid ETH/WETH rate map
+      // so the dashboard's oracle gate opens instead of hanging.
+      const fallback = buildFallbackPayload(ethPriceUsd);
+      cachedResponse = fallback;
+      lastCacheTime = now;
+      return NextResponse.json(fallback);
+    }
+
+    let data: PairPricesPayload;
+    try {
+      data = (await pairsRes.json()) as PairPricesPayload;
+    } catch (err) {
+      console.warn('[proxyPrices] malformed upstream JSON:', err);
+      const fallback = buildFallbackPayload(ethPriceUsd);
+      cachedResponse = fallback;
+      lastCacheTime = now;
+      return NextResponse.json(fallback);
     }
 
     const items: PairPriceItem[] = Array.isArray(data?.data?.items)
@@ -146,6 +222,9 @@ export async function GET() {
 
     return NextResponse.json(data);
   } catch (err) {
-    return NextResponse.json({ error: 'Server error' }, { status: 500 });
+    console.error('[proxyPrices] unexpected failure:', err);
+    // Never return a body without `data` — the client treats that as "oracle
+    // not ready" and blocks every USD value behind a spinner.
+    return NextResponse.json(buildFallbackPayload(FALLBACK_ETH_PRICE_USD));
   }
 }

@@ -1,10 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createPublicClient, http, fallback, formatUnits, parseAbi, getAddress } from 'viem';
-import { createClient } from '@libsql/client';
-
-const TURSO_DATABASE_URL = process.env.TURSO_DATABASE_URL!;
-const TURSO_AUTH_TOKEN = process.env.TURSO_AUTH_TOKEN!;
-const db = createClient({ url: TURSO_DATABASE_URL, authToken: TURSO_AUTH_TOKEN });
+import { getDb } from '@/lib/db';
 
 // Resilient RPC transport: explicit timeout + retries, with an optional
 // secondary endpoint (SECONDARY_RPC_URL) that viem fails over to automatically.
@@ -444,6 +440,11 @@ export async function GET(request: Request) {
             sniper_wallets: JSON.stringify(retention.sniperWallets),
             sniper_retention_pct: retention.retentionPct,
         };
+
+        // Resolve the Turso client lazily at request time. Creating it at module
+        // scope threw during `next build` / Cloudflare cold start whenever the
+        // env vars were not yet bound, taking down the whole route module.
+        const db = getDb();
 
         await db.execute({
             sql: `INSERT INTO launches (

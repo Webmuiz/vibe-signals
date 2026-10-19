@@ -52,13 +52,23 @@ const ERROR_RESPONSE = {
 
 const ADDRESS_PATTERN = /^0x[0-9a-fA-F]{40}$/;
 
-/** How many blocks to scan backwards from the head. */
-const SCAN_BLOCK_WINDOW = 50_000n;
+/**
+ * How many blocks to scan backwards from the head, per window.
+ *
+ * Reduced from 50_000: on a busy testnet a 50k-block `eth_getLogs` routinely
+ * exceeded the RPC's response budget and stalled the whole request. 10k keeps
+ * each call cheap while still covering recent trading activity.
+ */
+const SCAN_BLOCK_WINDOW = 10_000n;
+/** Hard cap on backward scan iterations, independent of the log budget. */
+const MAX_SCAN_ITERATIONS = 3;
 /** Maximum number of `Transfer` logs to inspect. */
 const MAX_TRANSFER_LOGS = 2_000;
 /** Maximum number of `balanceOf` calls to issue. */
 const MAX_HOLDER_CANDIDATES = 150;
-/** Concurrent `balanceOf` reads. */
+/** Total wall-clock budget for holder discovery before we give up. */
+const HOLDER_DISCOVERY_TIMEOUT_MS = 10_000;
+/** Concurrent `balanceOf` reads (only used if multicall is unavailable). */
 const BALANCE_READ_CONCURRENCY = 10;
 
 const ERC20_ABI = parseAbi([
@@ -132,8 +142,14 @@ async function collectHolderCandidates(tokenAddress: Address): Promise<Address[]
     try {
         const latestBlock = await publicClient.getBlockNumber();
         let toBlock = latestBlock;
+        let iterations = 0;
 
-        while (toBlock > 0n && candidates.size < MAX_HOLDER_CANDIDATES) {
+        while (
+            toBlock > 0n &&
+            candidates.size < MAX_HOLDER_CANDIDATES &&
+            iterations < MAX_SCAN_ITERATIONS
+        ) {
+            iterations += 1;
             const fromBlock =
                 toBlock > SCAN_BLOCK_WINDOW ? toBlock - SCAN_BLOCK_WINDOW : 0n;
 
@@ -167,13 +183,51 @@ async function collectHolderCandidates(tokenAddress: Address): Promise<Address[]
     return [...candidates] as Address[];
 }
 
-/** Read `balanceOf` for each candidate, in bounded concurrent batches. */
+/**
+ * Read `balanceOf` for every candidate in ONE `eth_call` batch.
+ *
+ * The previous implementation issued up to 150 sequential `readContract`
+ * calls (10 at a time), each with its own retry budget — easily minutes of
+ * wall clock on a degraded RPC. `multicall` collapses that into a single
+ * round-trip and `allowFailure` keeps individual reverts from sinking the
+ * whole batch.
+ */
 async function readBalances(
     tokenAddress: Address,
     candidates: Address[]
 ): Promise<Map<string, bigint>> {
     const balances = new Map<string, bigint>();
+    if (candidates.length === 0) return balances;
 
+    try {
+        const results = await publicClient.multicall({
+            contracts: candidates.map((owner) => ({
+                address: tokenAddress,
+                abi: ERC20_ABI,
+                functionName: 'balanceOf' as const,
+                args: [owner] as const,
+            })),
+            allowFailure: true,
+        });
+
+        results.forEach((outcome, index) => {
+            if (outcome.status === 'success') {
+                balances.set(
+                    candidates[index].toLowerCase(),
+                    outcome.result as bigint
+                );
+            }
+        });
+
+        return balances;
+    } catch (error) {
+        console.warn(
+            `[cabal] multicall balanceOf failed for ${tokenAddress}: ${errorMessage(error)}`
+        );
+    }
+
+    // Fallback: bounded concurrent reads, only if the batch call itself failed
+    // (e.g. the RPC does not expose `eth_call` batching).
     for (let i = 0; i < candidates.length; i += BALANCE_READ_CONCURRENCY) {
         const batch = candidates.slice(i, i + BALANCE_READ_CONCURRENCY);
         const settled = await Promise.allSettled(
@@ -286,6 +340,26 @@ async function fetchTopHolders(tokenAddress: string): Promise<HolderDiscovery> {
     return { holders, warnings: [] };
 }
 
+/**
+ * Races `promise` against a wall-clock deadline. Resolves to `null` when the
+ * deadline wins, so callers can substitute fallback data instead of hanging.
+ */
+function withDeadline<T>(promise: Promise<T>, ms: number): Promise<T | null> {
+    return new Promise<T | null>((resolve) => {
+        const timer = setTimeout(() => resolve(null), ms);
+        promise.then(
+            (value) => {
+                clearTimeout(timer);
+                resolve(value);
+            },
+            () => {
+                clearTimeout(timer);
+                resolve(null);
+            }
+        );
+    });
+}
+
 export async function GET(
     _request: Request,
     { params }: { params: Promise<{ address: string }> }
@@ -306,7 +380,27 @@ export async function GET(
         let result = await getCabalAnalysis(tokenAddress);
 
         if (needsRefresh(result)) {
-            const discovery = await fetchTopHolders(tokenAddress);
+            // Hard 10s ceiling on the entire on-chain discovery phase. Without
+            // it a slow RPC kept the request open indefinitely and the Cabal
+            // panel never left "Syncing...".
+            const discovery = await withDeadline(
+                fetchTopHolders(tokenAddress),
+                HOLDER_DISCOVERY_TIMEOUT_MS
+            );
+
+            if (discovery === null) {
+                console.warn(
+                    `[cabal] Holder discovery exceeded ${HOLDER_DISCOVERY_TIMEOUT_MS}ms for ${tokenAddress}`
+                );
+                // Return immediately with an explicit unavailable payload. Not
+                // persisted, so the next request retries cleanly.
+                return NextResponse.json({
+                    success: true,
+                    data: unavailableCabalAnalysis(tokenAddress, [
+                        `Holder discovery timed out after ${HOLDER_DISCOVERY_TIMEOUT_MS / 1000}s.`,
+                    ]),
+                });
+            }
 
             if (discovery.warnings.length > 0) {
                 // Unreadable token: return an explicit unavailable state. Do

@@ -175,8 +175,14 @@ function describeTxError(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+// Client-side reads must never outlive the UI's patience. Without an explicit
+// timeout viem waits on the socket indefinitely, so a stalled RPC left the
+// detail view spinning forever. 8s / 2 retries bounds the worst case.
 const publicClient = createPublicClient({
-  transport: http('https://rpc.testnet.chain.robinhood.com')
+  transport: http('https://rpc.testnet.chain.robinhood.com', {
+    timeout: 8000,
+    retryCount: 2,
+  })
 });
 
 
@@ -310,6 +316,12 @@ export default function Home() {
 
   const [activeFilter, setActiveFilter] = useState<RadarFilter>("all");
   const [dbTokens, setDbTokens] = useState<DBToken[]>([]);
+  // Distinguishes "we have not heard back from the database yet" from
+  // "the database answered and it is genuinely empty". Without this flag the
+  // grid cannot tell a cold start apart from an empty table, and the UI
+  // freezes on the loading copy forever.
+  const [dbLoaded, setDbLoaded] = useState(false);
+  const [dbError, setDbError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedToken, setSelectedToken] = useState<any | null>(null);
   const [onChainToken, setOnChainToken] = useState<any | null>(null);
@@ -477,23 +489,37 @@ export default function Home() {
     try {
       const res = await fetch('/api/tokens', { cache: 'no-store' });
       if (!res.ok) {
+        // 503 => credentials missing or Turso unreachable. Record it so the
+        // grid can say "database unavailable" instead of "0 launches".
         console.error('Turso fetch error:', res.status);
+        setDbError(`Database unavailable (HTTP ${res.status})`);
         return;
       }
-      const data: DBToken[] = await res.json();
-      if (Array.isArray(data) && data.length > 0) {
-        setDbTokens(data);
+      const data: unknown = await res.json();
+      // Accept empty arrays too: an empty result is a valid answer and must
+      // clear any stale rows left over from a previous session.
+      if (Array.isArray(data)) {
+        setDbTokens(data as DBToken[]);
+        setDbError(null);
+      } else {
+        console.error('Unexpected /api/tokens payload', data);
+        setDbError('Unexpected database response');
       }
     } catch (err) {
       console.error("Database sync failed", err);
+      setDbError('Database sync failed');
+    } finally {
+      // Always mark the initial load as settled, success or failure, so the
+      // loading spinner can never become permanent.
+      setDbLoaded(true);
     }
   };
 
-  // High-speed polling from our local JSON database API or Turso
+  // Initial database load. Subsequent refreshes are handled by the 10s
+  // `pollTokens` reconciler below — a second 3s interval here duplicated the
+  // same request and raced with it.
   useEffect(() => {
-    fetchDatabase();
-    const interval = setInterval(fetchDatabase, 3000); // Check for new tokens every 3 seconds
-    return () => clearInterval(interval);
+    void fetchDatabase();
   }, []);
 
   // Keep a ref mirror of liveMetrics so async fetchers can read the latest
@@ -1491,7 +1517,23 @@ export default function Home() {
             label: devLabel,
             color: devColor,
           });
-        }).catch(err => console.error("Profiler failed:", err));
+        }).catch(err => {
+          console.error("Profiler failed:", err);
+          // The dev profile is a nice-to-have. On failure, mark the check as
+          // resolved-but-unavailable so SafetyAuditPanel stops showing
+          // "Scanning..." forever.
+          if (!isMounted) return;
+          setSelectedToken((prevToken: any) => {
+            if (!prevToken) return prevToken;
+            return {
+              ...prevToken,
+              safetyChecks: {
+                ...prevToken.safetyChecks,
+                dumperRisk: { label: 'Unavailable', safe: true }
+              }
+            };
+          });
+        });
     }
 
     // -----------------------------------------------------------------------
@@ -1503,6 +1545,8 @@ export default function Home() {
     // Each request is independent and non-blocking: a failure leaves the
     // corresponding state null and the panel falls back to its existing data.
     // -----------------------------------------------------------------------
+    const ANALYTICS_TIMEOUT_MS = 8000;
+
     const fetchAnalytics = async () => {
       const address = selectedToken.contractAddress;
       const endpoints = [
@@ -1511,10 +1555,15 @@ export default function Home() {
         { url: `/api/analytics/mindshare/${address}`, apply: setMindshare },
       ] as const;
 
+      // Each panel is fetched independently under its own 8s deadline. A slow
+      // or hung route (notably the on-chain cabal scan) aborts on its own and
+      // leaves the other panels free to render whatever they resolved.
       await Promise.all(
         endpoints.map(async ({ url, apply }) => {
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), ANALYTICS_TIMEOUT_MS);
           try {
-            const res = await fetch(url);
+            const res = await fetch(url, { signal: controller.signal });
             if (!res.ok) throw new Error(`${url} responded ${res.status}`);
             const json = await res.json() as { success?: boolean; data?: unknown };
             if (!json?.success || !json.data) return;
@@ -1523,7 +1572,13 @@ export default function Home() {
             // guarantees `data` matches the state slot it is assigned to.
             (apply as (value: unknown) => void)(json.data);
           } catch (err) {
-            console.error(`Analytics fetch failed (${url}):`, err);
+            if (controller.signal.aborted) {
+              console.warn(`Analytics fetch timed out after ${ANALYTICS_TIMEOUT_MS}ms (${url})`);
+            } else {
+              console.error(`Analytics fetch failed (${url}):`, err);
+            }
+          } finally {
+            clearTimeout(timer);
           }
         })
       );
@@ -1993,6 +2048,10 @@ export default function Home() {
               ethDeposited={selectedToken.ethDeposited}
               pairSymbol={selectedToken.pairSymbol}
               marketCapUsd={selectedToken.marketCapUsd}
+              // A live metrics entry exists only after a fetch actually
+              // completed for this token, so it is the correct signal for
+              // "resolved" — including when the resolved value is $0.00.
+              marketCapResolved={!!liveMetrics[String(selectedToken.contractAddress).toLowerCase()]}
               momentum={selectedToken.momentum}
               volumeUsd={selectedToken.volumeUsd}
               volumeEth={selectedToken.volumeEth}
@@ -2091,8 +2150,19 @@ export default function Home() {
               <div className="text-center py-12 text-red-400 font-bold border border-dashed border-red-500/50 bg-red-500/5 rounded-xl">
                 JIT Failed: {searchError}
               </div>
+            ) : filteredTokens.length === 0 && !dbLoaded ? (
+              <div className="flex items-center justify-center gap-3 py-12 text-zinc-400 border border-dashed border-zinc-800 rounded-xl">
+                <span className="h-4 w-4 animate-spin rounded-full border-2 border-zinc-600 border-t-emerald-400" />
+                Connecting to database...
+              </div>
+            ) : filteredTokens.length === 0 && dbError ? (
+              <div className="text-center py-12 text-red-400 font-bold border border-dashed border-red-500/50 bg-red-500/5 rounded-xl">
+                {dbError}
+              </div>
             ) : filteredTokens.length === 0 ? (
-              <div className="text-center py-12 text-zinc-500 border border-dashed border-zinc-800 rounded-xl">No tokens indexed yet. Waiting for Node...</div>
+              <div className="text-center py-12 text-zinc-500 border border-dashed border-zinc-800 rounded-xl">
+                Database connected — 0 launches indexed
+              </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {filteredTokens.map((token) => (
