@@ -698,15 +698,30 @@ export function formatTimeLive(totalMinutes: number) {
   return `${hours}h ${mins}m`;
 }
 
+/**
+ * Resolves the USD rate for ONE unit of a quote asset by SYMBOL.
+ *
+ * Returns `0` for an unknown or missing symbol. It deliberately does NOT fall
+ * back to the ETH oracle: doing so silently priced every non-ETH pair (stock,
+ * guild, VIBE, or an unresolved symbol) as if it were ETH, producing market
+ * caps that were off by orders of magnitude. A `0` result makes the caller
+ * degrade to the "Syncing..." placeholder instead of a fabricated number.
+ *
+ * Prefer `resolveQuoteUsdRate()` where a pair currency ADDRESS is available —
+ * the address is the authoritative key and is immune to null/mislabeled symbols.
+ */
 export function getUsdRateForPair(symbol: string | undefined, liveRates: Record<string, number>): number {
-  if (!symbol) return liveRates['ETH'] || 2416;
-  const s = symbol.toUpperCase();
+  const s = (symbol || '').toUpperCase().trim();
+  if (!s) return 0;
 
   if (s.includes('USD') && !s.includes('ETH')) return 1;
-  if (liveRates[s]) return liveRates[s];
   if (s === 'ETH' || s === 'WETH') return liveRates['ETH'] || 2416;
 
-  return liveRates['ETH'] || 2416;
+  const rate = liveRates[s];
+  if (rate != null && Number.isFinite(rate) && rate > 0) return rate;
+
+  // Unknown quote asset — refuse to guess. Callers treat 0 as "unresolved".
+  return 0;
 }
 
 export function calculateTokenMetrics(

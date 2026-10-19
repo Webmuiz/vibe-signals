@@ -1196,7 +1196,12 @@ export default function Home() {
           name: selectedToken.name || 'Unknown',
           ticker: selectedToken.ticker || 'TKN',
           symbol: selectedToken.symbol || '',
-          pairSymbol: selectedToken.pairSymbol || 'ETH',
+          // Preserve an empty pairSymbol rather than coercing to 'ETH'. This
+          // entry is written into the shared `liveMetrics` cache and mirrored
+          // into `selectedToken`, so guessing 'ETH' here would permanently
+          // mislabel a non-ETH pair for the rest of the session and feed the
+          // wrong quote asset back into the next normalizer pass.
+          pairSymbol: selectedToken.pairSymbol || '',
           bondingCurveProgress: fallbackProgress,
           ethDeposited: onChainEth > 0 ? `${onChainEth.toFixed(4)} / ${targetEth.toFixed(1)}` : (selectedToken.ethDeposited || '0.0000 / 4.0'),
           marketCapUsd: priorMarketCapUsd,

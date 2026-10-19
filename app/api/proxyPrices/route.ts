@@ -35,9 +35,15 @@ const publicClient = createPublicClient({
 interface PairPriceItem {
   pairAddress?: string;
   symbol?: string | null;
-  /** Price denominated in ETH, as an 18-decimal fixed-point string. */
+  /**
+   * Discriminates the two record types in the mixed upstream feed:
+   *   'ROUTE_POOL'  — quote-asset oracle (priceEthWad is ETH-denominated)
+   *   'LAUNCH_POOL' — per-token price (priceEthWad is quote-denominated)
+   */
+  source?: string | null;
+  /** Price as an 18-decimal fixed-point string (denomination depends on `source`). */
   priceEthWad?: string | number | null;
-  /** Injected below — USD price derived from `priceEthWad`. */
+  /** Injected below — USD price, populated for ROUTE_POOL rows only. */
   priceUsd?: number;
   [key: string]: unknown;
 }
@@ -47,6 +53,8 @@ interface PairPricesPayload {
     items?: PairPriceItem[];
     ethPriceUsd?: number;
     rates?: Record<string, number>;
+    /** Injected below — LAUNCH_POOL token prices in their own quote asset. */
+    tokenPrices?: Record<string, number>;
     [key: string]: unknown;
   };
   [key: string]: unknown;
@@ -117,7 +125,16 @@ export async function GET() {
       fetchWithTimeout(
         'https://testnet.vibevibe.fun/api/v1/chains/46630/v6/pair-prices',
         {
-          headers: { 'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0' },
+          // The upstream sits behind Cloudflare bot management. A bare
+          // `Mozilla/5.0` UA is challenged with a 403 "Just a moment..." page,
+          // which silently degraded this route to the ETH-only fallback and
+          // left every non-ETH quote asset unpriced. Send the same full browser
+          // UA that `/api/proxyVibe` uses (verified to pass the challenge).
+          headers: {
+            'Accept': 'application/json',
+            'User-Agent':
+              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          },
           cache: 'no-store',
         },
         UPSTREAM_TIMEOUT_MS
@@ -145,6 +162,11 @@ export async function GET() {
     if (!pairsRes || !pairsRes.ok) {
       // Upstream unavailable: still answer 200 with a valid ETH/WETH rate map
       // so the dashboard's oracle gate opens instead of hanging.
+      // Log the exact cause — a silent fallback here is what previously hid the
+      // Cloudflare bot-challenge (403) that left every non-ETH asset unpriced.
+      console.warn(
+        `[proxyPrices] pair-prices unavailable (status=${pairsRes ? pairsRes.status : 'no-response'}); serving ETH-only fallback`
+      );
       const fallback = buildFallbackPayload(ethPriceUsd);
       cachedResponse = fallback;
       lastCacheTime = now;
@@ -186,6 +208,26 @@ export async function GET() {
       '0x0000000000000000000000000000000000000000': ethPriceUsd
     };
 
+    // The upstream `v6/pair-prices` feed is NOT homogeneous. It mixes two
+    // semantically different record types, distinguished by `source`:
+    //
+    //   ROUTE_POOL  — the QUOTE-ASSET oracle. `priceEthWad` is the price of ONE
+    //                 unit of the quote asset (AAPL, SPCX, VIBE, …) denominated
+    //                 in ETH. Multiplying by the ETH oracle yields its USD price.
+    //                 These are the ONLY rows that may populate `rates`.
+    //
+    //   LAUNCH_POOL — per-token launch-pool prices. `priceEthWad` is the price of
+    //                 ONE token denominated in that pair's OWN quote asset, NOT
+    //                 in ETH. Multiplying these by the ETH oracle is
+    //                 dimensionally wrong and, because they vastly outnumber the
+    //                 ROUTE_POOL rows, previously overwrote the authoritative
+    //                 quote-asset rates (last-writer-wins). That corruption made
+    //                 every non-ETH-paired token misprice its market cap/volume.
+    //
+    // We therefore partition the feed: only ROUTE_POOL rows feed `rates`.
+    const quoteRates: Record<string, number> = {};
+    const tokenPrices: Record<string, number> = {};
+
     items.forEach((item, i) => {
       const resolvedSym =
         symbols[i]?.status === 'success'
@@ -193,27 +235,40 @@ export async function GET() {
           : null;
       if (resolvedSym) item.symbol = resolvedSym;
 
-      // `priceEthWad` is denominated in ETH (confirmed against the raw VibeVibe
-      // API payload), so converting to USD requires multiplying by the ETH
-      // oracle price. This is the CORRECT conversion and must be kept.
-      const priceEth = Number(item.priceEthWad || 0) / 1e18;
-      const priceUsd = priceEth * ethPriceUsd;
-      item.priceUsd = priceUsd;
+      const pricePairUnits = Number(item.priceEthWad || 0) / 1e18;
 
-      // Key the rate map by BOTH the pair address and the resolved symbol. The
-      // address is the authoritative key: `pairSymbol` can be null (e.g.
-      // MOBLAND) or mislabeled, so consumers must be able to look up by address.
-      if (item.pairAddress) {
-        rates[String(item.pairAddress).toLowerCase()] = priceUsd;
-      }
-      if (resolvedSym) {
-        rates[resolvedSym] = priceUsd;
+      if (item.source === 'ROUTE_POOL') {
+        // Quote-asset oracle: ETH-denominated → convert with the ETH oracle.
+        const priceUsd = pricePairUnits * ethPriceUsd;
+        item.priceUsd = priceUsd;
+
+        // Key by BOTH the quote address and the resolved symbol. The address is
+        // authoritative: `pairSymbol` can be null (e.g. MOBLAND) or mislabeled.
+        if (item.pairAddress) {
+          quoteRates[String(item.pairAddress).toLowerCase()] = priceUsd;
+        }
+        if (resolvedSym) {
+          quoteRates[resolvedSym] = priceUsd;
+        }
+      } else {
+        // LAUNCH_POOL: quote-denominated token price. Never multiply by ETH and
+        // never write into `rates` — that would clobber the quote-asset oracle.
+        if (item.pairAddress) {
+          tokenPrices[String(item.pairAddress).toLowerCase()] = pricePairUnits;
+        }
       }
     });
+
+    // Merge the authoritative quote-asset rates into the response map.
+    Object.assign(rates, quoteRates);
 
     if (data && data.data) {
       data.data.ethPriceUsd = ethPriceUsd;
       data.data.rates = rates;
+      // Exposed for diagnostics/consumers that need raw quote-denominated token
+      // prices. Deliberately kept OUT of `rates` so it can never shadow the
+      // authoritative quote-asset oracle.
+      data.data.tokenPrices = tokenPrices;
       data.data.items = items;
     }
 
