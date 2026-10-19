@@ -14,6 +14,7 @@ import LiveTelemetryPanel from "@/components/ui/LiveTelemetryPanel";
 import RadarHeader, { type RadarFilter } from "@/components/ui/RadarHeader";
 import TradingTerminal from "@/components/ui/TradingTerminal";
 import UserPortfolio from "@/components/ui/UserPortfolio";
+import LiveSignalFeed, { SignalTicker } from "@/components/LiveSignalFeed";
 import {
   shortenAddress,
   formatTimeLive,
@@ -315,6 +316,9 @@ export default function Home() {
   const [isSearchingChain, setIsSearchingChain] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [isSyncingLive, setIsSyncingLive] = useState(false);
+  // Live signal terminal is a toggleable right drawer so it never takes over
+  // the radar grid. Closed by default on mobile, open on wide screens.
+  const [isSignalFeedOpen, setIsSignalFeedOpen] = useState(false);
 
   const [apeAmount, setApeAmount] = useState<string>("0.005");
   const [sellAmount, setSellAmount] = useState<string>("1000");
@@ -1908,6 +1912,24 @@ export default function Home() {
       />
 
       <main className="p-8 max-w-6xl mx-auto">
+        {/* Live signal ticker — always visible, opens the full terminal drawer. */}
+        <div className="mb-6 flex items-center gap-2">
+          <div className="min-w-0 flex-1">
+            <SignalTicker onOpen={() => setIsSignalFeedOpen(true)} />
+          </div>
+          <button
+            onClick={() => setIsSignalFeedOpen((open) => !open)}
+            className={`shrink-0 rounded-lg border px-3 py-2 text-xs font-bold transition-colors ${
+              isSignalFeedOpen
+                ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-400"
+                : "border-zinc-800 bg-zinc-900 text-zinc-400 hover:border-emerald-500/40 hover:text-emerald-400"
+            }`}
+            aria-pressed={isSignalFeedOpen}
+          >
+            {isSignalFeedOpen ? "HIDE FEED" : "LIVE FEED"}
+          </button>
+        </div>
+
         {selectedToken ? (
           <div className="animate-in fade-in slide-in-from-bottom-4 duration-300">
             <button
@@ -2091,6 +2113,33 @@ export default function Home() {
           </div>
         )}
       </main>
+
+      {/* Live signal terminal — toggleable right drawer. */}
+      {isSignalFeedOpen && (
+        <>
+          <div
+            className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm"
+            onClick={() => setIsSignalFeedOpen(false)}
+            aria-hidden
+          />
+          <aside className="fixed right-0 top-0 z-50 flex h-full w-full max-w-md flex-col border-l border-zinc-800 bg-zinc-950 p-3 shadow-2xl animate-in slide-in-from-right duration-300">
+            <div className="mb-2 flex items-center justify-between px-1">
+              <span className="text-xs font-bold tracking-widest text-zinc-400">
+                SIGNAL TERMINAL
+              </span>
+              <button
+                onClick={() => setIsSignalFeedOpen(false)}
+                className="rounded-md border border-zinc-800 px-2 py-1 text-xs text-zinc-400 transition-colors hover:border-red-500/50 hover:text-red-400"
+              >
+                CLOSE ✕
+              </button>
+            </div>
+            <div className="min-h-0 flex-1">
+              <LiveSignalFeed />
+            </div>
+          </aside>
+        </>
+      )}
     </div>
   );
 }
