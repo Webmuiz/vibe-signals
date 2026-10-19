@@ -1,4 +1,4 @@
-import { createClient, type Client } from '@libsql/client';
+import { createClient, type Client } from '@libsql/client/web';
 
 /**
  * Turso / libSQL singleton client.
@@ -23,11 +23,17 @@ const globalForDb = globalThis as unknown as {
 };
 
 function resolveDatabaseUrl(): string | undefined {
-  return (
+  const raw =
     process.env.TURSO_DATABASE_URL ||
     process.env.NEXT_PUBLIC_TURSO_DATABASE_URL ||
-    undefined
-  );
+    undefined;
+
+  if (!raw) return undefined;
+
+  // The `@libsql/client/web` adapter only speaks HTTP(S). Cloudflare Workers
+  // cannot open raw libSQL (WebSocket/TCP) connections, so normalize any
+  // `libsql://` URL to `https://` before handing it to the client.
+  return raw.replace(/^libsql:\/\//i, 'https://');
 }
 
 /**
