@@ -4,11 +4,21 @@ import { getDb } from '@/lib/db';
 export const dynamic = 'force-dynamic';
 
 /**
- * Columns the dashboard's `DBToken` shape depends on. `creator_holding_pct`
- * is not guaranteed to exist on every deployment of the `launches` table, so
- * it is resolved defensively (see `resolveCreatorHoldingColumn`) instead of
- * being hard-coded into the projection — a missing column would otherwise
- * fail the entire query and blank the dashboard.
+ * Columns the dashboard's `DBToken` shape depends on.
+ *
+ * Two columns are NOT guaranteed to exist on every deployment of the
+ * `launches` table and are therefore kept out of the projection:
+ *
+ *   - `creator_holding_pct` — probed at runtime (see `hasCreatorHoldingColumn`)
+ *     and appended only when present.
+ *   - `pair_currency_address` — absent from the live Turso schema. Selecting
+ *     it raised `SQL_INPUT_ERROR: no such column`, which failed the whole
+ *     query and returned 503. The mapper defaults `pairCurrencyAddress` to
+ *     `null` instead; the dashboard already tolerates that (it falls back to
+ *     `pair_symbol` / the native-asset address).
+ *
+ * A missing column in this list would otherwise fail the entire query and
+ * blank the dashboard.
  */
 const BASE_COLUMNS = [
     'launch_id',
@@ -16,7 +26,6 @@ const BASE_COLUMNS = [
     'amm_address',
     'dev_address',
     'pair_symbol',
-    'pair_currency_address',
     'liquidity_deposited',
     'curve_progress',
     'launch_block',
@@ -100,9 +109,13 @@ export async function GET() {
                 devAddress: row.dev_address,
                 ethDeposited: row.liquidity_deposited,
                 // `pairSymbol` may be null (e.g. MOBLAND) — preserve null rather than
-                // coercing to 'ETH', which would misprice a non-ETH pair. The
-                // authoritative quote-asset key is `pairCurrencyAddress`.
+                // coercing to 'ETH', which would misprice a non-ETH pair.
                 pairSymbol: row.pair_symbol ?? null,
+                // `pair_currency_address` is not part of the live schema (see
+                // BASE_COLUMNS), so this is always null today. Kept in the
+                // response shape so consumers do not have to special-case its
+                // absence, and so it starts populating automatically if the
+                // column is ever added back to the projection.
                 pairCurrencyAddress: row.pair_currency_address ?? null,
                 curveProgress: row.curve_progress,
                 launchBlock: row.launch_block,
