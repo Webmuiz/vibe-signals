@@ -47,6 +47,13 @@ function SyncingText() {
   return <span className="text-gray-400 animate-pulse">Syncing...</span>;
 }
 
+/** Clamp a numeric value into [min, max]; non-finite input yields `fallback`. */
+function clampNumber(value: unknown, min: number, max: number, fallback: number): number {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return fallback;
+  return Math.min(max, Math.max(min, num));
+}
+
 export default function LiveTelemetryPanel({
   isSyncingLive,
   oracleReady = false,
@@ -59,6 +66,7 @@ export default function LiveTelemetryPanel({
   momentum,
   volumeUsd,
   volumeEth,
+  mindshare,
 }: LiveTelemetryPanelProps) {
   // The synthetic graduation-target estimates produced by `calculateTokenMetrics`
   // at 100% curve progress. These are NOT real market caps and must never be
@@ -96,6 +104,40 @@ export default function LiveTelemetryPanel({
     (momentum?.volumeEth || volumeEth)
   );
   const showVolumeSyncing = !oracleReady || (isSyncingLive && !hasResolvedVolume);
+
+  // Social mindshare is only "live" when the payload exists, is not the zeroed
+  // default row, and carries a real (non-zero) composite score. Anything else
+  // degrades to the existing momentum-only layout.
+  const hasLiveMindshare =
+    !!mindshare &&
+    typeof mindshare === 'object' &&
+    !mindshare.isDefault &&
+    Number.isFinite(Number(mindshare.computedMindshareScore)) &&
+    Number(mindshare.computedMindshareScore) > 0;
+
+  const mindshareScore = hasLiveMindshare
+    ? clampNumber(mindshare!.computedMindshareScore, 0, 100, 0)
+    : 0;
+  // Sentiment is stored in [-1, 1]; render it as a signed, 2dp figure.
+  const sentimentScore = hasLiveMindshare
+    ? clampNumber(mindshare!.sentimentScore, -1, 1, 0)
+    : 0;
+  const organicRatio = hasLiveMindshare
+    ? clampNumber(mindshare!.organicRatio, 0, 1, 0)
+    : 0;
+
+  const sentimentColor =
+    sentimentScore > 0.05
+      ? 'text-emerald-400'
+      : sentimentScore < -0.05
+        ? 'text-red-400'
+        : 'text-zinc-400';
+  const mindshareColor =
+    mindshareScore >= 70
+      ? 'text-emerald-400'
+      : mindshareScore >= 40
+        ? 'text-yellow-400'
+        : 'text-red-400';
 
   return (
     <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
@@ -158,6 +200,42 @@ export default function LiveTelemetryPanel({
           <div className="bg-red-500 h-full transition-all" style={{ width: `${momentum?.sellPct ?? 50}%` }} />
         </div>
       </div>
+
+      {/* Social momentum — rendered only when live mindshare telemetry exists. */}
+      {hasLiveMindshare && (
+        <div className="mt-6 pt-5 border-t border-zinc-800">
+          <div className="flex justify-between items-center mb-3">
+            <span className="text-zinc-400 uppercase tracking-wider font-bold text-xs">Social Momentum</span>
+            <span className="text-zinc-500 text-xs">
+              {mindshare!.telegramMentions24h} mentions · {mindshare!.uniqueChannels} channels
+            </span>
+          </div>
+
+          <div className="grid grid-cols-3 gap-3 text-xs">
+            <div className="p-3 bg-zinc-950 rounded-lg border border-zinc-800">
+              <span className="text-zinc-500 block mb-1">Mindshare</span>
+              <span className={`font-bold font-mono ${mindshareColor}`}>{mindshareScore.toFixed(0)}/100</span>
+            </div>
+            <div className="p-3 bg-zinc-950 rounded-lg border border-zinc-800">
+              <span className="text-zinc-500 block mb-1">Sentiment</span>
+              <span className={`font-bold font-mono ${sentimentColor}`}>
+                {sentimentScore > 0 ? '+' : ''}{sentimentScore.toFixed(2)}
+              </span>
+            </div>
+            <div className="p-3 bg-zinc-950 rounded-lg border border-zinc-800">
+              <span className="text-zinc-500 block mb-1">Organic</span>
+              <span className="font-bold font-mono text-emerald-400">{(organicRatio * 100).toFixed(0)}%</span>
+            </div>
+          </div>
+
+          <div className="mt-3 w-full bg-zinc-950 rounded-full h-1.5 overflow-hidden border border-zinc-800">
+            <div
+              className={`h-full transition-all ${mindshareScore >= 70 ? 'bg-emerald-500' : mindshareScore >= 40 ? 'bg-yellow-500' : 'bg-red-500'}`}
+              style={{ width: `${Math.max(1, mindshareScore)}%` }}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

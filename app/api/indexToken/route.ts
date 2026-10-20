@@ -8,17 +8,56 @@ const PRIMARY_RPC_URL =
     process.env.PRIMARY_RPC_URL || 'https://rpc.testnet.chain.robinhood.com';
 const SECONDARY_RPC_URL = process.env.SECONDARY_RPC_URL;
 
-const publicClient = createPublicClient({
-    transport: fallback(
-        [
-            http(PRIMARY_RPC_URL, { timeout: 20000, retryCount: 5, retryDelay: 1000 }),
-            ...(SECONDARY_RPC_URL
-                ? [http(SECONDARY_RPC_URL, { timeout: 20000, retryCount: 5, retryDelay: 1000 })]
-                : []),
-        ],
-        { rank: false, retryCount: 2 }
-    ),
-});
+/**
+ * Hard ceiling on the entire upstream phase (RPC + Vibe API).
+ *
+ * Cloudflare Workers previously hung for the full 120s platform limit when the
+ * testnet RPC stalled. Every upstream call is now bound to a request-scoped
+ * `AbortController` that fires after this budget, so the handler can answer
+ * with a 504 instead of being killed by the platform.
+ *
+ * Sized against measured latency, not a round number: the public Robinhood
+ * testnet RPC answers `eth_blockNumber` in ~1.1s, `eth_call` in ~1.4s and a
+ * 5k-block `eth_getLogs` in ~1.8s. A full index walks ~8 sequential
+ * round-trips, so an 8s budget aborted healthy requests. 25s leaves headroom
+ * for a cold start while still failing ~5x faster than the 120s platform cap.
+ */
+const UPSTREAM_TIMEOUT_MS = 25_000;
+
+/**
+ * Build a public client whose transport is bound to `signal`.
+ *
+ * The signal is threaded into `http()` so viem aborts the in-flight `fetch`
+ * (and stops retrying) the moment the deadline fires. A per-request client is
+ * required because a module-scope client cannot carry a request-scoped signal.
+ */
+function createRequestClient(signal: AbortSignal) {
+    return createPublicClient({
+        transport: fallback(
+            [
+                http(PRIMARY_RPC_URL, {
+                    timeout: UPSTREAM_TIMEOUT_MS,
+                    retryCount: 1,
+                    retryDelay: 500,
+                    fetchOptions: { signal },
+                }),
+                ...(SECONDARY_RPC_URL
+                    ? [
+                          http(SECONDARY_RPC_URL, {
+                              timeout: UPSTREAM_TIMEOUT_MS,
+                              retryCount: 1,
+                              retryDelay: 500,
+                              fetchOptions: { signal },
+                          }),
+                      ]
+                    : []),
+            ],
+            { rank: false, retryCount: 1 }
+        ),
+    });
+}
+
+type RequestClient = ReturnType<typeof createRequestClient>;
 
 // ---------------------------------------------------------------------------
 // Verified V6 addresses (vibevibe.md §2). Do not invent addresses.
@@ -68,17 +107,30 @@ const ZAP_ROUTER_LOWER = ZAP_ROUTER.toLowerCase();
 const LOG_CHUNK_SIZE = 5000n;
 
 /**
+ * Maximum number of 5,000-block windows scanned backwards when locating a
+ * token's `LaunchCreated` event (12 windows ≈ 60,000 blocks).
+ *
+ * Without this cap the loop walked from the chain head all the way to block 0
+ * for any token that was never launched on the factory. On a busy testnet that
+ * is thousands of `eth_getLogs` calls, which blew the Worker CPU limit and
+ * surfaced as Cloudflare error 1102 instead of a clean 404.
+ */
+const MAX_LAUNCH_SCAN_WINDOWS = 12;
+
+/**
  * Scans factory logs backwards in 5,000-block chunks to find the LaunchCreated
  * event for a token. Returns the decoded args (or null if not found).
  */
-async function findLaunchEvent(token: `0x${string}`) {
-    const currentBlock = await publicClient.getBlockNumber();
+async function findLaunchEvent(client: RequestClient, token: `0x${string}`) {
+    const currentBlock = await client.getBlockNumber();
     let toBlock = currentBlock;
     let fromBlock = toBlock > LOG_CHUNK_SIZE ? toBlock - LOG_CHUNK_SIZE : 0n;
+    let windows = 0;
 
-    while (toBlock >= 0n) {
+    while (toBlock >= 0n && windows < MAX_LAUNCH_SCAN_WINDOWS) {
+        windows += 1;
         try {
-            const logs = await publicClient.getContractEvents({
+            const logs = await client.getContractEvents({
                 address: FACTORY_ADDRESS,
                 abi: FACTORY_ABI,
                 eventName: 'LaunchCreated',
@@ -113,6 +165,7 @@ async function findLaunchEvent(token: `0x${string}`) {
  * (nothing was dumped) rather than NaN.
  */
 async function calculateSniperRetention(
+    client: RequestClient,
     token: `0x${string}`,
     curve: `0x${string}`,
     launchBlock: number,
@@ -123,7 +176,7 @@ async function calculateSniperRetention(
     // Only the launch block itself matters for block-0 sniping, so we scan a
     // single, tight range instead of the whole history (keeps RPC usage low).
     try {
-        const buys = await publicClient.getContractEvents({
+        const buys = await client.getContractEvents({
             address: curve,
             abi: CURVE_ABI,
             eventName: 'CurveBuy',
@@ -158,7 +211,7 @@ async function calculateSniperRetention(
     const balances = await Promise.all(
         wallets.map(async (wallet) => {
             try {
-                const bal = (await publicClient.readContract({
+                const bal = (await client.readContract({
                     address: token,
                     abi: TOKEN_ABI,
                     functionName: 'balanceOf',
@@ -182,8 +235,12 @@ async function calculateSniperRetention(
  * `pairProceeds` (both in the pair currency, 18 decimals). The zap router is
  * never counted as a trader — the real wallet is `recipient`.
  */
-async function sumCurveTrades(curve: `0x${string}`, startBlock: bigint) {
-    const currentBlock = await publicClient.getBlockNumber();
+async function sumCurveTrades(
+    client: RequestClient,
+    curve: `0x${string}`,
+    startBlock: bigint
+) {
+    const currentBlock = await client.getBlockNumber();
     let volumePairUnits = 0;
     let buyCount = 0;
     let sellCount = 0;
@@ -197,14 +254,14 @@ async function sumCurveTrades(curve: `0x${string}`, startBlock: bigint) {
         const chunkFrom = fromBlock;
         try {
             const [buys, sells] = await Promise.all([
-                publicClient.getContractEvents({
+                client.getContractEvents({
                     address: curve,
                     abi: CURVE_ABI,
                     eventName: 'CurveBuy',
                     fromBlock: chunkFrom,
                     toBlock,
                 }),
-                publicClient.getContractEvents({
+                client.getContractEvents({
                     address: curve,
                     abi: CURVE_ABI,
                     eventName: 'CurveSell',
@@ -260,14 +317,21 @@ export async function GET(request: Request) {
         return NextResponse.json({ error: 'Invalid address' }, { status: 400 });
     }
 
+    let checksummedToken: `0x${string}`;
     try {
-        let checksummedToken: `0x${string}`;
-        try {
-            checksummedToken = getAddress(tokenAddress);
-        } catch {
-            return NextResponse.json({ error: 'Invalid checksum address' }, { status: 400 });
-        }
+        checksummedToken = getAddress(tokenAddress);
+    } catch {
+        return NextResponse.json({ error: 'Invalid checksum address' }, { status: 400 });
+    }
 
+    // Request-scoped abort budget. `controller.abort()` fires after
+    // UPSTREAM_TIMEOUT_MS, which both cancels the in-flight viem `fetch` calls
+    // (via `fetchOptions.signal`) and rejects the race below.
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT_MS);
+    const publicClient = createRequestClient(controller.signal);
+
+    try {
         // 1. Token metadata (name/symbol) straight from the ERC-20.
         const [name, symbol] = await Promise.all([
             publicClient
@@ -295,7 +359,7 @@ export async function GET(request: Request) {
         }
 
         // 3. Fall back to the LaunchCreated event if curveOf returned nothing.
-        const launchLog = await findLaunchEvent(checksummedToken);
+        const launchLog = await findLaunchEvent(publicClient, checksummedToken);
         if (!curveAddress && launchLog) {
             const args = launchLog.args as { curve?: string };
             if (args.curve) curveAddress = args.curve.toLowerCase() as `0x${string}`;
@@ -389,12 +453,14 @@ export async function GET(request: Request) {
         // 6. Real momentum from CurveBuy/CurveSell (pairCost / pairProceeds).
         const launchBlock = launchLog ? Number(launchLog.blockNumber) : Number(await publicClient.getBlockNumber());
         const { volumePairUnits, buyCount, sellCount } = await sumCurveTrades(
+            publicClient,
             curveAddress,
             BigInt(launchBlock)
         );
 
         // 6b. Real sniper retention: unique block-0 buyers still holding.
         const retention = await calculateSniperRetention(
+            publicClient,
             checksummedToken,
             curveAddress,
             launchBlock,
@@ -446,7 +512,14 @@ export async function GET(request: Request) {
         // env vars were not yet bound, taking down the whole route module.
         const db = getDb();
 
-        await db.execute({
+        // Cloudflare Workers cap an invocation at 50 subrequests. Every
+        // `db.execute` is one HTTP round-trip to Turso, so issuing them in a
+        // loop burns the budget and eventually throws "Too many subrequests by
+        // single Worker invocation". We therefore accumulate the statements and
+        // flush them in ONE network request via the libSQL batch API.
+        const statements: Array<{ sql: string; args: any[] }> = [];
+
+        statements.push({
             sql: `INSERT INTO launches (
                     launch_id, token_address, amm_address, dev_address, pair_symbol,
                     pair_currency_address,
@@ -501,6 +574,9 @@ export async function GET(request: Request) {
             ],
         });
 
+        // Single round-trip: libSQL sends the whole array as one HTTP request.
+        await db.batch(statements);
+
         return NextResponse.json({
             success: true,
             token: dbPayload,
@@ -511,7 +587,24 @@ export async function GET(request: Request) {
             },
         });
     } catch (error) {
+        // An aborted signal means the upstream RPC (or Vibe API) exceeded the
+        // request budget. Answer 504 immediately instead of letting the Worker
+        // hang until the 120s platform limit kills it.
+        if (controller.signal.aborted) {
+            console.error(
+                `JIT Indexing timed out after ${UPSTREAM_TIMEOUT_MS}ms for ${tokenAddress}`
+            );
+            return NextResponse.json(
+                {
+                    error: 'Upstream RPC timed out',
+                    detail: `No response within ${UPSTREAM_TIMEOUT_MS / 1000}s`,
+                },
+                { status: 504 }
+            );
+        }
         console.error('JIT Indexing error:', error);
         return NextResponse.json({ error: 'Failed to index token' }, { status: 500 });
+    } finally {
+        clearTimeout(timeout);
     }
 }

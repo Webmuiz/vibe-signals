@@ -68,8 +68,16 @@ const MAX_TRANSFER_LOGS = 2_000;
 const MAX_HOLDER_CANDIDATES = 150;
 /** Total wall-clock budget for holder discovery before we give up. */
 const HOLDER_DISCOVERY_TIMEOUT_MS = 10_000;
-/** Concurrent `balanceOf` reads (only used if multicall is unavailable). */
-const BALANCE_READ_CONCURRENCY = 10;
+/**
+ * Concurrent `balanceOf` reads per chunk.
+ *
+ * Robinhood Chain Testnet has no Multicall3 deployment, so `publicClient.multicall`
+ * throws `ChainDoesNotSupportContract` immediately. We therefore read balances
+ * with plain `eth_call`s, but in bounded parallel chunks: 20 concurrent reads
+ * per chunk keeps the RPC happy while still finishing 150 holders in ~8
+ * round-trips instead of 150 sequential ones.
+ */
+const BALANCE_READ_CHUNK_SIZE = 20;
 
 const ERC20_ABI = parseAbi([
     'event Transfer(address indexed from, address indexed to, uint256 value)',
@@ -184,13 +192,17 @@ async function collectHolderCandidates(tokenAddress: Address): Promise<Address[]
 }
 
 /**
- * Read `balanceOf` for every candidate in ONE `eth_call` batch.
+ * Read `balanceOf` for every candidate using chunked parallel `eth_call`s.
  *
- * The previous implementation issued up to 150 sequential `readContract`
- * calls (10 at a time), each with its own retry budget — easily minutes of
- * wall clock on a degraded RPC. `multicall` collapses that into a single
- * round-trip and `allowFailure` keeps individual reverts from sinking the
- * whole batch.
+ * `publicClient.multicall` is NOT usable here: Robinhood Chain Testnet has no
+ * Multicall3 deployment, so viem throws `ChainDoesNotSupportContract` before
+ * any request is made. The old code caught that and fell back to a slow
+ * sequential loop, which routinely blew the 10s discovery budget.
+ *
+ * Instead we split the candidates into chunks of `BALANCE_READ_CHUNK_SIZE`
+ * (20) and process the chunks sequentially, issuing the reads *inside* each
+ * chunk concurrently with `Promise.all`. Individual failures are caught and
+ * treated as `0n` so one bad `eth_call` cannot sink the whole chunk.
  */
 async function readBalances(
     tokenAddress: Address,
@@ -199,52 +211,31 @@ async function readBalances(
     const balances = new Map<string, bigint>();
     if (candidates.length === 0) return balances;
 
-    try {
-        const results = await publicClient.multicall({
-            contracts: candidates.map((owner) => ({
-                address: tokenAddress,
-                abi: ERC20_ABI,
-                functionName: 'balanceOf' as const,
-                args: [owner] as const,
-            })),
-            allowFailure: true,
-        });
+    for (let i = 0; i < candidates.length; i += BALANCE_READ_CHUNK_SIZE) {
+        const chunk = candidates.slice(i, i + BALANCE_READ_CHUNK_SIZE);
 
-        results.forEach((outcome, index) => {
-            if (outcome.status === 'success') {
-                balances.set(
-                    candidates[index].toLowerCase(),
-                    outcome.result as bigint
-                );
-            }
-        });
-
-        return balances;
-    } catch (error) {
-        console.warn(
-            `[cabal] multicall balanceOf failed for ${tokenAddress}: ${errorMessage(error)}`
-        );
-    }
-
-    // Fallback: bounded concurrent reads, only if the batch call itself failed
-    // (e.g. the RPC does not expose `eth_call` batching).
-    for (let i = 0; i < candidates.length; i += BALANCE_READ_CONCURRENCY) {
-        const batch = candidates.slice(i, i + BALANCE_READ_CONCURRENCY);
-        const settled = await Promise.allSettled(
-            batch.map((owner) =>
-                publicClient.readContract({
-                    address: tokenAddress,
-                    abi: ERC20_ABI,
-                    functionName: 'balanceOf',
-                    args: [owner],
-                })
-            )
+        const results = await Promise.all(
+            chunk.map(async (owner) => {
+                try {
+                    const value = (await publicClient.readContract({
+                        address: tokenAddress,
+                        abi: ERC20_ABI,
+                        functionName: 'balanceOf',
+                        args: [owner],
+                    })) as bigint;
+                    return value;
+                } catch (error) {
+                    // A single revert / RPC hiccup must not kill the chunk.
+                    console.warn(
+                        `[cabal] balanceOf failed for ${owner} on ${tokenAddress}: ${errorMessage(error)}`
+                    );
+                    return 0n;
+                }
+            })
         );
 
-        settled.forEach((outcome, index) => {
-            if (outcome.status === 'fulfilled') {
-                balances.set(batch[index].toLowerCase(), outcome.value as bigint);
-            }
+        results.forEach((value, index) => {
+            balances.set(chunk[index].toLowerCase(), value);
         });
     }
 
