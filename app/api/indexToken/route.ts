@@ -471,13 +471,19 @@ export async function GET(request: Request) {
         const buyPct = totalTrades > 0 ? Math.round((buyCount / totalTrades) * 100) : 50;
         const sellPct = 100 - buyPct;
 
-        let timestamp = new Date().toISOString();
+        // `created_at` is IMMUTABLE launch metadata: it must reflect the
+        // on-chain block timestamp of the `LaunchCreated` event, never the
+        // moment this JIT re-index happened to run. Falling back to
+        // `Date.now()` here is what pushed 18-day-old tokens above 8-minute-old
+        // launches. When the block timestamp cannot be read we return `null`
+        // and let the INSERT/UPDATE below preserve whatever is already stored.
+        let timestamp: string | null = null;
         if (launchLog) {
             try {
                 const block = await publicClient.getBlock({ blockNumber: launchLog.blockNumber });
                 timestamp = new Date(Number(block.timestamp) * 1000).toISOString();
-            } catch {
-                /* keep current time */
+            } catch (blockErr) {
+                console.warn('Could not read launch block timestamp:', blockErr);
             }
         }
 
@@ -520,13 +526,18 @@ export async function GET(request: Request) {
         const statements: Array<{ sql: string; args: any[] }> = [];
 
         statements.push({
+            // `created_at` is deliberately ABSENT from the `DO UPDATE SET`
+            // clause: it is immutable launch metadata and must never be
+            // rewritten by a later JIT re-index. On a fresh INSERT we coalesce
+            // to the on-chain block timestamp, falling back to the insert time
+            // only when the block read failed (the row has no prior value).
             sql: `INSERT INTO launches (
                     launch_id, token_address, amm_address, dev_address, pair_symbol,
                     pair_currency_address,
                     liquidity_deposited, curve_progress, launch_block, name, symbol,
                     created_at, volume_eth, buy_count, sell_count, buy_pct, sell_pct,
                     block_zero_buyers, sniper_wallets, sniper_retention_pct
-                  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), ?, ?, ?, ?, ?, ?, ?, ?)
                   ON CONFLICT(token_address) DO UPDATE SET
                     launch_id = excluded.launch_id,
                     amm_address = excluded.amm_address,
@@ -541,7 +552,7 @@ export async function GET(request: Request) {
                     launch_block = excluded.launch_block,
                     name = excluded.name,
                     symbol = excluded.symbol,
-                    created_at = excluded.created_at,
+                    -- created_at intentionally NOT updated (immutable).
                     volume_eth = excluded.volume_eth,
                     buy_count = excluded.buy_count,
                     sell_count = excluded.sell_count,
@@ -579,6 +590,8 @@ export async function GET(request: Request) {
 
         return NextResponse.json({
             success: true,
+            // `created_at` is the on-chain launch timestamp (null when the
+            // block read failed and the stored value was preserved).
             token: dbPayload,
             sniperRetention: {
                 totalSnipers: retention.totalSnipers,

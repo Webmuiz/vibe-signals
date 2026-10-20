@@ -228,6 +228,39 @@ interface DBToken {
 }
 
 /**
+ * Safely resolves ANY timestamp variant (epoch ms number, epoch seconds number,
+ * ISO string, SQLite `YYYY-MM-DD HH:MM:SS` string) to epoch milliseconds.
+ *
+ * Returns `0` for unparseable input so callers can rank undated rows last
+ * without ever fabricating a "now" value (which is what pushed old tokens to
+ * the top of the feed).
+ */
+const getTime = (t: unknown): number => {
+  if (t == null) return 0;
+  if (typeof t === 'number') {
+    // Heuristic: values below 1e12 are epoch SECONDS, not milliseconds.
+    return Number.isFinite(t) ? (t < 1e12 ? t * 1000 : t) : 0;
+  }
+  if (typeof t === 'string') {
+    const trimmed = t.trim();
+    if (!trimmed) return 0;
+    // Numeric strings ("1729000000000" / "1729000000").
+    if (/^\d+$/.test(trimmed)) {
+      const num = Number(trimmed);
+      return num < 1e12 ? num * 1000 : num;
+    }
+    // SQLite CURRENT_TIMESTAMP is UTC but lacks the `Z` designator; without it
+    // `new Date()` parses it as LOCAL time and shifts the row by the offset.
+    const normalized = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d+)?$/.test(trimmed)
+      ? `${trimmed.replace(' ', 'T')}Z`
+      : trimmed;
+    const ms = new Date(normalized).getTime();
+    return Number.isNaN(ms) ? 0 : ms;
+  }
+  return 0;
+};
+
+/**
  * Resolves a row's launch time in epoch milliseconds.
  *
  * `created_at` is the canonical column written by the indexer and by
@@ -237,9 +270,9 @@ interface DBToken {
  */
 function getTokenCreatedAtMs(token: DBToken): number | null {
   const raw = token.created_at ?? token.timestamp;
-  if (!raw) return null;
-  const ms = new Date(raw).getTime();
-  return Number.isNaN(ms) ? null : ms;
+  if (raw == null || raw === '') return null;
+  const ms = getTime(raw);
+  return ms > 0 ? ms : null;
 }
 
 /**
@@ -380,6 +413,9 @@ export default function Home() {
   const [securityResult, setSecurityResult] = useState<SecuritySimulationResult | null>(null);
   const [cabalResult, setCabalResult] = useState<CabalAnalysisResult | null>(null);
   const [mindshare, setMindshare] = useState<MindshareTelemetry | null>(null);
+  // True while the cluster analysis for the selected token is in flight. The
+  // Cabal panel uses this to veil its graph container instead of unmounting it.
+  const [isCabalLoading, setIsCabalLoading] = useState(false);
 
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const activeTokenRef = useRef<string | null>(null);
@@ -757,7 +793,16 @@ export default function Home() {
             // `filteredTokens` referentially stable across the 10s poll, so
             // memoized cards and the detail drawer do not re-render (and the
             // Vibe Score does not flicker) when nothing actually changed.
-            const merged = { ...existing, ...row };
+            //
+            // `created_at` is IMMUTABLE: the row we already hold carries the
+            // original on-chain launch time, so it always wins over whatever
+            // the poll returned (which may be null or a re-index artifact).
+            const merged: DBToken = {
+              ...existing,
+              ...row,
+              created_at: existing.created_at ?? row.created_at,
+              timestamp: existing.timestamp ?? row.timestamp,
+            };
             if (!shallowEqualToken(existing, merged)) {
               byAddress.set(key, merged);
               changed = true;
@@ -798,11 +843,13 @@ export default function Home() {
 
   const processedTokens = useMemo(() => {
     return dbTokens.map(db => {
-      // Safely handle time calculation
-      const timestampToParse = db.created_at || db.timestamp || Date.now();
-      const timeLiveMs = new Date(timestampToParse).getTime();
+      // Safely handle time calculation. `getTime` accepts epoch numbers, epoch
+      // seconds, ISO strings and SQLite `YYYY-MM-DD HH:MM:SS` strings. An
+      // unparseable value yields 0 (never `Date.now()`), so a row with no
+      // timestamp is not silently promoted to "just launched".
+      const timeLiveMs = getTime(db.created_at ?? db.timestamp);
       let timeSinceLaunchMins = 0;
-      if (!isNaN(timeLiveMs) && timeLiveMs > 0) {
+      if (timeLiveMs > 0) {
         timeSinceLaunchMins = Math.max(0, Math.floor((Date.now() - timeLiveMs) / 60000));
       }
 
@@ -941,11 +988,19 @@ export default function Home() {
         const key = (db.token_address || db.tokenAddress || '').toLowerCase();
         if (key) byAddress.set(key, db);
       }
+      // Strict chronological order: newest launch first. `getTime` normalises
+      // every timestamp variant (number / numeric string / ISO / SQLite) so a
+      // string-typed `created_at` can never sort ahead of a numeric one.
       return [...rows].sort((a, b) => {
         const aDb = byAddress.get(a.contractAddress.toLowerCase());
         const bDb = byAddress.get(b.contractAddress.toLowerCase());
-        if (!aDb || !bDb) return 0;
-        return compareTokensNewestFirst(aDb, bDb);
+        const aMs = getTime(aDb?.created_at ?? aDb?.timestamp);
+        const bMs = getTime(bDb?.created_at ?? bDb?.timestamp);
+        if (aMs !== bMs) return bMs - aMs;
+        // Deterministic tie-break so re-renders never reshuffle equal rows.
+        const aId = Number(aDb?.launch_id ?? aDb?.launchId ?? 0);
+        const bId = Number(bDb?.launch_id ?? bDb?.launchId ?? 0);
+        return bId - aId;
       });
     };
 
@@ -1118,18 +1173,6 @@ export default function Home() {
             // Fire-and-forget so a slow/failed write never blocks the UI.
             void (async () => {
               try {
-                const row = {
-                  launch_id: Number(launch.id) || undefined,
-                  token_address: launch.tokenAddress,
-                  amm_address: launch.curveAddress || null,
-                  dev_address: launch.launcherAddress || launch.creatorAddress || query,
-                  liquidity_deposited: currentEth,
-                  pair_symbol: resolvedSymbol,
-                  curve_progress: curveProgress,
-                  name: launch.name || null,
-                  symbol: launch.symbol || null,
-                  created_at: launch.createdAt || new Date().toISOString(),
-                };
                 const res = await fetch(
                   `/api/indexToken?address=${encodeURIComponent(launch.tokenAddress)}`,
                   { method: 'GET', cache: 'no-store' }
@@ -1137,6 +1180,29 @@ export default function Home() {
                 if (!res.ok) {
                   console.warn('[JIT] Turso index failed:', res.status);
                 } else {
+                  // The route is authoritative for `created_at` (it reads the
+                  // on-chain launch block timestamp). Prefer its value and only
+                  // fall back to the launch payload's own creation epoch — never
+                  // to `Date.now()`, which would reorder the feed.
+                  const indexed = (await res
+                    .json()
+                    .catch(() => null)) as { token?: Partial<DBToken> } | null;
+                  const indexedCreatedAt =
+                    indexed?.token?.created_at ?? launch.createdAt ?? null;
+
+                  const row: DBToken = {
+                    launch_id: Number(launch.id) || undefined,
+                    token_address: launch.tokenAddress,
+                    amm_address: launch.curveAddress || null,
+                    dev_address: launch.launcherAddress || launch.creatorAddress || query,
+                    liquidity_deposited: currentEth,
+                    pair_symbol: resolvedSymbol,
+                    curve_progress: curveProgress,
+                    name: launch.name || null,
+                    symbol: launch.symbol || null,
+                    created_at: indexedCreatedAt ?? undefined,
+                  };
+
                   // Optimistically surface it in the grid immediately; the
                   // polling loop will reconcile it.
                   // Insert the freshly indexed token into the feed WITHOUT
@@ -1147,11 +1213,26 @@ export default function Home() {
                   // the current head therefore lands in its correct position
                   // instead of hijacking the top of the grid.
                   setDbTokens((prev) => {
-                    const exists = prev.some(
-                      (t) => (t.token_address || t.tokenAddress || '').toLowerCase() === launch.tokenAddress.toLowerCase()
+                    const key = launch.tokenAddress.toLowerCase();
+                    const existingIdx = prev.findIndex(
+                      (t) => (t.token_address || t.tokenAddress || '').toLowerCase() === key
                     );
-                    if (exists) return prev;
-                    return [...prev, row as DBToken].sort(compareTokensNewestFirst);
+                    if (existingIdx >= 0) {
+                      // Already present: keep the ORIGINAL created_at and only
+                      // refresh the mutable metrics.
+                      const existing = prev[existingIdx];
+                      const merged: DBToken = {
+                        ...existing,
+                        ...row,
+                        created_at: existing.created_at ?? row.created_at,
+                        timestamp: existing.timestamp ?? row.timestamp,
+                      };
+                      if (shallowEqualToken(existing, merged)) return prev;
+                      const next = [...prev];
+                      next[existingIdx] = merged;
+                      return next.sort(compareTokensNewestFirst);
+                    }
+                    return [...prev, row].sort(compareTokensNewestFirst);
                   });
                 }
               } catch (upsertErr) {
@@ -1199,6 +1280,8 @@ export default function Home() {
     setSecurityResult(null);
     setCabalResult(null);
     setMindshare(null);
+    // The panel keeps its frame mounted and shows a veil while this is true.
+    setIsCabalLoading(true);
 
     /**
      * Hydrates the telemetry panel from on-chain/contract metrics when the
@@ -1659,16 +1742,16 @@ export default function Home() {
     const fetchAnalytics = async () => {
       const address = selectedToken.contractAddress;
       const endpoints = [
-        { url: `/api/analytics/security/${address}`, apply: setSecurityResult },
-        { url: `/api/analytics/cabal/${address}`, apply: setCabalResult },
-        { url: `/api/analytics/mindshare/${address}`, apply: setMindshare },
+        { url: `/api/analytics/security/${address}`, apply: setSecurityResult, key: 'security' },
+        { url: `/api/analytics/cabal/${address}`, apply: setCabalResult, key: 'cabal' },
+        { url: `/api/analytics/mindshare/${address}`, apply: setMindshare, key: 'mindshare' },
       ] as const;
 
       // Each panel is fetched independently under its own 8s deadline. A slow
       // or hung route (notably the on-chain cabal scan) aborts on its own and
       // leaves the other panels free to render whatever they resolved.
       await Promise.all(
-        endpoints.map(async ({ url, apply }) => {
+        endpoints.map(async ({ url, apply, key }) => {
           const controller = new AbortController();
           const timer = setTimeout(() => controller.abort(), ANALYTICS_TIMEOUT_MS);
           try {
@@ -1688,6 +1771,9 @@ export default function Home() {
             }
           } finally {
             clearTimeout(timer);
+            // Lift the cabal veil as soon as the cluster request settles —
+            // success, failure or timeout — so it can never stay stuck.
+            if (key === 'cabal' && isMounted) setIsCabalLoading(false);
           }
         })
       );
@@ -2188,6 +2274,7 @@ export default function Home() {
                   creatorHoldingPct={creatorHoldingPct}
                   diamondHandsHoldersPct={selectedToken.diamondHandsHoldersPct}
                   cabalResult={cabalResult}
+                  isLoading={isCabalLoading}
                 />
 
                 <DeveloperProfilerPanel

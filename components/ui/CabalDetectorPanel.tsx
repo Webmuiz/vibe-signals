@@ -22,6 +22,12 @@ interface CabalDetectorPanelProps {
    * Purely additive: when absent the panel renders exactly as before.
    */
   cabalResult?: CabalAnalysisResult | null;
+  /**
+   * True while the cluster analysis for the CURRENTLY selected token is in
+   * flight. Drives a translucent veil over the graph container so the frame
+   * and its dimensions stay locked instead of snapping to the fallback SVG.
+   */
+  isLoading?: boolean;
 }
 
 const RISK_TEXT_COLOR: Record<CabalRiskLevel, string> = {
@@ -160,6 +166,7 @@ export default function CabalDetectorPanel({
   creatorHoldingPct,
   diamondHandsHoldersPct,
   cabalResult,
+  isLoading = false,
 }: CabalDetectorPanelProps) {
   // Live analysis is only usable when present, not flagged unavailable, and
   // carries a recognised risk level. Everything else degrades to the original
@@ -173,6 +180,11 @@ export default function CabalDetectorPanel({
 
   const graph = live ? parseClusterGraph(live.clusterGraphJson) : null;
   const useLiveGraph = !!graph && graph.nodes.length > 0;
+
+  // While a new token's analysis is in flight we keep the LAST rendered graph
+  // (or the fallback) mounted and simply veil it. This is what prevents the
+  // container from unmounting and snapping to the static SVG for 1–2s.
+  const showVeil = isLoading && !useLiveGraph;
 
   const positioned = useMemo(
     () => (useLiveGraph ? layoutNodes(graph!.nodes) : []),
@@ -434,6 +446,21 @@ export default function CabalDetectorPanel({
                 </span>
               </div>
             )}
+          </div>
+        )}
+
+        {/*
+          Loading veil. Absolutely positioned INSIDE the fixed-height graph
+          container, so the frame, its `h-56` height and every child keep their
+          exact geometry while the new token's cluster analysis resolves. It
+          fades in/out instead of swapping the DOM tree.
+        */}
+        {showVeil && (
+          <div className="absolute inset-0 z-40 flex flex-col items-center justify-center gap-2 rounded-lg bg-zinc-950/60 backdrop-blur-[2px] transition-opacity duration-200 pointer-events-none">
+            <span className="h-6 w-6 rounded-full border-2 border-zinc-700 border-t-emerald-400 animate-spin" />
+            <span className="text-[10px] uppercase tracking-wider text-zinc-400">
+              Mapping clusters…
+            </span>
           </div>
         )}
 
