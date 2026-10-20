@@ -20,6 +20,27 @@ const PAGE_LIMIT = 50;
 const MAX_PAGES = 5;
 const MAX_EVENTS = 500;
 
+/**
+ * Upstream request headers.
+ *
+ * CRITICAL: the bare `Mozilla/5.0` UA that this route previously sent is
+ * rejected by the VibeVibe edge with HTTP 403 Forbidden. Verified live:
+ *
+ *   User-Agent: Mozilla/5.0                          -> 403
+ *   User-Agent: <full Chrome UA>                     -> 200
+ *   (no User-Agent header at all)                    -> 200
+ *
+ * A 403 is non-retryable, so every launch fetch returned null, both surfaces
+ * reported `ok: false`, and the route answered 502 — which pinned the Dev
+ * Profiler panel to "Syncing..." forever. The full Chrome UA below matches
+ * `app/api/proxyPrices/route.ts`, which reaches the same host successfully.
+ */
+const UPSTREAM_HEADERS: Record<string, string> = {
+  Accept: 'application/json',
+  'User-Agent':
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+};
+
 interface VibePage {
   limit?: number;
   nextCursor?: string | null;
@@ -75,13 +96,21 @@ async function fetchPage(
         return (await res.json()) as VibeResponse;
       }
 
-      // Explicit, non-silent upstream error logging.
+      // Explicit, non-silent upstream error logging. The status code is the
+      // single most useful diagnostic here: a 403 means the request was
+      // rejected on its headers (see UPSTREAM_HEADERS), a 404 means the
+      // resource path is wrong, and a 5xx means the upstream is degraded.
+      // Swallowing these previously hid a permanent 403 behind a generic
+      // "upstream unavailable" 502.
       console.error(
-        `[proxyDev] Upstream error: ${res.status} ${res.statusText} (attempt ${attempt}/${MAX_ATTEMPTS}) ${url}`
+        `[proxyDev] Upstream HTTP ${res.status} ${res.statusText} (attempt ${attempt}/${MAX_ATTEMPTS}) ${url}`
       );
 
-      // Retry once on 503 BOARD_BUSY (and any other 5xx) — these are transient.
-      const isRetryable = res.status === 503 || res.status >= 500;
+      // Retry only on transient failures: 5xx (including 503 BOARD_BUSY) and
+      // 429 rate limiting. A 4xx such as 403/404 is deterministic — retrying
+      // it just burns the request budget and delays the failure.
+      const isRetryable =
+        res.status === 429 || res.status === 503 || res.status >= 500;
       if (isRetryable && attempt < MAX_ATTEMPTS) {
         await new Promise((resolve) => setTimeout(resolve, 400));
         continue;
@@ -200,7 +229,7 @@ export async function GET(request: Request) {
   if (!targetDev) return NextResponse.json({ error: 'Missing address' }, { status: 400 });
 
   try {
-    const headers = { 'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0' };
+    const headers = UPSTREAM_HEADERS;
 
     // 1. Fetch all launches created by this wallet.
     //
@@ -219,25 +248,31 @@ export async function GET(request: Request) {
     const v6Url = `${VIBE_API_BASE}/v6/wallets/${targetDev}/launches?limit=${PAGE_LIMIT}`;
     const legacyUrl = `${VIBE_API_BASE}/launches?creatorAddress=${targetDev}&limit=${PAGE_LIMIT}`;
 
-    const v6Launches = await fetchLaunchesWithFallback(
-      (cursor) =>
-        `${VIBE_API_BASE}/v6/wallets/${targetDev}/launches?limit=${PAGE_LIMIT}` +
-        (cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''),
-      () => `${VIBE_API_BASE}/v6/wallets/${targetDev}/launches?limit=${PAGE_LIMIT}`,
-      headers
-    );
+    // The two surfaces are INDEPENDENT, so they are fetched concurrently.
+    // Sequentially they cost the sum of both latencies (each up to
+    // MAX_PAGES * MAX_ATTEMPTS round-trips), which on a cold Worker start
+    // pushed the route toward its wall-clock budget. `Promise.all` makes the
+    // cost the slower of the two instead.
+    const [v6Launches, legacyLaunches] = await Promise.all([
+      fetchLaunchesWithFallback(
+        (cursor) =>
+          `${VIBE_API_BASE}/v6/wallets/${targetDev}/launches?limit=${PAGE_LIMIT}` +
+          (cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''),
+        () => `${VIBE_API_BASE}/v6/wallets/${targetDev}/launches?limit=${PAGE_LIMIT}`,
+        headers
+      ),
+      // Legacy surface is a secondary, non-fatal merge. A failure here must
+      // NOT discard the V6 results.
+      fetchLaunchesWithFallback(
+        (cursor) =>
+          `${VIBE_API_BASE}/launches?creatorAddress=${targetDev}&limit=${PAGE_LIMIT}` +
+          (cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''),
+        () => `${VIBE_API_BASE}/launches?creatorAddress=${targetDev}&limit=${PAGE_LIMIT}`,
+        headers
+      ),
+    ]);
 
     console.log('[proxyDev] V6 URL:', v6Url, 'ok:', v6Launches.ok, 'items:', v6Launches.items.length);
-
-    // Legacy surface is a secondary, non-fatal merge. A failure here must NOT
-    // discard the V6 results.
-    const legacyLaunches = await fetchLaunchesWithFallback(
-      (cursor) =>
-        `${VIBE_API_BASE}/launches?creatorAddress=${targetDev}&limit=${PAGE_LIMIT}` +
-        (cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''),
-      () => `${VIBE_API_BASE}/launches?creatorAddress=${targetDev}&limit=${PAGE_LIMIT}`,
-      headers
-    );
 
     console.log('[proxyDev] V5 URL:', legacyUrl, 'ok:', legacyLaunches.ok, 'items:', legacyLaunches.items.length);
     console.log(

@@ -228,6 +228,42 @@ interface DBToken {
 }
 
 /**
+ * Resolves a row's launch time in epoch milliseconds.
+ *
+ * `created_at` is the canonical column written by the indexer and by
+ * `/api/indexToken`; `timestamp` is the legacy alias still present on older
+ * rows. Returns `null` when neither parses, so callers can decide how to rank
+ * undated rows instead of silently treating them as "now".
+ */
+function getTokenCreatedAtMs(token: DBToken): number | null {
+  const raw = token.created_at ?? token.timestamp;
+  if (!raw) return null;
+  const ms = new Date(raw).getTime();
+  return Number.isNaN(ms) ? null : ms;
+}
+
+/**
+ * Chronological feed comparator: newest launch first.
+ *
+ * The launch feed must always be ordered by creation time, never by the order
+ * in which rows happened to enter `dbTokens`. Without this, a token resolved
+ * via search (or any row appended by the poller) could outrank a genuinely
+ * newer launch. Rows with an unparseable timestamp sink to the bottom, and
+ * ties fall back to the numeric `launch_id` so the order stays deterministic
+ * across re-renders.
+ */
+function compareTokensNewestFirst(a: DBToken, b: DBToken): number {
+  const aMs = getTokenCreatedAtMs(a);
+  const bMs = getTokenCreatedAtMs(b);
+  if (aMs !== null && bMs !== null && aMs !== bMs) return bMs - aMs;
+  if (aMs === null && bMs !== null) return 1;
+  if (aMs !== null && bMs === null) return -1;
+  const aId = Number(a.launch_id ?? a.launchId ?? 0);
+  const bId = Number(b.launch_id ?? b.launchId ?? 0);
+  return bId - aId;
+}
+
+/**
  * Shallow-compares two DBToken rows. Used by the 10s polling reconciler to
  * decide whether a token actually changed; when it did not, the previous
  * object reference is reused so downstream `useMemo`/`React.memo` boundaries
@@ -728,10 +764,13 @@ export default function Home() {
             }
           }
 
-          // Preserve insertion order but avoid allocating a new array (and thus
-          // new element identities) when nothing changed.
+          // Avoid allocating a new array (and thus new element identities) when
+          // nothing changed.
           if (!changed && byAddress.size === prev.length) return prev;
-          return Array.from(byAddress.values());
+          // The feed is strictly chronological: newly launched tokens surface at
+          // the top by creation time, regardless of the order the indexer
+          // returned them in or the order rows were first inserted.
+          return Array.from(byAddress.values()).sort(compareTokensNewestFirst);
         });
 
         if (
@@ -892,6 +931,24 @@ export default function Home() {
   }, [dbTokens, liveMetrics]);
 
   const filteredTokens = useMemo(() => {
+    // `processedTokens` preserves the order of `dbTokens`, which is already
+    // chronological. The sort below is a defensive guarantee: every filter tab
+    // renders newest-launch-first even if a row was inserted out of order
+    // (e.g. a token resolved via search or a late-arriving poll batch).
+    const sortNewestFirst = <T extends { contractAddress: string }>(rows: T[]): T[] => {
+      const byAddress = new Map<string, DBToken>();
+      for (const db of dbTokens) {
+        const key = (db.token_address || db.tokenAddress || '').toLowerCase();
+        if (key) byAddress.set(key, db);
+      }
+      return [...rows].sort((a, b) => {
+        const aDb = byAddress.get(a.contractAddress.toLowerCase());
+        const bDb = byAddress.get(b.contractAddress.toLowerCase());
+        if (!aDb || !bDb) return 0;
+        return compareTokensNewestFirst(aDb, bDb);
+      });
+    };
+
     let list = processedTokens;
     if (searchQuery) {
       const query = searchQuery.trim().toLowerCase();
@@ -903,14 +960,14 @@ export default function Home() {
     switch (activeFilter) {
       case "alpha":
         // High Alpha: strong Vibe Score.
-        return list.filter(t => t.score >= 70);
+        return sortNewestFirst(list.filter(t => t.score >= 70));
       case "graduating":
         // Graduating Soon: on the curve and close to (but not yet) graduated.
-        return list.filter(t => t.bondingCurveProgress > 85 && t.bondingCurveProgress < 100);
+        return sortNewestFirst(list.filter(t => t.bondingCurveProgress > 85 && t.bondingCurveProgress < 100));
       case "clean":
         // Clean Devs: creator holds nothing AND the dev has never dumped a
         // pre-graduation token.
-        return list.filter(t => t.creatorHoldingPct === 0 && t.devStats.totalPreGradDumps === 0);
+        return sortNewestFirst(list.filter(t => t.creatorHoldingPct === 0 && t.devStats.totalPreGradDumps === 0));
       case "risk":
         // High Risk / Sniped. This tab must rely ONLY on fields that are
         // guaranteed to exist on every grid row — `top5Pct` and
@@ -921,16 +978,18 @@ export default function Home() {
         //      concentrated supply, snipers and dumper devs).
         //   2. Block-0 snipers that are dumping (retention <= 50%).
         //   3. A creator bag > 15% when the grid row happens to carry it.
-        return list.filter(
-          (t) =>
-            t.score <= 30 ||
-            (t.blockZeroBuyers > 0 && t.diamondHandsHoldersPct <= 50) ||
-            t.creatorHoldingPct > 15
+        return sortNewestFirst(
+          list.filter(
+            (t) =>
+              t.score <= 30 ||
+              (t.blockZeroBuyers > 0 && t.diamondHandsHoldersPct <= 50) ||
+              t.creatorHoldingPct > 15
+          )
         );
       default:
-        return list;
+        return sortNewestFirst(list);
     }
-  }, [processedTokens, activeFilter, searchQuery]);
+  }, [processedTokens, activeFilter, searchQuery, dbTokens]);
 
   useEffect(() => {
     const fetchOnChain = async () => {
@@ -1080,12 +1139,19 @@ export default function Home() {
                 } else {
                   // Optimistically surface it in the grid immediately; the
                   // polling loop will reconcile it.
+                  // Insert the freshly indexed token into the feed WITHOUT
+                  // pinning it to index 0. Selection is already handled by
+                  // `setSelectedToken` above; the feed itself must stay purely
+                  // chronological, so the new row is merged in and the whole
+                  // list is re-sorted newest-first. A token that is older than
+                  // the current head therefore lands in its correct position
+                  // instead of hijacking the top of the grid.
                   setDbTokens((prev) => {
                     const exists = prev.some(
                       (t) => (t.token_address || t.tokenAddress || '').toLowerCase() === launch.tokenAddress.toLowerCase()
                     );
                     if (exists) return prev;
-                    return [row as DBToken, ...prev];
+                    return [...prev, row as DBToken].sort(compareTokensNewestFirst);
                   });
                 }
               } catch (upsertErr) {
@@ -1484,7 +1550,23 @@ export default function Home() {
         })
         .then(devJson => {
           const profiler = devJson?.data?.profiler;
-          if (!profiler) return;
+          if (!profiler) {
+            // A 200 with no `profiler` block is still a resolved request — it
+            // must settle the loading state, or the panel stays on "Syncing..."
+            // forever. Fall back to the grid-derived profile.
+            if (!isMounted) return;
+            setDevStats((prev) => {
+              if (prev) return prev;
+              const fallback = getDevProfile(creatorWallet, dbTokens);
+              return {
+                launches: fallback.launches,
+                gradRate: fallback.gradRate,
+                label: fallback.label,
+                color: fallback.color,
+              };
+            });
+            return;
+          }
 
           setSelectedToken((prevToken: any) => {
             if (!prevToken) return prevToken;
@@ -1528,6 +1610,25 @@ export default function Home() {
           // resolved-but-unavailable so SafetyAuditPanel stops showing
           // "Scanning..." forever.
           if (!isMounted) return;
+
+          // RESOLVE THE LOADING STATE.
+          //
+          // `isLoading` is derived as `devStats === null`, so leaving devStats
+          // null on failure pinned the panel to "Syncing..." indefinitely. We
+          // instead settle it from the grid-derived `devProfile` (local Turso
+          // data), which is a real — if less complete — answer. The panel then
+          // degrades gracefully instead of pulsing forever.
+          setDevStats((prev) => {
+            if (prev) return prev; // a concurrent success already won
+            const fallback = getDevProfile(creatorWallet, dbTokens);
+            return {
+              launches: fallback.launches,
+              gradRate: fallback.gradRate,
+              label: fallback.label,
+              color: fallback.color,
+            };
+          });
+
           setSelectedToken((prevToken: any) => {
             if (!prevToken) return prevToken;
             return {
@@ -1550,7 +1651,10 @@ export default function Home() {
     // Each request is independent and non-blocking: a failure leaves the
     // corresponding state null and the panel falls back to its existing data.
     // -----------------------------------------------------------------------
-    const ANALYTICS_TIMEOUT_MS = 8000;
+    // Must stay ABOVE the server-side cabal discovery budget (7s) so the route
+    // can return its explicit `unavailable` payload instead of the browser
+    // aborting first and silently rendering the static fallback graph.
+    const ANALYTICS_TIMEOUT_MS = 12000;
 
     const fetchAnalytics = async () => {
       const address = selectedToken.contractAddress;

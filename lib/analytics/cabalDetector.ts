@@ -193,6 +193,8 @@ export function analyzeCabalClusters(
     const uniqueHolders = [...byAddress.values()];
 
     // --- 2. Group holders by funding origin --------------------------------
+    const holderAddresses = new Set(uniqueHolders.map((h) => h.address));
+
     const byFunder = new Map<string, HolderData[]>();
     for (const holder of uniqueHolders) {
         if (!holder.funderAddress) continue;
@@ -201,16 +203,29 @@ export function analyzeCabalClusters(
         else byFunder.set(holder.funderAddress, [holder]);
     }
 
-    // A funder only counts as an overlap when it backs 2+ distinct wallets.
+    // A funder counts as an overlap in two distinct situations:
+    //
+    //   a) It backs 2+ distinct wallets. This is the classic shared-operator
+    //      pattern: one wallet dispenses gas to a set of fresh addresses.
+    //
+    //   b) It is itself a holder of this token. A funder that also holds the
+    //      token is not an outside party — the funding link is a direct
+    //      connection between two positions in the same asset. This covers the
+    //      reciprocal case (A funded B and B funded A), where each funder backs
+    //      exactly one wallet and rule (a) alone would report zero overlap.
     const overlappingFunders = [...byFunder.entries()].filter(
-        ([, group]) => group.length >= MIN_WALLETS_PER_FUNDER
+        ([funder, group]) =>
+            group.length >= MIN_WALLETS_PER_FUNDER || holderAddresses.has(funder)
     );
     const fundingSourceOverlapCount = overlappingFunders.length;
 
     // --- 3. Determine cluster membership ----------------------------------
     const clusterMembers = new Set<string>();
 
-    for (const [, group] of overlappingFunders) {
+    for (const [funder, group] of overlappingFunders) {
+        // The funder is a control point of the cluster even when it holds no
+        // supply of its own, so it is a member whenever it is a real holder.
+        if (holderAddresses.has(funder)) clusterMembers.add(funder);
         for (const holder of group) clusterMembers.add(holder.address);
     }
 
@@ -236,6 +251,24 @@ export function analyzeCabalClusters(
         balancePct: round2(holder.balancePct),
         isClusterMember: clusterMembers.has(holder.address),
     }));
+
+    // A funder is frequently NOT itself a holder (a fresh operator wallet that
+    // only distributes gas). The UI can only draw an edge between two existing
+    // nodes, so every overlapping funder gets a synthetic node with 0% supply.
+    // Without this the FUNDED_BY edges would be silently dropped on render.
+    const nodeIds = new Set(nodes.map((node) => node.id));
+    for (const [funder, group] of overlappingFunders) {
+        if (nodeIds.has(funder)) continue;
+        nodeIds.add(funder);
+        nodes.push({
+            id: funder,
+            label: shortAddress(funder),
+            balancePct: 0,
+            // The funder is the hub of its own cluster, so it is a member by
+            // definition — it is the shared control point.
+            isClusterMember: group.length >= MIN_WALLETS_PER_FUNDER,
+        });
+    }
 
     const edges: ClusterEdge[] = [];
     const seenEdges = new Set<string>();

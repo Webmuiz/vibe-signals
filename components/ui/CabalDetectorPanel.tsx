@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useMemo, useState } from "react";
 import type {
   CabalAnalysisResult,
   CabalRiskLevel,
@@ -106,28 +106,51 @@ function parseClusterGraph(raw: unknown): ParsedGraph | null {
  * "hub" the AMM node used to occupy) and the rest are distributed evenly
  * around it. Positions are percentages so they map straight onto the
  * absolutely-positioned container.
+ *
+ * Funder nodes are placed on an inner ring so their `FUNDED_BY` spokes stay
+ * short and readable instead of crossing the whole canvas.
  */
 function layoutNodes(nodes: ClusterNode[]): Array<ClusterNode & { x: number; y: number }> {
   const sorted = [...nodes].sort((a, b) => b.balancePct - a.balancePct);
   const hub = sorted[0];
-  const ring = sorted.slice(1);
+  const rest = sorted.slice(1);
 
   const positioned: Array<ClusterNode & { x: number; y: number }> = [
     { ...hub, x: 50, y: 50 },
   ];
 
-  ring.forEach((node, i) => {
-    const angle = (2 * Math.PI * i) / Math.max(1, ring.length) - Math.PI / 2;
-    const radiusX = 34;
-    const radiusY = 30;
-    positioned.push({
-      ...node,
-      x: 50 + Math.cos(angle) * radiusX,
-      y: 50 + Math.sin(angle) * radiusY,
+  // Synthetic funder nodes carry 0% supply, so sorting alone would scatter them
+  // among the holders. Pulling them onto a tighter ring keeps each FUNDED_BY
+  // spoke short and stops the lines from crossing the whole canvas.
+  const funders = rest.filter((node) => node.balancePct <= 0);
+  const holders = rest.filter((node) => node.balancePct > 0);
+
+  const place = (
+    group: ClusterNode[],
+    radiusX: number,
+    radiusY: number,
+    phase: number
+  ) => {
+    group.forEach((node, i) => {
+      const angle = (2 * Math.PI * i) / Math.max(1, group.length) + phase;
+      positioned.push({
+        ...node,
+        x: 50 + Math.cos(angle) * radiusX,
+        y: 50 + Math.sin(angle) * radiusY,
+      });
     });
-  });
+  };
+
+  place(holders, 34, 30, -Math.PI / 2);
+  place(funders, 20, 17, -Math.PI / 2 + Math.PI / Math.max(1, funders.length));
 
   return positioned;
+}
+
+/** `0x1234…5678` — compact but still recognisable. */
+function truncateAddress(address: string): string {
+  if (address.length <= 12) return address;
+  return `${address.slice(0, 6)}…${address.slice(-4)}`;
 }
 
 export default function CabalDetectorPanel({
@@ -151,8 +174,50 @@ export default function CabalDetectorPanel({
   const graph = live ? parseClusterGraph(live.clusterGraphJson) : null;
   const useLiveGraph = !!graph && graph.nodes.length > 0;
 
-  const positioned = useLiveGraph ? layoutNodes(graph!.nodes) : [];
-  const positionById = new Map(positioned.map((n) => [n.id, n]));
+  const positioned = useMemo(
+    () => (useLiveGraph ? layoutNodes(graph!.nodes) : []),
+    [useLiveGraph, graph]
+  );
+  const positionById = useMemo(
+    () => new Map(positioned.map((n) => [n.id, n])),
+    [positioned]
+  );
+
+  // Which node the pointer is over. Drives both the highlight ring and the
+  // floating detail card.
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
+
+  /**
+   * Reverse index of the FUNDED_BY edges: funded wallet -> the wallet that
+   * paid its gas. The tooltip needs this to answer "who is behind this
+   * address?" without re-walking the edge list on every render.
+   */
+  const funderByNode = useMemo(() => {
+    const map = new Map<string, string>();
+    if (!graph) return map;
+    for (const edge of graph.edges) {
+      if (edge.type !== 'FUNDED_BY') continue;
+      // Edges are emitted funder -> funded.
+      map.set(edge.target, edge.source);
+    }
+    return map;
+  }, [graph]);
+
+  /** Wallets funded by each funder, used to label the funder node itself. */
+  const fundedCountByFunder = useMemo(() => {
+    const map = new Map<string, number>();
+    if (!graph) return map;
+    for (const edge of graph.edges) {
+      if (edge.type !== 'FUNDED_BY') continue;
+      map.set(edge.source, (map.get(edge.source) ?? 0) + 1);
+    }
+    return map;
+  }, [graph]);
+
+  const hoveredNode = hoveredId ? positionById.get(hoveredId) ?? null : null;
+  const hoveredFunder = hoveredId ? funderByNode.get(hoveredId) ?? null : null;
+  const hoveredFundedCount = hoveredId ? fundedCountByFunder.get(hoveredId) ?? 0 : 0;
+  const hoveredIsFunder = hoveredFundedCount > 0;
 
   // Effective risk flag drives the fallback graph's colouring.
   const effectiveRisk = hasLiveVerdict
@@ -174,7 +239,7 @@ export default function CabalDetectorPanel({
         )}
       </div>
 
-      <div className="w-full bg-zinc-950 border border-zinc-800 rounded-lg mb-6 relative overflow-hidden h-56 group">
+      <div className="w-full bg-zinc-950 border border-zinc-800 rounded-lg mb-6 relative h-56 group">
         <svg className="absolute inset-0 w-full h-full z-0 pointer-events-none">
           {useLiveGraph ? (
             graph!.edges.map((edge, i) => {
@@ -182,6 +247,24 @@ export default function CabalDetectorPanel({
               const target = positionById.get(edge.target);
               if (!source || !target) return null;
               const isTransfer = edge.type === 'DIRECT_TRANSFER';
+              const isFundedBy = edge.type === 'FUNDED_BY';
+
+              // Spokes touching the hovered node are promoted so the cluster
+              // the user is inspecting reads as a single connected shape.
+              const touchesHover =
+                hoveredId !== null &&
+                (edge.source === hoveredId || edge.target === hoveredId);
+
+              const stroke = touchesHover
+                ? '#f59e0b'
+                : isFundedBy
+                  ? effectiveRisk
+                    ? '#ef4444'
+                    : '#52525b'
+                  : effectiveRisk
+                    ? '#ef4444'
+                    : '#3f3f46';
+
               return (
                 <line
                   key={`${edge.source}-${edge.target}-${i}`}
@@ -189,10 +272,17 @@ export default function CabalDetectorPanel({
                   y1={`${source.y}%`}
                   x2={`${target.x}%`}
                   y2={`${target.y}%`}
-                  stroke={effectiveRisk ? '#ef4444' : '#3f3f46'}
-                  strokeWidth={isTransfer ? 1 : 2}
+                  stroke={stroke}
+                  strokeWidth={touchesHover ? 2.5 : isTransfer ? 1 : 2}
                   strokeDasharray={isTransfer ? '4' : undefined}
-                  className={effectiveRisk ? 'animate-pulse opacity-60' : 'opacity-50'}
+                  strokeLinecap="round"
+                  className={
+                    touchesHover
+                      ? 'opacity-100'
+                      : effectiveRisk
+                        ? 'animate-pulse opacity-60'
+                        : 'opacity-50'
+                  }
                 />
               );
             })
@@ -218,20 +308,35 @@ export default function CabalDetectorPanel({
           {useLiveGraph ? (
             positioned.map((node, i) => {
               const isHub = i === 0;
-              const size = isHub ? 'w-12 h-12' : node.isClusterMember ? 'w-9 h-9' : 'w-7 h-7';
+              const isFunderNode = (fundedCountByFunder.get(node.id) ?? 0) > 0;
+              const size = isHub
+                ? 'w-12 h-12'
+                : isFunderNode
+                  ? 'w-8 h-8'
+                  : node.isClusterMember
+                    ? 'w-9 h-9'
+                    : 'w-7 h-7';
               const border = node.isClusterMember
                 ? effectiveRisk
                   ? 'border-red-500 shadow-[0_0_10px_rgba(239,68,68,0.3)]'
                   : 'border-emerald-500/50 shadow-[0_0_15px_rgba(16,185,129,0.2)]'
                 : 'border-zinc-600';
+              const isHovered = hoveredId === node.id;
               return (
                 <div
                   key={node.id}
-                  title={`${node.label} — ${node.balancePct.toFixed(2)}%`}
-                  className={`absolute -translate-x-1/2 -translate-y-1/2 ${size} rounded-full border-2 flex items-center justify-center bg-zinc-900 ${border}`}
+                  onMouseEnter={() => setHoveredId(node.id)}
+                  onMouseLeave={() =>
+                    setHoveredId((current) => (current === node.id ? null : current))
+                  }
+                  className={`absolute -translate-x-1/2 -translate-y-1/2 ${size} rounded-full border-2 flex items-center justify-center bg-zinc-900 pointer-events-auto cursor-help transition-transform duration-150 ${border} ${
+                    isHovered ? 'scale-125 z-20 ring-2 ring-amber-400/70' : ''
+                  }`}
                   style={{ top: `${node.y}%`, left: `${node.x}%` }}
                 >
-                  <span className="text-[8px] text-zinc-400">{node.balancePct.toFixed(1)}%</span>
+                  <span className="text-[8px] text-zinc-400">
+                    {isFunderNode ? '⛽' : `${node.balancePct.toFixed(1)}%`}
+                  </span>
                 </div>
               );
             })
@@ -259,6 +364,78 @@ export default function CabalDetectorPanel({
             </>
           )}
         </div>
+
+        {/*
+          Floating detail card. Anchored to the hovered node but clamped to the
+          container edges so it never spills outside the graph. `pointer-events-none`
+          keeps it from stealing the hover that produced it.
+        */}
+        {hoveredNode && (
+          <div
+            className="absolute z-30 pointer-events-none w-52 rounded-lg border border-zinc-700 bg-zinc-900/95 backdrop-blur px-3 py-2 shadow-xl shadow-black/60"
+            style={{
+              top: `${Math.min(Math.max(hoveredNode.y, 18), 82)}%`,
+              left: `${Math.min(Math.max(hoveredNode.x, 22), 78)}%`,
+              transform: 'translate(-50%, -140%)',
+            }}
+          >
+            <div className="flex items-center justify-between gap-2 mb-1">
+              <span className="text-[10px] uppercase tracking-wider text-zinc-500">
+                {hoveredIsFunder ? 'Gas Funder' : 'Holder'}
+              </span>
+              {hoveredNode.isClusterMember && (
+                <span
+                  className={`text-[9px] font-bold uppercase px-1.5 py-0.5 rounded border ${
+                    effectiveRisk
+                      ? 'bg-red-500/10 text-red-400 border-red-500/30'
+                      : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                  }`}
+                >
+                  Clustered
+                </span>
+              )}
+            </div>
+
+            <div className="font-mono text-xs text-zinc-100">
+              {truncateAddress(hoveredNode.id)}
+            </div>
+
+            <div className="mt-1.5 flex items-baseline justify-between">
+              <span className="text-[10px] text-zinc-500">Supply</span>
+              <span
+                className={`font-mono text-xs font-bold ${
+                  hoveredNode.balancePct > 0
+                    ? effectiveRisk
+                      ? 'text-red-400'
+                      : 'text-emerald-400'
+                    : 'text-zinc-500'
+                }`}
+              >
+                {hoveredNode.balancePct.toFixed(2)}%
+              </span>
+            </div>
+
+            {hoveredFunder && (
+              <div className="mt-1.5 pt-1.5 border-t border-zinc-800">
+                <span className="text-[10px] text-zinc-500 block">Funded by</span>
+                <span className="font-mono text-[11px] text-amber-400">
+                  {truncateAddress(hoveredFunder)}
+                </span>
+              </div>
+            )}
+
+            {hoveredIsFunder && (
+              <div className="mt-1.5 pt-1.5 border-t border-zinc-800">
+                <span className="text-[10px] text-zinc-500 block">
+                  Shared gas source for
+                </span>
+                <span className="font-mono text-[11px] text-amber-400">
+                  {hoveredFundedCount} wallet{hoveredFundedCount === 1 ? '' : 's'}
+                </span>
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="absolute top-3 left-4 bg-zinc-950/80 backdrop-blur rounded text-[10px] pointer-events-auto">
           {hasLiveVerdict ? (
