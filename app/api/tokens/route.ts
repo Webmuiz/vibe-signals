@@ -119,6 +119,13 @@ export async function GET() {
                 pairCurrencyAddress: row.pair_currency_address ?? null,
                 curveProgress: row.curve_progress,
                 launchBlock: row.launch_block,
+                // Emit BOTH keys. `created_at` is the canonical column name
+                // used by `/api/indexToken` and the JIT insert path; `timestamp`
+                // is the legacy alias the dashboard has always consumed. Sending
+                // only `timestamp` meant the 10s poll reconciler could never
+                // backfill `created_at` on a JIT-inserted row, leaving it
+                // permanently undated and mis-sorted in the feed.
+                created_at: row.created_at,
                 timestamp: row.created_at,
                 name: row.name || `Token #${row.launch_id}`,
                 ticker: row.symbol ? `$${row.symbol}` : '\$TKN',

@@ -797,11 +797,17 @@ export default function Home() {
             // `created_at` is IMMUTABLE: the row we already hold carries the
             // original on-chain launch time, so it always wins over whatever
             // the poll returned (which may be null or a re-index artifact).
+            //
+            // The fallback chain also crosses the two aliases so a row that was
+            // JIT-inserted with only one of them set is repaired on the next
+            // poll instead of staying permanently undated (and mis-sorted).
             const merged: DBToken = {
               ...existing,
               ...row,
-              created_at: existing.created_at ?? row.created_at,
-              timestamp: existing.timestamp ?? row.timestamp,
+              created_at:
+                existing.created_at ?? row.created_at ?? existing.timestamp ?? row.timestamp,
+              timestamp:
+                existing.timestamp ?? row.timestamp ?? existing.created_at ?? row.created_at,
             };
             if (!shallowEqualToken(existing, merged)) {
               byAddress.set(key, merged);
@@ -988,19 +994,15 @@ export default function Home() {
         const key = (db.token_address || db.tokenAddress || '').toLowerCase();
         if (key) byAddress.set(key, db);
       }
-      // Strict chronological order: newest launch first. `getTime` normalises
-      // every timestamp variant (number / numeric string / ISO / SQLite) so a
-      // string-typed `created_at` can never sort ahead of a numeric one.
+      // Strict chronological order: newest launch first. Delegate to the single
+      // canonical comparator so the grid, the poll reconciler and the JIT insert
+      // path can never disagree about ordering semantics (notably: undated rows
+      // sink to the bottom instead of being treated as epoch 0 and pinned top).
       return [...rows].sort((a, b) => {
         const aDb = byAddress.get(a.contractAddress.toLowerCase());
         const bDb = byAddress.get(b.contractAddress.toLowerCase());
-        const aMs = getTime(aDb?.created_at ?? aDb?.timestamp);
-        const bMs = getTime(bDb?.created_at ?? bDb?.timestamp);
-        if (aMs !== bMs) return bMs - aMs;
-        // Deterministic tie-break so re-renders never reshuffle equal rows.
-        const aId = Number(aDb?.launch_id ?? aDb?.launchId ?? 0);
-        const bId = Number(bDb?.launch_id ?? bDb?.launchId ?? 0);
-        return bId - aId;
+        if (!aDb || !bDb) return 0;
+        return compareTokensNewestFirst(aDb, bDb);
       });
     };
 
@@ -1190,6 +1192,21 @@ export default function Home() {
                   const indexedCreatedAt =
                     indexed?.token?.created_at ?? launch.createdAt ?? null;
 
+                  // HARD GUARD: a row with no resolvable launch time cannot be
+                  // placed in a strictly chronological feed. Inserting it would
+                  // either pin it to the top (getTime -> 0) or sink it to the
+                  // bottom, and the poll reconciler could never repair it if the
+                  // canonical row is also undated. So we refuse the optimistic
+                  // insert entirely and let the 10s poller deliver the canonical
+                  // row once `/api/indexToken` has persisted a real timestamp.
+                  if (parseCreatedAtMs(indexedCreatedAt) === null) {
+                    console.warn(
+                      '[JIT] Skipping optimistic insert — no resolvable created_at for',
+                      launch.tokenAddress
+                    );
+                    return;
+                  }
+
                   const row: DBToken = {
                     launch_id: Number(launch.id) || undefined,
                     token_address: launch.tokenAddress,
@@ -1200,7 +1217,8 @@ export default function Home() {
                     curve_progress: curveProgress,
                     name: launch.name || null,
                     symbol: launch.symbol || null,
-                    created_at: indexedCreatedAt ?? undefined,
+                    created_at: indexedCreatedAt as string,
+                    timestamp: indexedCreatedAt as string,
                   };
 
                   // Optimistically surface it in the grid immediately; the
