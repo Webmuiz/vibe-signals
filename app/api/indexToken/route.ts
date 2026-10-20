@@ -472,15 +472,26 @@ export async function GET(request: Request) {
         const sellPct = 100 - buyPct;
 
         // `created_at` is IMMUTABLE launch metadata: it must reflect the
-        // on-chain block timestamp of the `LaunchCreated` event, never the
-        // moment this JIT re-index happened to run. Falling back to
-        // `Date.now()` here is what pushed 18-day-old tokens above 8-minute-old
-        // launches. When the block timestamp cannot be read we return `null`
-        // and let the INSERT/UPDATE below preserve whatever is already stored.
+        // on-chain block timestamp of the launch, never the moment this JIT
+        // re-index happened to run. Falling back to `Date.now()` here is what
+        // pushed 18-day-old tokens above 8-minute-old launches.
+        //
+        // Two sources, in order of preference:
+        //   1. `launchLog.blockNumber` — the exact `LaunchCreated` block.
+        //   2. `launchBlock` — the persisted launch block. This matters for
+        //      tokens older than `MAX_LAUNCH_SCAN_WINDOWS` (60k blocks): the
+        //      event scan misses them, but `launch_block` is still known, and
+        //      a block timestamp is immutable so reading it is always correct.
+        //      Without this fallback those rows were written with
+        //      `created_at = NULL` and could never be repaired by a re-index.
+        //
+        // When neither block can be read we return `null` and let the
+        // INSERT/UPDATE below preserve whatever is already stored.
         let timestamp: string | null = null;
-        if (launchLog) {
+        const timestampBlock = launchLog?.blockNumber ?? (launchBlock > 0 ? BigInt(launchBlock) : null);
+        if (timestampBlock !== null) {
             try {
-                const block = await publicClient.getBlock({ blockNumber: launchLog.blockNumber });
+                const block = await publicClient.getBlock({ blockNumber: timestampBlock });
                 timestamp = new Date(Number(block.timestamp) * 1000).toISOString();
             } catch (blockErr) {
                 console.warn('Could not read launch block timestamp:', blockErr);
