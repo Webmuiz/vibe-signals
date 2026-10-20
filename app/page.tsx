@@ -1001,7 +1001,17 @@ export default function Home() {
       return [...rows].sort((a, b) => {
         const aDb = byAddress.get(a.contractAddress.toLowerCase());
         const bDb = byAddress.get(b.contractAddress.toLowerCase());
-        if (!aDb || !bDb) return 0;
+
+        // Rows with no `dbTokens` entry have no trustworthy launch time. The JIT
+        // hard guard deliberately refuses to insert them, so they only exist in
+        // `processedTokens` (e.g. an old searched token outside the 60k-block
+        // scan window). Returning 0 for those would FREEZE them at whatever
+        // index they already occupy — and searches are prepended to state, so
+        // they would stay pinned to the top forever. Sink them explicitly.
+        if (!aDb && !bDb) return 0;
+        if (!aDb) return 1;
+        if (!bDb) return -1;
+
         return compareTokensNewestFirst(aDb, bDb);
       });
     };
