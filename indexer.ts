@@ -638,12 +638,44 @@ async function runIndexer() {
 
                     console.log(`🚨 CLOUD SYNC: [#${launchId}] ${tokenName} ($${tokenSymbol})`);
 
+                    // `created_at` is IMMUTABLE launch metadata: it must reflect
+                    // the on-chain block timestamp of the `LaunchCreated` event,
+                    // never the moment this daemon happened to process the log.
+                    //
+                    // This INSERT previously omitted `created_at` entirely, so
+                    // every row written by the live watcher landed with NULL and
+                    // the feed silently degraded to `launch_id` ordering. The
+                    // JIT route (`/api/indexToken`) was patched for this, but it
+                    // only runs on a user-initiated search — it is not the writer
+                    // for the live feed. This is.
+                    //
+                    // `log.blockNumber` is the exact launch block, and a block
+                    // timestamp is immutable, so reading it is always correct.
+                    // If the read fails we pass `null` and let the INSERT's
+                    // COALESCE fall back to the insert time rather than aborting
+                    // the whole launch (a missing timestamp must never cost us
+                    // the row).
+                    let created_at: string | null = null;
+                    try {
+                        const launchBlockData = await publicClient.getBlock({
+                            blockNumber: log.blockNumber,
+                        });
+                        created_at = new Date(
+                            Number(launchBlockData.timestamp) * 1000
+                        ).toISOString();
+                    } catch (blockErr) {
+                        console.warn(
+                            `⚠ Could not read launch block timestamp for #${launchId}:`,
+                            blockErr instanceof Error ? blockErr.message : blockErr
+                        );
+                    }
+
                     await db.execute({
                         sql: `INSERT INTO launches (
                                 launch_id, token_address, amm_address, dev_address, pair_symbol,
                                 liquidity_deposited, curve_progress, launch_block, name, symbol,
-                                has_socials, cachedMarketCapFormatted, volume_eth
-                              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                has_socials, cachedMarketCapFormatted, volume_eth, created_at
+                              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
                               ON CONFLICT(token_address) DO UPDATE SET
                                 launch_id = excluded.launch_id,
                                 amm_address = excluded.amm_address,
@@ -656,7 +688,8 @@ async function runIndexer() {
                                 symbol = excluded.symbol,
                                 has_socials = excluded.has_socials,
                                 cachedMarketCapFormatted = excluded.cachedMarketCapFormatted,
-                                volume_eth = excluded.volume_eth`,
+                                volume_eth = excluded.volume_eth,
+                                created_at = COALESCE(launches.created_at, excluded.created_at)`,
                         args: [
                             launchId,
                             tokenAddress,
@@ -671,6 +704,7 @@ async function runIndexer() {
                             hasSocials ? 1 : 0,
                             live?.marketCapFormatted ?? null,
                             live?.volumeEth ?? 0,
+                            created_at,
                         ],
                     });
 
