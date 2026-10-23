@@ -526,11 +526,13 @@ export default function Home() {
 
 
 
-  // Fetch Native ETH Balance pinned to Robinhood Testnet
+  // Fetch Native ETH Balance pinned to Robinhood Testnet.
+  // 4s was pure RPC spam — a wallet balance does not need sub-15s freshness,
+  // and every tick burns public-RPC quota that the indexer also depends on.
   const { data: ethBalance } = useBalance({
     address,
     chainId: 46630,
-    query: { refetchInterval: 4000 }
+    query: { refetchInterval: 15000 }
   });
   const ethAvailable = ethBalance ? Number(ethBalance.formatted) : 0;
 
@@ -543,7 +545,7 @@ export default function Home() {
     chainId: 46630,
     query: {
       enabled: !!address && !!selectedToken?.contractAddress,
-      refetchInterval: 4000
+      refetchInterval: 15000
     }
   });
   const tokenBalance = rawTokenBalance ? Number(formatEther(rawTokenBalance as bigint)) : 0;
@@ -840,7 +842,9 @@ export default function Home() {
     };
 
     pollTokens();
-    const interval = setInterval(pollTokens, 10000);
+    // /api/tokens reads the `launches` table. 10s per open tab was a major
+    // contributor to the Turso read bill; 15s matches the leaderboard cadence.
+    const interval = setInterval(pollTokens, 15000);
     return () => {
       cancelled = true;
       clearInterval(interval);
@@ -1581,7 +1585,9 @@ export default function Home() {
     };
 
     fetchLiveToken();
-    const interval = setInterval(fetchLiveToken, 5000);
+    // Selected-token detail refresh. 5s hammered /api/proxyVibe (which fans out
+    // to several upstream calls); 15s is plenty for a detail panel.
+    const interval = setInterval(fetchLiveToken, 15000);
 
     if (selectedToken?.contractAddress) {
       fetch(`https://explorer.testnet.chain.robinhood.com/api/v2/tokens/${selectedToken.contractAddress}/holders`)

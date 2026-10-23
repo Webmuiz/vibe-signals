@@ -12,7 +12,12 @@
 -- Verified against production: `block_zero_buyers`, `sniper_wallets` and
 -- `sniper_retention_pct` already exist, so only this one column is added.
 --
--- SQLite has no `ADD COLUMN IF NOT EXISTS`; the runner's `_migrations` guard
--- keeps this a one-shot.
+-- IDEMPOTENCY NOTE: SQLite has no `ADD COLUMN IF NOT EXISTS`, and it does not
+-- allow a `WHERE` clause on `ALTER TABLE ... ADD COLUMN`. On a FRESH database
+-- `001_launches_table.sql` already creates this column, so this statement
+-- raises "duplicate column name". The runner treats that specific error as a
+-- successful no-op (see `isAlreadyAppliedError` in run-migrations.ts), which
+-- keeps this file correct on BOTH the legacy database (column absent → added)
+-- and a fresh one (column present → skipped).
 
 ALTER TABLE launches ADD COLUMN pair_currency_address TEXT;

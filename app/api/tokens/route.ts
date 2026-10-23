@@ -1,7 +1,13 @@
 import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
+import { cached } from '@/lib/responseCache';
 
 export const dynamic = 'force-dynamic';
+
+// The dashboard polls this route on a timer. Without a server-side cache every
+// open tab re-ran the same 50-row SELECT against Turso. 10s coalesces all
+// clients into one query per window.
+const TOKENS_CACHE_TTL_MS = 10_000;
 
 /**
  * Columns the dashboard's `DBToken` shape depends on.
@@ -90,17 +96,21 @@ export async function GET() {
     }
 
     try {
+        const formattedData = await cached<Record<string, unknown>[]>(
+            'tokens',
+            TOKENS_CACHE_TTL_MS,
+            async () => {
         const includeCreatorHolding = await hasCreatorHoldingColumn();
         const columns = includeCreatorHolding
             ? [...BASE_COLUMNS, 'creator_holding_pct']
             : [...BASE_COLUMNS];
 
-        const result = await db.execute({
+        const result = await db!.execute({
             sql: `SELECT ${columns.join(', ')} FROM launches ORDER BY launch_id DESC LIMIT 50`,
             args: [],
         });
 
-        const formattedData = result.rows.map((db) => {
+        return result.rows.map((db) => {
             const row = db as Record<string, unknown>;
             return {
                 launchId: row.launch_id,
@@ -142,6 +152,8 @@ export async function GET() {
                 sniper_retention_pct: row.sniper_retention_pct,
             };
         });
+            }
+        );
 
         return NextResponse.json(formattedData);
     } catch (error) {

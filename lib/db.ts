@@ -1,5 +1,20 @@
-import { createClient } from '@libsql/client/web';
+import { createClient, type Client } from '@libsql/client/web';
 import { getCloudflareContext } from '@opennextjs/cloudflare';
+
+/**
+ * Process-scoped client singleton.
+ *
+ * `getDb()` used to construct a fresh libSQL client on EVERY call. Each client
+ * opens its own connection pool / fetch agent, so a route that called `getDb()`
+ * per request paid connection setup on every poll — and, more importantly,
+ * defeated any HTTP keep-alive reuse. One client per process is both cheaper
+ * and the documented usage for `@libsql/client`.
+ *
+ * Keyed by URL so a credential/URL change (or a test harness) still gets a
+ * distinct client instead of silently reusing a stale one.
+ */
+let cachedClient: Client | null = null;
+let cachedClientKey: string | null = null;
 
 export function getDb() {
   let url: string | undefined =
@@ -25,8 +40,13 @@ export function getDb() {
   // Force protocol to https:// for Cloudflare Worker HTTP fetch compatibility
   const formattedUrl = url.replace(/^libsql:\/\//, 'https://');
 
-  return createClient({
+  const key = `${formattedUrl}::${authToken ?? ''}`;
+  if (cachedClient && cachedClientKey === key) return cachedClient;
+
+  cachedClient = createClient({
     url: formattedUrl,
     authToken,
   });
+  cachedClientKey = key;
+  return cachedClient;
 }

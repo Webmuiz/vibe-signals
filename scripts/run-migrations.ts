@@ -43,6 +43,21 @@ function splitStatements(sql: string): string[] {
         .filter((statement) => statement.length > 0);
 }
 
+/**
+ * SQLite has no `ADD COLUMN IF NOT EXISTS`, and `ALTER TABLE ... ADD COLUMN`
+ * rejects a `WHERE` guard. The only portable way to write an idempotent column
+ * migration is to attempt the ALTER and treat "duplicate column name" as
+ * success — the desired end state (column exists) is already true.
+ *
+ * This matters because `001_launches_table.sql` creates the full schema on a
+ * fresh database, so `004`'s ALTER is a guaranteed duplicate there, while on
+ * the legacy database the column is genuinely missing and the ALTER is needed.
+ */
+function isAlreadyAppliedError(error: unknown): boolean {
+    const message = error instanceof Error ? error.message : String(error);
+    return /duplicate column name/i.test(message);
+}
+
 async function ensureMigrationsTable(): Promise<void> {
     await db.execute({
         sql: `CREATE TABLE IF NOT EXISTS _migrations (
@@ -93,7 +108,15 @@ async function main(): Promise<void> {
 
         console.log(`→ Applying ${file} (${statements.length} statement(s))...`);
         for (const statement of statements) {
-            await db.execute({ sql: statement, args: [] });
+            try {
+                await db.execute({ sql: statement, args: [] });
+            } catch (error) {
+                if (isAlreadyAppliedError(error)) {
+                    console.log('  ↳ column already exists, skipping statement.');
+                    continue;
+                }
+                throw error;
+            }
         }
         await db.execute({
             sql: `INSERT OR REPLACE INTO _migrations (name) VALUES (?)`,

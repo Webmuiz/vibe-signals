@@ -323,22 +323,49 @@ async function fetchLiveApiMetrics(tokenAddress: string): Promise<LiveApiMetrics
 }
 
 // ---------------------------------------------------------------------------
-// DB HELPER — momentum from a real curve trade.
+// IN-MEMORY MOMENTUM CACHE — the single biggest Turso read amplifier.
 //
-// `pairAmount` is the pair-currency amount in base units (18 decimals for ETH
-// and most pairs). `trader` is the REAL wallet (recipient), never the zap.
+// Previously `updateMomentumInDatabase` issued a `SELECT ... FROM launches
+// WHERE token_address = ?` for EVERY CurveBuy/CurveSell event. On a busy
+// launch that is thousands of full row reads per hour, per token, purely to
+// re-read state this process already knows. Turso bills per row read, which
+// is how the account reached 580M reads.
+//
+// We now keep the mutable momentum columns in a process-local Map keyed by
+// lowercased token address. The row is loaded from Turso AT MOST ONCE per
+// token per process lifetime (lazy hydration on first trade, or eagerly when
+// the launch INSERT / rehydrate path already has the values). Every
+// subsequent trade is a pure in-memory read + a single UPDATE write.
 // ---------------------------------------------------------------------------
-async function updateMomentumInDatabase(
-    tokenAddress: string,
-    isBuy: boolean,
-    pairAmount: bigint,
-    txBlockNumber: number,
-    trader: string
-) {
+interface MomentumState {
+    volume_eth: number;
+    buy_count: number;
+    sell_count: number;
+    launch_block: number | null;
+    block_zero_buyers: number;
+    dev_address: string | null;
+    sniper_wallets: string[];
+}
+
+const momentumCache = new Map<string, MomentumState>();
+
+/** Tokens we have already confirmed exist in `launches` (avoids re-SELECT). */
+const knownTokens = new Set<string>();
+
+/**
+ * Loads momentum state for a token into the cache. Returns `null` when the
+ * token is not in the DB yet (e.g. a trade arrives before the launch INSERT
+ * commits). Callers must treat `null` as "skip this trade".
+ */
+async function loadMomentumState(tokenAddress: string): Promise<MomentumState | null> {
+    const key = tokenAddress.toLowerCase();
+    const cached = momentumCache.get(key);
+    if (cached) return cached;
+
     const tokenResult = await db.execute({
         sql: `SELECT volume_eth, buy_count, sell_count, launch_block, block_zero_buyers, dev_address, sniper_wallets
               FROM launches WHERE token_address = ? LIMIT 1`,
-        args: [tokenAddress.toLowerCase()],
+        args: [key],
     });
     const token = tokenResult.rows[0] as unknown as
         | {
@@ -352,12 +379,8 @@ async function updateMomentumInDatabase(
           }
         | undefined;
 
-    if (!token) return;
+    if (!token) return null;
 
-    const pairVolume = Number(formatUnits(pairAmount, 18));
-
-    // Parse the persisted set of unique sniper wallets. Stored as a JSON array
-    // string so we can dedupe without a second table.
     let sniperWallets: string[] = [];
     if (token.sniper_wallets) {
         try {
@@ -367,6 +390,64 @@ async function updateMomentumInDatabase(
             sniperWallets = [];
         }
     }
+
+    const state: MomentumState = {
+        volume_eth: token.volume_eth || 0,
+        buy_count: token.buy_count || 0,
+        sell_count: token.sell_count || 0,
+        launch_block: token.launch_block,
+        block_zero_buyers: token.block_zero_buyers || 0,
+        dev_address: token.dev_address,
+        sniper_wallets: sniperWallets,
+    };
+    momentumCache.set(key, state);
+    knownTokens.add(key);
+    return state;
+}
+
+/**
+ * Seeds the cache from a row we already have in hand (launch INSERT path), so
+ * the very first trade after launch does not need a SELECT at all.
+ */
+function seedMomentumState(
+    tokenAddress: string,
+    seed: Partial<MomentumState> & { launch_block?: number | null; dev_address?: string | null }
+) {
+    const key = tokenAddress.toLowerCase();
+    momentumCache.set(key, {
+        volume_eth: seed.volume_eth ?? 0,
+        buy_count: seed.buy_count ?? 0,
+        sell_count: seed.sell_count ?? 0,
+        launch_block: seed.launch_block ?? null,
+        block_zero_buyers: seed.block_zero_buyers ?? 0,
+        dev_address: seed.dev_address ?? null,
+        sniper_wallets: seed.sniper_wallets ?? [],
+    });
+    knownTokens.add(key);
+}
+
+// ---------------------------------------------------------------------------
+// DB HELPER — momentum from a real curve trade.
+//
+// `pairAmount` is the pair-currency amount in base units (18 decimals for ETH
+// and most pairs). `trader` is the REAL wallet (recipient), never the zap.
+// ---------------------------------------------------------------------------
+async function updateMomentumInDatabase(
+    tokenAddress: string,
+    isBuy: boolean,
+    pairAmount: bigint,
+    txBlockNumber: number,
+    trader: string
+) {
+    const token = await loadMomentumState(tokenAddress);
+
+    if (!token) return;
+
+    const pairVolume = Number(formatUnits(pairAmount, 18));
+
+    // `token` is the live cached state object — mutate it in place so the next
+    // trade sees the updated counters without touching Turso.
+    const sniperWallets = token.sniper_wallets;
 
     const traderLower = trader.toLowerCase();
     const devLower = (token.dev_address || '').toLowerCase();
@@ -393,13 +474,20 @@ async function updateMomentumInDatabase(
         }
     }
 
-    const newBuyCount = isBuy ? (token.buy_count || 0) + 1 : (token.buy_count || 0);
-    const newSellCount = !isBuy ? (token.sell_count || 0) + 1 : (token.sell_count || 0);
-    const newVolume = (token.volume_eth || 0) + pairVolume;
+    const newBuyCount = isBuy ? token.buy_count + 1 : token.buy_count;
+    const newSellCount = !isBuy ? token.sell_count + 1 : token.sell_count;
+    const newVolume = token.volume_eth + pairVolume;
 
     const totalTrades = newBuyCount + newSellCount;
     const buyPct = totalTrades > 0 ? Math.round((newBuyCount / totalTrades) * 100) : 50;
     const sellPct = 100 - buyPct;
+
+    // Commit to the in-memory cache FIRST so concurrent trade events in the
+    // same batch accumulate correctly, then persist the single UPDATE.
+    token.volume_eth = newVolume;
+    token.buy_count = newBuyCount;
+    token.sell_count = newSellCount;
+    token.block_zero_buyers = newBlockZeroBuyers;
 
     await db.execute({
         sql: `UPDATE launches SET
@@ -708,6 +796,14 @@ async function runIndexer() {
                         ],
                     });
 
+                    // Seed the momentum cache from the values we just wrote so
+                    // the first CurveBuy/CurveSell needs zero SELECTs.
+                    seedMomentumState(tokenAddress, {
+                        volume_eth: live?.volumeEth ?? 0,
+                        launch_block: Number(log.blockNumber),
+                        dev_address: devAddress,
+                    });
+
                     // Start streaming this token's trades immediately.
                     watchCurve(curveAddress, tokenAddress);
                 } catch (logErr) {
@@ -735,11 +831,23 @@ async function runIndexer() {
     // Re-attach watchers for tokens already indexed before this boot.
     await rehydrateCurveWatchers();
 
-    // 3. THE LIVE BALANCE UPDATER (Runs every 10 seconds)
+    // 3. THE LIVE BALANCE UPDATER
+    //
+    // Previously this ran every 10s and did `SELECT *` (every column) over the
+    // 20 newest launches — ~172,800 full row reads per day, forever, even when
+    // nothing changed. It now:
+    //   • runs every 30s instead of 10s (3x fewer reads),
+    //   • selects ONLY the columns the loop actually uses (no `SELECT *`),
+    //   • skips overlapping runs so a slow RPC cannot stack up queries.
+    let balanceUpdaterRunning = false;
     setInterval(async () => {
+        if (balanceUpdaterRunning) return;
+        balanceUpdaterRunning = true;
         try {
             const recentResult = await db.execute({
-                sql: `SELECT * FROM launches ORDER BY launch_id DESC LIMIT 20`,
+                sql: `SELECT launch_id, token_address, amm_address, symbol, pair_symbol,
+                             curve_progress, liquidity_deposited, has_socials
+                      FROM launches ORDER BY launch_id DESC LIMIT 20`,
                 args: [],
             });
             const recentTokens = recentResult.rows as unknown as Array<Record<string, any>>;
@@ -855,8 +963,10 @@ async function runIndexer() {
             }
         } catch (err) {
             /* swallow — transient DB/RPC hiccups must not kill the loop */
+        } finally {
+            balanceUpdaterRunning = false;
         }
-    }, 10000);
+    }, 30000);
 }
 
 runIndexer();

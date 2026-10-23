@@ -3,7 +3,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Signal, SignalsResponse } from '@/lib/signals';
 
-const POLL_INTERVAL_MS = 3_000;
+// Poll cadence for /api/signals. This was 3s, which meant every open tab hit
+// the Turso-backed route 20 times a minute (1,200 reads/hour/tab). Signals are
+// derived from launch rows that change on the order of tens of seconds, so 15s
+// is indistinguishable to a human while cutting DB traffic by 80%.
+const POLL_INTERVAL_MS = 15_000;
 const MAX_RENDERED = 60;
 
 /**
